@@ -175,3 +175,134 @@
     }
   }
 }
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: oklch(0.8 0.01 260);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.7 0.01 260);
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: oklch(0.3 0.02 260);
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.4 0.02 260);
+}
+
+/* Data table styles */
+.data-table {
+  @apply w-full text-sm;
+}
+
+.data-table th {
+  @apply text-left font-medium text-muted-foreground px-4 py-3 border-b bg-muted/30;
+}
+
+.data-table td {
+  @apply px-4 py-3 border-b border-border/50;
+}
+
+.data-table tr:hover td {
+  @apply bg-muted/30;
+}
+
+/* Status badge colors */
+.status-active {
+  @apply bg-green-500/10 text-green-600 border-green-500/20;
+}
+
+.status-pending {
+  @apply bg-amber-500/10 text-amber-600 border-amber-500/20;
+}
+
+.status-inactive {
+  @apply bg-gray-500/10 text-gray-600 border-gray-500/20;
+}
+
+.status-error {
+  @apply bg-red-500/10 text-red-600 border-red-500/20;
+}
+
+/* KPI card styles */
+.kpi-card {
+  @apply p-6 rounded-xl border bg-card;
+}
+
+.kpi-card-title {
+  @apply text-sm font-medium text-muted-foreground;
+}
+
+.kpi-card-value {
+  @apply text-2xl font-semibold mt-2;
+}
+
+.kpi-card-change {
+  @apply text-xs mt-1;
+}
+
+.kpi-card-change.positive {
+  @apply text-green-600;
+}
+
+.kpi-card-change.negative {
+  @apply text-red-600;
+}
+
+/* Module section styles */
+.module-header {
+  @apply flex items-center justify-between mb-6;
+}
+
+.module-title {
+  @apply text-2xl font-semibold tracking-tight;
+}
+
+.module-description {
+  @apply text-muted-foreground mt-1;
+}
+
+/* Form styles */
+.form-section {
+  @apply space-y-4 p-6 rounded-lg border bg-card;
+}
+
+.form-section-title {
+  @apply text-lg font-medium mb-4;
+}
+
+/* Animation utilities */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-out;
+}
+
+/* Print styles */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+}

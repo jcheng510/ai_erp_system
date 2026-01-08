@@ -4,32 +4,96 @@ import NotFound from "@/pages/NotFound";
 import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
+import DashboardLayout from "./components/DashboardLayout";
+
+// Pages
 import Home from "./pages/Home";
+import AIAssistant from "./pages/AIAssistant";
+import Settings from "./pages/Settings";
+import GlobalSearch from "./pages/GlobalSearch";
+import Notifications from "./pages/Notifications";
+
+// Finance
+import Accounts from "./pages/finance/Accounts";
+import Invoices from "./pages/finance/Invoices";
+import Payments from "./pages/finance/Payments";
+import Transactions from "./pages/finance/Transactions";
+
+// Sales
+import Orders from "./pages/sales/Orders";
+import Customers from "./pages/sales/Customers";
+
+// Operations
+import Products from "./pages/operations/Products";
+import Inventory from "./pages/operations/Inventory";
+import Vendors from "./pages/operations/Vendors";
+import PurchaseOrders from "./pages/operations/PurchaseOrders";
+import Shipments from "./pages/operations/Shipments";
+
+// HR
+import Employees from "./pages/hr/Employees";
+import Payroll from "./pages/hr/Payroll";
+
+// Legal
+import Contracts from "./pages/legal/Contracts";
+import Disputes from "./pages/legal/Disputes";
+import Documents from "./pages/legal/Documents";
+
+// Projects
+import Projects from "./pages/projects/Projects";
 
 function Router() {
-  // make sure to consider if you need authentication for certain routes
   return (
-    <Switch>
-      <Route path={"/"} component={Home} />
-      <Route path={"/404"} component={NotFound} />
-      {/* Final fallback route */}
-      <Route component={NotFound} />
-    </Switch>
+    <DashboardLayout>
+      <Switch>
+        {/* Overview */}
+        <Route path="/" component={Home} />
+        <Route path="/ai" component={AIAssistant} />
+        <Route path="/search" component={GlobalSearch} />
+        <Route path="/notifications" component={Notifications} />
+        <Route path="/settings" component={Settings} />
+
+        {/* Finance */}
+        <Route path="/finance/accounts" component={Accounts} />
+        <Route path="/finance/invoices" component={Invoices} />
+        <Route path="/finance/payments" component={Payments} />
+        <Route path="/finance/transactions" component={Transactions} />
+
+        {/* Sales */}
+        <Route path="/sales/orders" component={Orders} />
+        <Route path="/sales/customers" component={Customers} />
+
+        {/* Operations */}
+        <Route path="/operations/products" component={Products} />
+        <Route path="/operations/inventory" component={Inventory} />
+        <Route path="/operations/vendors" component={Vendors} />
+        <Route path="/operations/purchase-orders" component={PurchaseOrders} />
+        <Route path="/operations/shipments" component={Shipments} />
+
+        {/* HR */}
+        <Route path="/hr/employees" component={Employees} />
+        <Route path="/hr/payroll" component={Payroll} />
+
+        {/* Legal */}
+        <Route path="/legal/contracts" component={Contracts} />
+        <Route path="/legal/disputes" component={Disputes} />
+        <Route path="/legal/documents" component={Documents} />
+
+        {/* Projects */}
+        <Route path="/projects" component={Projects} />
+
+        {/* Fallback */}
+        <Route path="/404" component={NotFound} />
+        <Route component={NotFound} />
+      </Switch>
+    </DashboardLayout>
   );
 }
-
-// NOTE: About Theme
-// - First choose a default theme according to your design style (dark or light bg), than change color palette in index.css
-//   to keep consistent foreground/background color across components
-// - If you want to make theme switchable, pass `switchable` ThemeProvider and use `useTheme` hook
 
 function App() {
   return (
     <ErrorBoundary>
-      <ThemeProvider
-        defaultTheme="light"
-        // switchable
-      >
+      <ThemeProvider defaultTheme="light">
         <TooltipProvider>
           <Toaster />
           <Router />
