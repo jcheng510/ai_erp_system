@@ -36,6 +36,13 @@
       "when": 1767864170270,
       "tag": "0004_hesitant_sleepwalker",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1767866371177,
+      "tag": "0005_puzzling_silverclaw",
+      "breakpoints": true
     }
   ]
 }

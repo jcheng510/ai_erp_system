@@ -139,3 +139,15 @@
 - [x] Inventory view with location filter
 - [x] Transfer request workflow (draft → pending → in_transit → received)
 - [x] Consolidated inventory dashboard across all locations
+
+## Shopify & HubSpot Customer Sync
+- [x] Add Shopify and HubSpot ID fields to customers table
+- [x] Add sync status and last synced timestamp fields
+- [x] Build Shopify API integration for customer import
+- [x] Build HubSpot API integration for customer import
+- [x] Create sync UI with tabbed dialog for Shopify/HubSpot
+- [x] Add manual sync trigger button on Customers page
+- [x] Display Shopify/HubSpot source badges on customer records
+- [x] Handle duplicate detection and merging
+- [x] Sync status cards showing customer sources
+- [x] Source filter on customers list

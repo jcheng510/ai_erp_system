@@ -174,6 +174,20 @@ export async function getCustomerById(id: number) {
   return result[0];
 }
 
+export async function getCustomerByShopifyId(shopifyId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(customers).where(eq(customers.shopifyCustomerId, shopifyId)).limit(1);
+  return result[0];
+}
+
+export async function getCustomerByHubspotId(hubspotId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(customers).where(eq(customers.hubspotContactId, hubspotId)).limit(1);
+  return result[0];
+}
+
 export async function createCustomer(data: InsertCustomer) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");

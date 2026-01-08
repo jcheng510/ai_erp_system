@@ -83,6 +83,11 @@ export const customers = mysqlTable("customers", {
   notes: text("notes"),
   shopifyCustomerId: varchar("shopifyCustomerId", { length: 64 }),
   quickbooksCustomerId: varchar("quickbooksCustomerId", { length: 64 }),
+  hubspotContactId: varchar("hubspotContactId", { length: 64 }),
+  syncSource: mysqlEnum("syncSource", ["manual", "shopify", "hubspot", "quickbooks"]).default("manual"),
+  lastSyncedAt: timestamp("lastSyncedAt"),
+  shopifyData: text("shopifyData"),
+  hubspotData: text("hubspotData"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });

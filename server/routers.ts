@@ -197,6 +197,141 @@ export const appRouter = router({
         await createAuditLog(ctx.user.id, 'delete', 'customer', input.id);
         return { success: true };
       }),
+    
+    // Shopify sync
+    syncFromShopify: adminProcedure
+      .input(z.object({ shopifyAccessToken: z.string(), shopifyStoreDomain: z.string() }))
+      .mutation(async ({ input, ctx }) => {
+        const { shopifyAccessToken, shopifyStoreDomain } = input;
+        
+        // Fetch customers from Shopify
+        const response = await fetch(`https://${shopifyStoreDomain}/admin/api/2024-01/customers.json`, {
+          headers: {
+            'X-Shopify-Access-Token': shopifyAccessToken,
+            'Content-Type': 'application/json',
+          },
+        });
+        
+        if (!response.ok) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'Failed to fetch Shopify customers' });
+        }
+        
+        const data = await response.json();
+        const shopifyCustomers = data.customers || [];
+        
+        let imported = 0;
+        let updated = 0;
+        let skipped = 0;
+        
+        for (const sc of shopifyCustomers) {
+          // Check if customer already exists by Shopify ID
+          const existing = await db.getCustomerByShopifyId(sc.id.toString());
+          
+          const customerData = {
+            name: `${sc.first_name || ''} ${sc.last_name || ''}`.trim() || sc.email || 'Unknown',
+            email: sc.email || undefined,
+            phone: sc.phone || undefined,
+            address: sc.default_address?.address1 || undefined,
+            city: sc.default_address?.city || undefined,
+            state: sc.default_address?.province || undefined,
+            country: sc.default_address?.country || undefined,
+            postalCode: sc.default_address?.zip || undefined,
+            type: 'individual' as const,
+            shopifyCustomerId: sc.id.toString(),
+            syncSource: 'shopify' as const,
+            lastSyncedAt: new Date(),
+            shopifyData: JSON.stringify(sc),
+          };
+          
+          if (existing) {
+            await db.updateCustomer(existing.id, customerData);
+            updated++;
+          } else {
+            await db.createCustomer(customerData);
+            imported++;
+          }
+        }
+        
+        await createAuditLog(ctx.user.id, 'create', 'shopify_sync', 0, `Imported ${imported}, Updated ${updated}`);
+        
+        return { imported, updated, skipped, total: shopifyCustomers.length };
+      }),
+    
+    // HubSpot sync
+    syncFromHubspot: adminProcedure
+      .input(z.object({ hubspotAccessToken: z.string() }))
+      .mutation(async ({ input, ctx }) => {
+        const { hubspotAccessToken } = input;
+        
+        // Fetch contacts from HubSpot
+        const response = await fetch('https://api.hubapi.com/crm/v3/objects/contacts?limit=100&properties=email,firstname,lastname,phone,address,city,state,country,zip,company', {
+          headers: {
+            'Authorization': `Bearer ${hubspotAccessToken}`,
+            'Content-Type': 'application/json',
+          },
+        });
+        
+        if (!response.ok) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'Failed to fetch HubSpot contacts' });
+        }
+        
+        const data = await response.json();
+        const hubspotContacts = data.results || [];
+        
+        let imported = 0;
+        let updated = 0;
+        let skipped = 0;
+        
+        for (const hc of hubspotContacts) {
+          const props = hc.properties || {};
+          
+          // Check if customer already exists by HubSpot ID
+          const existing = await db.getCustomerByHubspotId(hc.id.toString());
+          
+          const customerData = {
+            name: `${props.firstname || ''} ${props.lastname || ''}`.trim() || props.email || 'Unknown',
+            email: props.email || undefined,
+            phone: props.phone || undefined,
+            address: props.address || undefined,
+            city: props.city || undefined,
+            state: props.state || undefined,
+            country: props.country || undefined,
+            postalCode: props.zip || undefined,
+            type: props.company ? 'business' as const : 'individual' as const,
+            hubspotContactId: hc.id.toString(),
+            syncSource: 'hubspot' as const,
+            lastSyncedAt: new Date(),
+            hubspotData: JSON.stringify(hc),
+          };
+          
+          if (existing) {
+            await db.updateCustomer(existing.id, customerData);
+            updated++;
+          } else {
+            await db.createCustomer(customerData);
+            imported++;
+          }
+        }
+        
+        await createAuditLog(ctx.user.id, 'create', 'hubspot_sync', 0, `Imported ${imported}, Updated ${updated}`);
+        
+        return { imported, updated, skipped, total: hubspotContacts.length };
+      }),
+    
+    // Get sync status
+    getSyncStatus: protectedProcedure.query(async () => {
+      const customers = await db.getCustomers();
+      const shopifyCount = customers.filter(c => c.shopifyCustomerId).length;
+      const hubspotCount = customers.filter(c => c.hubspotContactId).length;
+      const manualCount = customers.filter(c => !c.shopifyCustomerId && !c.hubspotContactId).length;
+      
+      return {
+        total: customers.length,
+        shopify: shopifyCount,
+        hubspot: hubspotCount,
+        manual: manualCount,
+      };
+    }),
   }),
 
   // ============================================
