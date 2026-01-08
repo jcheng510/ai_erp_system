@@ -151,3 +151,14 @@
 - [x] Handle duplicate detection and merging
 - [x] Sync status cards showing customer sources
 - [x] Source filter on customers list
+
+## Team Member Access Control
+- [x] Extend user roles to include copacker, vendor, contractor, and team member types
+- [x] Add team invitations table for granular access control
+- [x] Create team member invitation system with invite codes
+- [x] Build team management UI page with role assignment
+- [x] Implement permission-based route guards (copackerProcedure, vendorProcedure)
+- [x] Create copacker-restricted inventory update view (Copacker Portal)
+- [x] Create copacker-restricted shipment document upload view
+- [x] Add vendor portal with limited PO and shipment access
+- [x] Link users to specific warehouses or vendors

@@ -43,6 +43,13 @@
       "when": 1767866371177,
       "tag": "0005_puzzling_silverclaw",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1767912433773,
+      "tag": "0006_wealthy_infant_terrible",
+      "breakpoints": true
     }
   ]
 }

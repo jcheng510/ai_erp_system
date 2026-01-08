@@ -133,8 +133,16 @@ const menuGroups = [
     ],
   },
   {
+    label: "Portals",
+    items: [
+      { icon: Warehouse, label: "Copacker Portal", path: "/portal/copacker" },
+      { icon: Building2, label: "Vendor Portal", path: "/portal/vendor" },
+    ],
+  },
+  {
     label: "Settings",
     items: [
+      { icon: Users, label: "Team", path: "/settings/team" },
       { icon: FileSpreadsheet, label: "Import Data", path: "/import" },
       { icon: Settings, label: "Settings", path: "/settings" },
     ],

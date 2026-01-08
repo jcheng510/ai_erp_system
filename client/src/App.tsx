@@ -56,6 +56,13 @@ import Projects from "./pages/projects/Projects";
 // Import
 import Import from "./pages/Import";
 
+// Settings
+import Team from "./pages/settings/Team";
+
+// Portals
+import CopackerPortal from "./pages/portal/CopackerPortal";
+import VendorPortal from "./pages/portal/VendorPortal";
+
 function Router() {
   return (
     <DashboardLayout>
@@ -109,6 +116,13 @@ function Router() {
 
         {/* Import */}
         <Route path="/import" component={Import} />
+
+        {/* Settings */}
+        <Route path="/settings/team" component={Team} />
+
+        {/* Portals */}
+        <Route path="/portal/copacker" component={CopackerPortal} />
+        <Route path="/portal/vendor" component={VendorPortal} />
 
         {/* Fallback */}
         <Route path="/404" component={NotFound} />

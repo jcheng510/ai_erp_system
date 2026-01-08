@@ -11,10 +11,16 @@ export const users = mysqlTable("users", {
   name: text("name"),
   email: varchar("email", { length: 320 }),
   loginMethod: varchar("loginMethod", { length: 64 }),
-  role: mysqlEnum("role", ["user", "admin", "finance", "ops", "legal", "exec"]).default("user").notNull(),
+  role: mysqlEnum("role", ["user", "admin", "finance", "ops", "legal", "exec", "copacker", "vendor", "contractor"]).default("user").notNull(),
   departmentId: int("departmentId"),
   avatarUrl: text("avatarUrl"),
   phone: varchar("phone", { length: 32 }),
+  // For external users (copackers, vendors), link to their entity
+  linkedVendorId: int("linkedVendorId"),
+  linkedWarehouseId: int("linkedWarehouseId"),
+  isActive: boolean("isActive").default(true).notNull(),
+  invitedBy: int("invitedBy"),
+  invitedAt: timestamp("invitedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),
@@ -22,6 +28,38 @@ export const users = mysqlTable("users", {
 
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
+
+// Team invitations for onboarding new users
+export const teamInvitations = mysqlTable("teamInvitations", {
+  id: int("id").autoincrement().primaryKey(),
+  email: varchar("email", { length: 320 }).notNull(),
+  role: mysqlEnum("role", ["user", "admin", "finance", "ops", "legal", "exec", "copacker", "vendor", "contractor"]).default("user").notNull(),
+  inviteCode: varchar("inviteCode", { length: 64 }).notNull().unique(),
+  invitedBy: int("invitedBy").notNull(),
+  linkedVendorId: int("linkedVendorId"),
+  linkedWarehouseId: int("linkedWarehouseId"),
+  customPermissions: text("customPermissions"), // JSON array of permission keys
+  status: mysqlEnum("status", ["pending", "accepted", "expired", "revoked"]).default("pending").notNull(),
+  expiresAt: timestamp("expiresAt").notNull(),
+  acceptedAt: timestamp("acceptedAt"),
+  acceptedByUserId: int("acceptedByUserId"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type TeamInvitation = typeof teamInvitations.$inferSelect;
+export type InsertTeamInvitation = typeof teamInvitations.$inferInsert;
+
+// User permissions for granular access control
+export const userPermissions = mysqlTable("userPermissions", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  permission: varchar("permission", { length: 64 }).notNull(), // e.g., 'inventory.update', 'shipments.upload'
+  grantedBy: int("grantedBy").notNull(),
+  grantedAt: timestamp("grantedAt").defaultNow().notNull(),
+});
+
+export type UserPermission = typeof userPermissions.$inferSelect;
+export type InsertUserPermission = typeof userPermissions.$inferInsert;
 
 // Google OAuth tokens for Drive/Sheets access
 export const googleOAuthTokens = mysqlTable("googleOAuthTokens", {

@@ -38,6 +38,22 @@ const legalProcedure = protectedProcedure.use(({ ctx, next }) => {
   return next({ ctx });
 });
 
+// Copacker can only access their assigned warehouse inventory
+const copackerProcedure = protectedProcedure.use(({ ctx, next }) => {
+  if (!['admin', 'ops', 'copacker'].includes(ctx.user.role)) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'Copacker access required' });
+  }
+  return next({ ctx });
+});
+
+// Vendor can access their own purchase orders and shipments
+const vendorProcedure = protectedProcedure.use(({ ctx, next }) => {
+  if (!['admin', 'ops', 'vendor'].includes(ctx.user.role)) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'Vendor access required' });
+  }
+  return next({ ctx });
+});
+
 // Helper to create audit log
 async function createAuditLog(userId: number, action: 'create' | 'update' | 'delete' | 'view' | 'export' | 'approve' | 'reject', entityType: string, entityId: number, entityName?: string, oldValues?: any, newValues?: any) {
   await db.createAuditLog({
@@ -2869,8 +2885,359 @@ Provide a brief status summary, any missing documents, and next steps.`;
           
           return { id: result.id, url };
         }),
+     }),
+  }),
+
+  // Team Management
+  team: router({
+    // List all team members (admin only)
+    list: adminProcedure.query(async () => {
+      return db.getTeamMembers();
     }),
+
+    // Get current user's permissions
+    myPermissions: protectedProcedure.query(async ({ ctx }) => {
+      const permissions = await db.getUserEffectivePermissions(ctx.user.id);
+      return {
+        role: ctx.user.role,
+        permissions,
+        linkedVendorId: ctx.user.linkedVendorId,
+        linkedWarehouseId: ctx.user.linkedWarehouseId,
+      };
+    }),
+
+    // Get a specific team member
+    getById: adminProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        return db.getTeamMemberById(input.id);
+      }),
+
+    // Update team member role and permissions
+    update: adminProcedure
+      .input(z.object({
+        id: z.number(),
+        role: z.enum(['user', 'admin', 'finance', 'ops', 'legal', 'exec', 'copacker', 'vendor', 'contractor']).optional(),
+        linkedVendorId: z.number().nullable().optional(),
+        linkedWarehouseId: z.number().nullable().optional(),
+        isActive: z.boolean().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { id, ...data } = input;
+        await db.updateTeamMember(id, data);
+        await createAuditLog(ctx.user.id, 'update', 'user', id);
+        return { success: true };
+      }),
+
+    // Deactivate team member
+    deactivate: adminProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deactivateTeamMember(input.id);
+        await createAuditLog(ctx.user.id, 'update', 'user', input.id, undefined, { isActive: true }, { isActive: false });
+        return { success: true };
+      }),
+
+    // Reactivate team member
+    reactivate: adminProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.reactivateTeamMember(input.id);
+        await createAuditLog(ctx.user.id, 'update', 'user', input.id, undefined, { isActive: false }, { isActive: true });
+        return { success: true };
+      }),
+
+    // Set custom permissions for a user
+    setPermissions: adminProcedure
+      .input(z.object({
+        userId: z.number(),
+        permissions: z.array(z.string()),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        await db.setUserPermissions(input.userId, input.permissions, ctx.user.id);
+        await createAuditLog(ctx.user.id, 'update', 'user_permissions', input.userId);
+        return { success: true };
+      }),
+
+    // Get user permissions
+    getPermissions: adminProcedure
+      .input(z.object({ userId: z.number() }))
+      .query(async ({ input }) => {
+        return db.getUserPermissions(input.userId);
+      }),
+  }),
+
+  // Team Invitations
+  invitations: router({
+    // List all invitations (admin only)
+    list: adminProcedure.query(async () => {
+      return db.getTeamInvitations();
+    }),
+
+    // Create invitation
+    create: adminProcedure
+      .input(z.object({
+        email: z.string().email(),
+        role: z.enum(['user', 'admin', 'finance', 'ops', 'legal', 'exec', 'copacker', 'vendor', 'contractor']),
+        linkedVendorId: z.number().nullable().optional(),
+        linkedWarehouseId: z.number().nullable().optional(),
+        customPermissions: z.array(z.string()).optional(),
+        expiresInDays: z.number().min(1).max(30).default(7),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const expiresAt = new Date();
+        expiresAt.setDate(expiresAt.getDate() + input.expiresInDays);
+
+        const result = await db.createTeamInvitation({
+          email: input.email,
+          role: input.role,
+          invitedBy: ctx.user.id,
+          linkedVendorId: input.linkedVendorId,
+          linkedWarehouseId: input.linkedWarehouseId,
+          customPermissions: input.customPermissions ? JSON.stringify(input.customPermissions) : null,
+          expiresAt,
+        });
+
+        await createAuditLog(ctx.user.id, 'create', 'team_invitation', result?.id || 0, input.email);
+
+        return result;
+      }),
+
+    // Accept invitation (public - user accepting their invite)
+    accept: protectedProcedure
+      .input(z.object({ inviteCode: z.string() }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.acceptTeamInvitation(input.inviteCode, ctx.user.id);
+        if (result.success) {
+          await createAuditLog(ctx.user.id, 'update', 'team_invitation', 0, input.inviteCode);
+        }
+        return result;
+      }),
+
+    // Revoke invitation
+    revoke: adminProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.revokeTeamInvitation(input.id);
+        await createAuditLog(ctx.user.id, 'update', 'team_invitation', input.id);
+        return { success: true };
+      }),
+
+    // Check invitation by code (public)
+    checkCode: publicProcedure
+      .input(z.object({ inviteCode: z.string() }))
+      .query(async ({ input }) => {
+        const invitation = await db.getTeamInvitationByCode(input.inviteCode);
+        if (!invitation) {
+          return { valid: false, error: 'Invalid invitation code' };
+        }
+        if (invitation.status !== 'pending') {
+          return { valid: false, error: 'Invitation is no longer valid' };
+        }
+        if (new Date(invitation.expiresAt) < new Date()) {
+          return { valid: false, error: 'Invitation has expired' };
+        }
+        return {
+          valid: true,
+          email: invitation.email,
+          role: invitation.role,
+          expiresAt: invitation.expiresAt,
+        };
+      }),
+  }),
+
+  // Copacker Portal - restricted views for copackers
+  copackerPortal: router({
+    // Get inventory for copacker's assigned warehouse
+    getInventory: copackerProcedure.query(async ({ ctx }) => {
+      if (ctx.user.role === 'copacker' && !ctx.user.linkedWarehouseId) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'No warehouse assigned to this account' });
+      }
+      
+      const warehouseId = ctx.user.role === 'copacker' 
+        ? ctx.user.linkedWarehouseId! 
+        : null;
+      
+      if (warehouseId) {
+        return db.getInventoryByWarehouse(warehouseId);
+      }
+      
+      // Admin/ops can see all
+      return db.getInventory();
+    }),
+
+    // Get copacker's assigned warehouse info
+    getWarehouse: copackerProcedure.query(async ({ ctx }) => {
+      if (!ctx.user.linkedWarehouseId) {
+        return null;
+      }
+      return db.getWarehouseById(ctx.user.linkedWarehouseId);
+    }),
+
+    // Update inventory quantity (copacker can only update their warehouse)
+    updateInventory: copackerProcedure
+      .input(z.object({
+        inventoryId: z.number(),
+        quantity: z.number().min(0),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        // Verify copacker has access to this inventory item
+        if (ctx.user.role === 'copacker' && ctx.user.linkedWarehouseId) {
+          const inventoryItems = await db.getInventoryByWarehouse(ctx.user.linkedWarehouseId);
+          const hasAccess = inventoryItems.some(item => item.inventory.id === input.inventoryId);
+          if (!hasAccess) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this inventory item' });
+          }
+        }
+
+        await db.updateInventoryQuantityById(input.inventoryId, input.quantity, ctx.user.id, input.notes);
+        return { success: true };
+      }),
+
+    // Get shipments for copacker's warehouse (filter by PO vendor)
+    getShipments: copackerProcedure.query(async ({ ctx }) => {
+      const allShipments = await db.getShipments();
+      // Copackers see all shipments - they can filter by their location in the UI
+      return allShipments;
+    }),
+
+    // Upload shipment document (copacker can upload for their shipments)
+    uploadShipmentDocument: copackerProcedure
+      .input(z.object({
+        shipmentId: z.number(),
+        documentType: z.enum(['invoice', 'receipt', 'contract', 'legal', 'report', 'hr', 'other']),
+        name: z.string(),
+        fileData: z.string(), // Base64 encoded
+        mimeType: z.string(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const buffer = Buffer.from(input.fileData, 'base64');
+        const fileKey = `shipments/${input.shipmentId}/${nanoid()}-${input.name}`;
+        
+        const { url } = await storagePut(fileKey, buffer, input.mimeType);
+        
+        const result = await db.createDocument({
+          name: input.name,
+          type: input.documentType,
+          category: 'shipment',
+          fileUrl: url,
+          fileKey,
+          mimeType: input.mimeType,
+          fileSize: buffer.length,
+          uploadedBy: ctx.user.id,
+          referenceType: 'shipment',
+          referenceId: input.shipmentId,
+        });
+
+        await createAuditLog(ctx.user.id, 'create', 'document', result.id, input.name);
+        
+        return { id: result.id, url };
+      }),
+  }),
+
+  // Vendor Portal - restricted views for vendors
+  vendorPortal: router({
+    // Get purchase orders for vendor
+    getPurchaseOrders: vendorProcedure.query(async ({ ctx }) => {
+      if (ctx.user.role === 'vendor' && ctx.user.linkedVendorId) {
+        const allPOs = await db.getPurchaseOrders();
+        return allPOs.filter(po => po.vendorId === ctx.user.linkedVendorId);
+      }
+      return db.getPurchaseOrders();
+    }),
+
+    // Get vendor's own info
+    getVendorInfo: vendorProcedure.query(async ({ ctx }) => {
+      if (!ctx.user.linkedVendorId) {
+        return null;
+      }
+      return db.getVendorById(ctx.user.linkedVendorId);
+    }),
+
+    // Update PO status (vendor can mark as confirmed, partial, received)
+    updatePOStatus: vendorProcedure
+      .input(z.object({
+        poId: z.number(),
+        status: z.enum(['confirmed', 'partial', 'received']),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        // Verify vendor has access to this PO
+        if (ctx.user.role === 'vendor' && ctx.user.linkedVendorId) {
+          const allPOs = await db.getPurchaseOrders();
+          const po = allPOs.find(p => p.id === input.poId);
+          if (!po || po.vendorId !== ctx.user.linkedVendorId) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this purchase order' });
+          }
+        }
+
+        await db.updatePurchaseOrder(input.poId, { 
+          status: input.status,
+          notes: input.notes,
+        });
+        await createAuditLog(ctx.user.id, 'update', 'purchase_order', input.poId);
+        return { success: true };
+      }),
+
+    // Get shipments for vendor
+    getShipments: vendorProcedure.query(async ({ ctx }) => {
+      if (ctx.user.role === 'vendor' && ctx.user.linkedVendorId) {
+        const allShipments = await db.getShipments();
+        // Filter shipments related to vendor's POs
+        const vendorPOs = await db.getPurchaseOrders();
+        const vendorPOIds = vendorPOs
+          .filter(po => po.vendorId === ctx.user.linkedVendorId)
+          .map(po => po.id);
+        return allShipments.filter(s => s.purchaseOrderId && vendorPOIds.includes(s.purchaseOrderId));
+      }
+      return db.getShipments();
+    }),
+
+    // Upload document for vendor's shipment/PO
+    uploadDocument: vendorProcedure
+      .input(z.object({
+        relatedEntityType: z.enum(['purchase_order', 'shipment']),
+        relatedEntityId: z.number(),
+        documentType: z.enum(['invoice', 'receipt', 'contract', 'legal', 'report', 'hr', 'other']),
+        name: z.string(),
+        fileData: z.string(),
+        mimeType: z.string(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        // Verify vendor has access
+        if (ctx.user.role === 'vendor' && ctx.user.linkedVendorId) {
+          if (input.relatedEntityType === 'purchase_order') {
+            const allPOs = await db.getPurchaseOrders();
+            const po = allPOs.find(p => p.id === input.relatedEntityId);
+            if (!po || po.vendorId !== ctx.user.linkedVendorId) {
+              throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this purchase order' });
+            }
+          }
+        }
+
+        const buffer = Buffer.from(input.fileData, 'base64');
+        const fileKey = `vendor/${ctx.user.linkedVendorId || 'unknown'}/${input.relatedEntityType}/${input.relatedEntityId}/${nanoid()}-${input.name}`;
+        
+        const { url } = await storagePut(fileKey, buffer, input.mimeType);
+        
+        const result = await db.createDocument({
+          name: input.name,
+          type: input.documentType,
+          category: input.relatedEntityType === 'purchase_order' ? 'legal' : 'other',
+          fileUrl: url,
+          fileKey,
+          mimeType: input.mimeType,
+          fileSize: buffer.length,
+          uploadedBy: ctx.user.id,
+          referenceType: input.relatedEntityType,
+          referenceId: input.relatedEntityId,
+        });
+
+        await createAuditLog(ctx.user.id, 'create', 'document', result.id, input.name);
+        
+        return { id: result.id, url };
+      }),
   }),
 });
-
 export type AppRouter = typeof appRouter;
