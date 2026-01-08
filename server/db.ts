@@ -9,6 +9,7 @@ import {
   contracts, contractKeyDates, disputes, documents,
   projects, projectMilestones, projectTasks,
   auditLogs, notifications, integrationConfigs, aiConversations, aiMessages,
+  googleOAuthTokens, InsertGoogleOAuthToken,
   InsertCompany, InsertCustomer, InsertVendor, InsertProduct,
   InsertAccount, InsertInvoice, InsertPayment, InsertTransaction,
   InsertOrder, InsertInventory, InsertPurchaseOrder,
@@ -1171,4 +1172,47 @@ export async function globalSearch(query: string) {
     contracts: contractResults,
     projects: projectResults,
   };
+}
+
+// ============================================
+// GOOGLE OAUTH TOKENS
+// ============================================
+
+export async function getGoogleOAuthToken(userId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(googleOAuthTokens).where(eq(googleOAuthTokens.userId, userId)).limit(1);
+  return result[0];
+}
+
+export async function upsertGoogleOAuthToken(data: InsertGoogleOAuthToken) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  // Check if token exists for this user
+  const existing = await getGoogleOAuthToken(data.userId);
+  
+  if (existing) {
+    // Update existing token
+    await db.update(googleOAuthTokens)
+      .set({
+        accessToken: data.accessToken,
+        refreshToken: data.refreshToken || existing.refreshToken,
+        expiresAt: data.expiresAt,
+        scope: data.scope,
+        googleEmail: data.googleEmail,
+      })
+      .where(eq(googleOAuthTokens.userId, data.userId));
+    return { id: existing.id };
+  } else {
+    // Insert new token
+    const result = await db.insert(googleOAuthTokens).values(data);
+    return { id: result[0].insertId };
+  }
+}
+
+export async function deleteGoogleOAuthToken(userId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(googleOAuthTokens).where(eq(googleOAuthTokens.userId, userId));
 }

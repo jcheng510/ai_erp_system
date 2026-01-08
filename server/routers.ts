@@ -1355,34 +1355,175 @@ export const appRouter = router({
   }),
 
   // ============================================
-  // GOOGLE SHEETS IMPORT
+  // GOOGLE SHEETS IMPORT (OAuth + Drive API)
   // ============================================
   sheetsImport: router({
-    // Fetch sheet data from a public Google Sheet or using API key
-    fetchSheet: adminProcedure
+    // Check if user has connected Google account
+    getConnectionStatus: protectedProcedure.query(async ({ ctx }) => {
+      const token = await db.getGoogleOAuthToken(ctx.user.id);
+      if (!token) {
+        return { connected: false, email: null };
+      }
+      // Check if token is expired
+      const isExpired = token.expiresAt && new Date(token.expiresAt) < new Date();
+      return { 
+        connected: !isExpired, 
+        email: token.googleEmail,
+        needsRefresh: isExpired 
+      };
+    }),
+    
+    // Get Google OAuth URL for connecting account
+    getAuthUrl: protectedProcedure.query(async ({ ctx }) => {
+      const clientId = process.env.GOOGLE_CLIENT_ID;
+      if (!clientId) {
+        return { url: null, error: 'Google OAuth not configured' };
+      }
+      
+      const redirectUri = `${process.env.VITE_APP_URL || 'http://localhost:3000'}/api/google/callback`;
+      const scope = encodeURIComponent('https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/spreadsheets.readonly');
+      const state = ctx.user.id.toString();
+      
+      const url = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${scope}&access_type=offline&prompt=consent&state=${state}`;
+      
+      return { url, error: null };
+    }),
+    
+    // Disconnect Google account
+    disconnect: protectedProcedure.mutation(async ({ ctx }) => {
+      await db.deleteGoogleOAuthToken(ctx.user.id);
+      return { success: true };
+    }),
+    
+    // List spreadsheets from Google Drive
+    listSpreadsheets: protectedProcedure
+      .input(z.object({ pageToken: z.string().optional() }).optional())
+      .query(async ({ ctx, input }) => {
+        const token = await db.getGoogleOAuthToken(ctx.user.id);
+        if (!token) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Google account not connected' });
+        }
+        
+        // Check if we need to refresh the token
+        let accessToken = token.accessToken;
+        if (token.expiresAt && new Date(token.expiresAt) < new Date() && token.refreshToken) {
+          // Refresh the token
+          const clientId = process.env.GOOGLE_CLIENT_ID;
+          const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+          
+          if (clientId && clientSecret) {
+            const refreshResponse = await fetch('https://oauth2.googleapis.com/token', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+              body: new URLSearchParams({
+                client_id: clientId,
+                client_secret: clientSecret,
+                refresh_token: token.refreshToken,
+                grant_type: 'refresh_token',
+              }),
+            });
+            
+            if (refreshResponse.ok) {
+              const refreshData = await refreshResponse.json();
+              accessToken = refreshData.access_token;
+              await db.upsertGoogleOAuthToken({
+                userId: ctx.user.id,
+                accessToken: refreshData.access_token,
+                expiresAt: new Date(Date.now() + refreshData.expires_in * 1000),
+              });
+            }
+          }
+        }
+        
+        const url = `https://www.googleapis.com/drive/v3/files?q=mimeType='application/vnd.google-apps.spreadsheet'&fields=files(id,name,modifiedTime,owners)&orderBy=modifiedTime desc&pageSize=50${input?.pageToken ? `&pageToken=${input.pageToken}` : ''}`;
+        
+        const response = await fetch(url, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        
+        if (!response.ok) {
+          if (response.status === 401) {
+            throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Google token expired. Please reconnect your account.' });
+          }
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to list spreadsheets' });
+        }
+        
+        const data = await response.json();
+        return {
+          spreadsheets: data.files || [],
+          nextPageToken: data.nextPageToken,
+        };
+      }),
+    
+    // Fetch sheet data using OAuth token
+    fetchSheet: protectedProcedure
       .input(z.object({
         spreadsheetId: z.string().min(1),
         sheetName: z.string().optional(),
         range: z.string().optional(),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         const { spreadsheetId, sheetName, range } = input;
+        
+        // Try OAuth token first
+        const token = await db.getGoogleOAuthToken(ctx.user.id);
+        let accessToken = token?.accessToken;
+        
+        // If no OAuth token, fall back to API key
         const apiKey = process.env.GOOGLE_SHEETS_API_KEY;
         
-        if (!apiKey) {
+        if (!accessToken && !apiKey) {
           throw new TRPCError({ 
             code: 'PRECONDITION_FAILED', 
-            message: 'Google Sheets API key not configured. Please add GOOGLE_SHEETS_API_KEY to your environment.' 
+            message: 'Please connect your Google account or configure an API key.' 
           });
+        }
+        
+        // Refresh token if needed
+        if (token && token.expiresAt && new Date(token.expiresAt) < new Date() && token.refreshToken) {
+          const clientId = process.env.GOOGLE_CLIENT_ID;
+          const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+          
+          if (clientId && clientSecret) {
+            const refreshResponse = await fetch('https://oauth2.googleapis.com/token', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+              body: new URLSearchParams({
+                client_id: clientId,
+                client_secret: clientSecret,
+                refresh_token: token.refreshToken,
+                grant_type: 'refresh_token',
+              }),
+            });
+            
+            if (refreshResponse.ok) {
+              const refreshData = await refreshResponse.json();
+              accessToken = refreshData.access_token;
+              await db.upsertGoogleOAuthToken({
+                userId: ctx.user.id,
+                accessToken: refreshData.access_token,
+                expiresAt: new Date(Date.now() + refreshData.expires_in * 1000),
+              });
+            }
+          }
         }
         
         // Build the range string
         const rangeStr = sheetName ? `${sheetName}${range ? `!${range}` : ''}` : (range || 'A:ZZ');
         
-        const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(rangeStr)}?key=${apiKey}`;
+        // Build URL with either OAuth or API key
+        let url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(rangeStr)}`;
+        if (!accessToken) {
+          url += `?key=${apiKey}`;
+        }
         
         try {
-          const response = await fetch(url);
+          const fetchOptions: RequestInit = {};
+          if (accessToken) {
+            fetchOptions.headers = { Authorization: `Bearer ${accessToken}` };
+          }
+          
+          const response = await fetch(url, fetchOptions);
           if (!response.ok) {
             const error = await response.json();
             throw new TRPCError({ 
@@ -1422,22 +1563,33 @@ export const appRouter = router({
       }),
     
     // Get list of sheets in a spreadsheet
-    getSheetNames: adminProcedure
+    getSheetNames: protectedProcedure
       .input(z.object({ spreadsheetId: z.string().min(1) }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
+        // Try OAuth token first
+        const token = await db.getGoogleOAuthToken(ctx.user.id);
+        let accessToken = token?.accessToken;
         const apiKey = process.env.GOOGLE_SHEETS_API_KEY;
         
-        if (!apiKey) {
+        if (!accessToken && !apiKey) {
           throw new TRPCError({ 
             code: 'PRECONDITION_FAILED', 
-            message: 'Google Sheets API key not configured.' 
+            message: 'Please connect your Google account or configure an API key.' 
           });
         }
         
-        const url = `https://sheets.googleapis.com/v4/spreadsheets/${input.spreadsheetId}?key=${apiKey}&fields=sheets.properties.title`;
+        let url = `https://sheets.googleapis.com/v4/spreadsheets/${input.spreadsheetId}?fields=sheets.properties.title`;
+        if (!accessToken) {
+          url += `&key=${apiKey}`;
+        }
         
         try {
-          const response = await fetch(url);
+          const fetchOptions: RequestInit = {};
+          if (accessToken) {
+            fetchOptions.headers = { Authorization: `Bearer ${accessToken}` };
+          }
+          
+          const response = await fetch(url, fetchOptions);
           if (!response.ok) {
             const error = await response.json();
             throw new TRPCError({ 

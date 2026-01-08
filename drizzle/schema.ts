@@ -23,6 +23,23 @@ export const users = mysqlTable("users", {
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 
+// Google OAuth tokens for Drive/Sheets access
+export const googleOAuthTokens = mysqlTable("googleOAuthTokens", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  accessToken: text("accessToken").notNull(),
+  refreshToken: text("refreshToken"),
+  tokenType: varchar("tokenType", { length: 32 }).default("Bearer"),
+  expiresAt: timestamp("expiresAt"),
+  scope: text("scope"),
+  googleEmail: varchar("googleEmail", { length: 320 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type GoogleOAuthToken = typeof googleOAuthTokens.$inferSelect;
+export type InsertGoogleOAuthToken = typeof googleOAuthTokens.$inferInsert;
+
 // ============================================
 // CORE ENTITIES
 // ============================================

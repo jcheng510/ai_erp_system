@@ -89,3 +89,10 @@
 - [x] Data import logic for Contracts module
 - [x] Data import logic for Projects module
 - [x] Unit tests for import functionality (8 tests passing)
+
+## Google Drive OAuth Integration
+- [x] Google OAuth 2.0 authentication flow
+- [x] Store and refresh Google access tokens
+- [x] List Google Drive spreadsheets
+- [x] Access private sheets via Drive API
+- [x] Update import UI for OAuth flow
