@@ -54,6 +54,8 @@ import {
   Ship,
   FileCheck,
   Send,
+  MapPin,
+  ArrowRightLeft,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -95,8 +97,10 @@ const menuGroups = [
     items: [
       { icon: Package, label: "Products", path: "/operations/products" },
       { icon: Warehouse, label: "Inventory", path: "/operations/inventory" },
+      { icon: MapPin, label: "Locations", path: "/operations/locations" },
+      { icon: ArrowRightLeft, label: "Transfers", path: "/operations/transfers" },
       { icon: Building2, label: "Vendors", path: "/operations/vendors" },
-      { icon: FileText, label: "Purchase Orders", path: "/operations/purchase-orders" },
+      { icon: FileText, label: "POs", path: "/operations/purchase-orders" },
       { icon: Truck, label: "Shipments", path: "/operations/shipments" },
     ],
   },
@@ -308,65 +312,44 @@ function DashboardLayoutContent({
             </div>
           </SidebarHeader>
 
-          <SidebarContent className="gap-0 overflow-y-auto px-1">
-            {menuGroups.map((group) => (
-              <SidebarGroup key={group.label} className="py-1">
-                {isCollapsed ? (
-                  <SidebarMenu className="px-1 py-0.5 space-y-0.5">
-                    {group.items.map(item => {
-                      const isActive = location === item.path;
-                      return (
-                        <SidebarMenuItem key={item.path}>
-                          <SidebarMenuButton
-                            isActive={isActive}
+          <SidebarContent className="overflow-y-auto px-2 py-2">
+            <nav className="flex flex-col gap-1">
+              {menuGroups.map((group) => (
+                <div key={group.label} className="mb-1">
+                  {!isCollapsed && (
+                    <button
+                      onClick={() => toggleGroup(group.label)}
+                      className="w-full flex items-center justify-between px-2 py-1 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider hover:text-foreground transition-colors"
+                    >
+                      <span>{group.label}</span>
+                      <ChevronDown className={`h-3 w-3 transition-transform duration-200 ${openGroups.includes(group.label) ? "" : "-rotate-90"}`} />
+                    </button>
+                  )}
+                  {(isCollapsed || openGroups.includes(group.label)) && (
+                    <div className="flex flex-col gap-0.5">
+                      {group.items.map(item => {
+                        const isActive = location === item.path;
+                        return (
+                          <button
+                            key={item.path}
                             onClick={() => setLocation(item.path)}
-                            tooltip={item.label}
-                            className="h-8"
+                            className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-sm transition-colors ${
+                              isActive
+                                ? "bg-primary/10 text-primary font-medium"
+                                : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                            } ${isCollapsed ? "justify-center" : ""}`}
+                            title={isCollapsed ? item.label : undefined}
                           >
-                            <item.icon className={`h-4 w-4 ${isActive ? "text-primary" : ""}`} />
-                            <span>{item.label}</span>
-                          </SidebarMenuButton>
-                        </SidebarMenuItem>
-                      );
-                    })}
-                  </SidebarMenu>
-                ) : (
-                  <Collapsible
-                    open={openGroups.includes(group.label)}
-                    onOpenChange={() => toggleGroup(group.label)}
-                  >
-                    <CollapsibleTrigger asChild>
-                      <SidebarGroupLabel className="cursor-pointer hover:bg-accent/50 rounded-md mx-1 px-2 py-1.5 flex items-center justify-between text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
-                        {group.label}
-                        <ChevronDown className={`h-3 w-3 transition-transform ${openGroups.includes(group.label) ? "" : "-rotate-90"}`} />
-                      </SidebarGroupLabel>
-                    </CollapsibleTrigger>
-                    <CollapsibleContent>
-                      <SidebarGroupContent>
-                        <SidebarMenu className="px-1 py-0.5 space-y-0.5">
-                          {group.items.map(item => {
-                            const isActive = location === item.path;
-                            return (
-                              <SidebarMenuItem key={item.path}>
-                                <SidebarMenuButton
-                                  isActive={isActive}
-                                  onClick={() => setLocation(item.path)}
-                                  tooltip={item.label}
-                                  className={`h-8 transition-all font-normal text-[13px] ${isActive ? "bg-primary/10 text-primary font-medium" : ""}`}
-                                >
-                                  <item.icon className={`h-4 w-4 ${isActive ? "text-primary" : "text-muted-foreground"}`} />
-                                  <span>{item.label}</span>
-                                </SidebarMenuButton>
-                              </SidebarMenuItem>
-                            );
-                          })}
-                        </SidebarMenu>
-                      </SidebarGroupContent>
-                    </CollapsibleContent>
-                  </Collapsible>
-                )}
-              </SidebarGroup>
-            ))}
+                            <item.icon className={`h-4 w-4 shrink-0 ${isActive ? "text-primary" : ""}`} />
+                            {!isCollapsed && <span className="truncate">{item.label}</span>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </nav>
           </SidebarContent>
 
           <SidebarFooter className="p-3 border-t border-border/40">

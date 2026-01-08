@@ -29,6 +29,9 @@ import Inventory from "./pages/operations/Inventory";
 import Vendors from "./pages/operations/Vendors";
 import PurchaseOrders from "./pages/operations/PurchaseOrders";
 import Shipments from "./pages/operations/Shipments";
+import Locations from "./pages/operations/Locations";
+import Transfers from "./pages/operations/Transfers";
+import TransferDetail from "./pages/operations/TransferDetail";
 
 // Freight
 import FreightDashboard from "./pages/freight/FreightDashboard";
@@ -80,6 +83,9 @@ function Router() {
         <Route path="/operations/vendors" component={Vendors} />
         <Route path="/operations/purchase-orders" component={PurchaseOrders} />
         <Route path="/operations/shipments" component={Shipments} />
+        <Route path="/operations/locations" component={Locations} />
+        <Route path="/operations/transfers" component={Transfers} />
+        <Route path="/operations/transfers/:id" component={TransferDetail} />
 
         {/* Freight */}
         <Route path="/freight" component={FreightDashboard} />

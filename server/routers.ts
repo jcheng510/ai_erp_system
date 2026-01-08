@@ -633,8 +633,15 @@ export const appRouter = router({
   // ============================================
   warehouses: router({
     list: opsProcedure
-      .input(z.object({ companyId: z.number().optional() }).optional())
-      .query(({ input }) => db.getWarehouses(input?.companyId)),
+      .input(z.object({
+        companyId: z.number().optional(),
+        type: z.string().optional(),
+        status: z.string().optional(),
+      }).optional())
+      .query(({ input }) => db.getWarehouses(input)),
+    getById: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .query(({ input }) => db.getWarehouseById(input.id)),
     create: opsProcedure
       .input(z.object({
         name: z.string().min(1),
@@ -645,12 +652,134 @@ export const appRouter = router({
         state: z.string().optional(),
         country: z.string().optional(),
         postalCode: z.string().optional(),
-        type: z.enum(['warehouse', 'store', 'distribution']).optional(),
+        type: z.enum(['warehouse', 'store', 'distribution', 'copacker', '3pl']).optional(),
+        contactName: z.string().optional(),
+        contactEmail: z.string().optional(),
+        contactPhone: z.string().optional(),
+        isPrimary: z.boolean().optional(),
+        notes: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const result = await db.createWarehouse(input);
         await createAuditLog(ctx.user.id, 'create', 'warehouse', result.id, input.name);
         return result;
+      }),
+    update: opsProcedure
+      .input(z.object({
+        id: z.number(),
+        name: z.string().optional(),
+        code: z.string().optional(),
+        address: z.string().optional(),
+        city: z.string().optional(),
+        state: z.string().optional(),
+        country: z.string().optional(),
+        postalCode: z.string().optional(),
+        type: z.enum(['warehouse', 'store', 'distribution', 'copacker', '3pl']).optional(),
+        status: z.enum(['active', 'inactive']).optional(),
+        contactName: z.string().optional(),
+        contactEmail: z.string().optional(),
+        contactPhone: z.string().optional(),
+        isPrimary: z.boolean().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { id, ...data } = input;
+        await db.updateWarehouse(id, data);
+        await createAuditLog(ctx.user.id, 'update', 'warehouse', id, `Updated warehouse ${id}`);
+        return { success: true };
+      }),
+    delete: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deleteWarehouse(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'warehouse', input.id, `Deleted warehouse ${input.id}`);
+        return { success: true };
+      }),
+    summary: opsProcedure.query(() => db.getLocationInventorySummary()),
+  }),
+
+  // ============================================
+  // INVENTORY TRANSFERS
+  // ============================================
+  transfers: router({
+    list: opsProcedure
+      .input(z.object({
+        status: z.string().optional(),
+        fromWarehouseId: z.number().optional(),
+        toWarehouseId: z.number().optional(),
+      }).optional())
+      .query(({ input }) => db.getInventoryTransfers(input)),
+    getById: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const transfer = await db.getTransferById(input.id);
+        const items = await db.getTransferItems(input.id);
+        return { transfer, items };
+      }),
+    create: opsProcedure
+      .input(z.object({
+        fromWarehouseId: z.number(),
+        toWarehouseId: z.number(),
+        requestedDate: z.date(),
+        expectedArrival: z.date().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.createTransfer({
+          ...input,
+          requestedBy: ctx.user.id,
+        });
+        await createAuditLog(ctx.user.id, 'create', 'transfer', result.id, result.transferNumber);
+        return result;
+      }),
+    addItem: opsProcedure
+      .input(z.object({
+        transferId: z.number(),
+        productId: z.number(),
+        requestedQuantity: z.string(),
+        lotNumber: z.string().optional(),
+        expirationDate: z.date().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        return db.addTransferItem(input);
+      }),
+    ship: opsProcedure
+      .input(z.object({
+        id: z.number(),
+        trackingNumber: z.string().optional(),
+        carrier: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        if (input.trackingNumber || input.carrier) {
+          await db.updateTransfer(input.id, {
+            trackingNumber: input.trackingNumber,
+            carrier: input.carrier,
+          });
+        }
+        await db.processTransferShipment(input.id);
+        await createAuditLog(ctx.user.id, 'update', 'transfer', input.id, 'Shipped transfer');
+        return { success: true };
+      }),
+    receive: opsProcedure
+      .input(z.object({
+        id: z.number(),
+        items: z.array(z.object({
+          itemId: z.number(),
+          receivedQuantity: z.number(),
+        })),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        await db.processTransferReceipt(input.id, input.items);
+        await createAuditLog(ctx.user.id, 'update', 'transfer', input.id, 'Received transfer');
+        return { success: true };
+      }),
+    cancel: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.updateTransfer(input.id, { status: 'cancelled' });
+        await createAuditLog(ctx.user.id, 'update', 'transfer', input.id, 'Cancelled transfer');
+        return { success: true };
       }),
   }),
 

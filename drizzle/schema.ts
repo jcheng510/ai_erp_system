@@ -313,11 +313,61 @@ export const warehouses = mysqlTable("warehouses", {
   state: varchar("state", { length: 64 }),
   country: varchar("country", { length: 64 }),
   postalCode: varchar("postalCode", { length: 20 }),
-  type: mysqlEnum("type", ["warehouse", "store", "distribution"]).default("warehouse").notNull(),
+  type: mysqlEnum("type", ["warehouse", "store", "distribution", "copacker", "3pl"]).default("warehouse").notNull(),
   status: mysqlEnum("status", ["active", "inactive"]).default("active").notNull(),
+  contactName: varchar("contactName", { length: 255 }),
+  contactEmail: varchar("contactEmail", { length: 320 }),
+  contactPhone: varchar("contactPhone", { length: 32 }),
+  isPrimary: boolean("isPrimary").default(false),
+  notes: text("notes"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
+
+export type Warehouse = typeof warehouses.$inferSelect;
+export type InsertWarehouse = typeof warehouses.$inferInsert;
+
+// Inventory transfers between locations
+export const inventoryTransfers = mysqlTable("inventory_transfers", {
+  id: int("id").autoincrement().primaryKey(),
+  transferNumber: varchar("transferNumber", { length: 64 }).notNull(),
+  fromWarehouseId: int("fromWarehouseId").notNull(),
+  toWarehouseId: int("toWarehouseId").notNull(),
+  status: mysqlEnum("status", ["draft", "pending", "in_transit", "received", "cancelled"]).default("draft").notNull(),
+  requestedDate: timestamp("requestedDate").notNull(),
+  shippedDate: timestamp("shippedDate"),
+  receivedDate: timestamp("receivedDate"),
+  expectedArrival: timestamp("expectedArrival"),
+  trackingNumber: varchar("trackingNumber", { length: 128 }),
+  carrier: varchar("carrier", { length: 128 }),
+  notes: text("notes"),
+  requestedBy: int("requestedBy"),
+  approvedBy: int("approvedBy"),
+  approvedAt: timestamp("approvedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type InventoryTransfer = typeof inventoryTransfers.$inferSelect;
+export type InsertInventoryTransfer = typeof inventoryTransfers.$inferInsert;
+
+// Transfer line items
+export const inventoryTransferItems = mysqlTable("inventory_transfer_items", {
+  id: int("id").autoincrement().primaryKey(),
+  transferId: int("transferId").notNull(),
+  productId: int("productId").notNull(),
+  requestedQuantity: decimal("requestedQuantity", { precision: 15, scale: 4 }).notNull(),
+  shippedQuantity: decimal("shippedQuantity", { precision: 15, scale: 4 }),
+  receivedQuantity: decimal("receivedQuantity", { precision: 15, scale: 4 }),
+  lotNumber: varchar("lotNumber", { length: 64 }),
+  expirationDate: timestamp("expirationDate"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type InventoryTransferItem = typeof inventoryTransferItems.$inferSelect;
+export type InsertInventoryTransferItem = typeof inventoryTransferItems.$inferInsert;
 
 export const productionBatches = mysqlTable("production_batches", {
   id: int("id").autoincrement().primaryKey(),

@@ -12,13 +12,15 @@ import {
   googleOAuthTokens, InsertGoogleOAuthToken,
   freightCarriers, freightRfqs, freightQuotes, freightEmails,
   customsClearances, customsDocuments, freightBookings,
+  inventoryTransfers, inventoryTransferItems,
   InsertCompany, InsertCustomer, InsertVendor, InsertProduct,
   InsertAccount, InsertInvoice, InsertPayment, InsertTransaction,
-  InsertOrder, InsertInventory, InsertPurchaseOrder,
+  InsertOrder, InsertInventory, InsertPurchaseOrder, InsertWarehouse,
   InsertEmployee, InsertContract, InsertDispute, InsertDocument,
   InsertProject, InsertAuditLog,
   InsertFreightCarrier, InsertFreightRfq, InsertFreightQuote, InsertFreightEmail,
-  InsertCustomsClearance, InsertCustomsDocument, InsertFreightBooking
+  InsertCustomsClearance, InsertCustomsDocument, InsertFreightBooking,
+  InsertInventoryTransfer, InsertInventoryTransferItem
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -516,23 +518,59 @@ export async function updateInventory(id: number, data: Partial<InsertInventory>
 }
 
 // ============================================
-// OPERATIONS - WAREHOUSES
+// OPERATIONS - WAREHOUSES / LOCATIONS
 // ============================================
 
-export async function getWarehouses(companyId?: number) {
+export async function getWarehouses(filters?: { companyId?: number; type?: string; status?: string }) {
   const db = await getDb();
   if (!db) return [];
-  if (companyId) {
-    return db.select().from(warehouses).where(eq(warehouses.companyId, companyId)).orderBy(warehouses.name);
+  
+  let query = db.select().from(warehouses);
+  const conditions = [];
+  
+  if (filters?.companyId) {
+    conditions.push(eq(warehouses.companyId, filters.companyId));
   }
-  return db.select().from(warehouses).orderBy(warehouses.name);
+  if (filters?.type) {
+    conditions.push(eq(warehouses.type, filters.type as any));
+  }
+  if (filters?.status) {
+    conditions.push(eq(warehouses.status, filters.status as any));
+  }
+  
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as any;
+  }
+  
+  return query.orderBy(warehouses.name);
 }
 
-export async function createWarehouse(data: typeof warehouses.$inferInsert) {
+export async function getWarehouseById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(warehouses).where(eq(warehouses.id, id)).limit(1);
+  return result[0] || null;
+}
+
+export async function createWarehouse(data: InsertWarehouse) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const result = await db.insert(warehouses).values(data);
   return { id: result[0].insertId };
+}
+
+export async function updateWarehouse(id: number, data: Partial<InsertWarehouse>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(warehouses).set(data).where(eq(warehouses.id, id));
+  return { success: true };
+}
+
+export async function deleteWarehouse(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(warehouses).where(eq(warehouses.id, id));
+  return { success: true };
 }
 
 // ============================================
@@ -1556,4 +1594,228 @@ export async function getFreightDashboardStats() {
     pendingClearances: clearanceCount?.count || 0,
     totalCarriers: carrierCount?.count || 0,
   };
+}
+
+
+// ============================================
+// INVENTORY BY LOCATION
+// ============================================
+
+export async function getInventoryByLocation(warehouseId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  
+  if (warehouseId) {
+    return db.select().from(inventory).where(eq(inventory.warehouseId, warehouseId)).orderBy(desc(inventory.updatedAt));
+  }
+  return db.select().from(inventory).orderBy(desc(inventory.updatedAt));
+}
+
+export async function getConsolidatedInventory() {
+  const db = await getDb();
+  if (!db) return [];
+  
+  // Get inventory grouped by product with location breakdown
+  const result = await db.select({
+    productId: inventory.productId,
+    warehouseId: inventory.warehouseId,
+    quantity: inventory.quantity,
+    reservedQuantity: inventory.reservedQuantity,
+  }).from(inventory);
+  
+  return result;
+}
+
+export async function getInventoryByProduct(productId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  
+  return db.select().from(inventory).where(eq(inventory.productId, productId));
+}
+
+export async function updateInventoryQuantity(productId: number, warehouseId: number, quantityChange: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  // Check if inventory record exists
+  const existing = await db.select().from(inventory)
+    .where(and(eq(inventory.productId, productId), eq(inventory.warehouseId, warehouseId)))
+    .limit(1);
+  
+  if (existing.length > 0) {
+    const currentQty = parseFloat(existing[0].quantity as string) || 0;
+    const newQty = currentQty + quantityChange;
+    await db.update(inventory)
+      .set({ quantity: newQty.toString() })
+      .where(and(eq(inventory.productId, productId), eq(inventory.warehouseId, warehouseId)));
+  } else {
+    await db.insert(inventory).values({
+      productId,
+      warehouseId,
+      quantity: quantityChange.toString(),
+    });
+  }
+  
+  return { success: true };
+}
+
+// ============================================
+// INVENTORY TRANSFERS
+// ============================================
+
+export async function getInventoryTransfers(filters?: { status?: string; fromWarehouseId?: number; toWarehouseId?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  
+  let query = db.select().from(inventoryTransfers);
+  const conditions = [];
+  
+  if (filters?.status) {
+    conditions.push(eq(inventoryTransfers.status, filters.status as any));
+  }
+  if (filters?.fromWarehouseId) {
+    conditions.push(eq(inventoryTransfers.fromWarehouseId, filters.fromWarehouseId));
+  }
+  if (filters?.toWarehouseId) {
+    conditions.push(eq(inventoryTransfers.toWarehouseId, filters.toWarehouseId));
+  }
+  
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as any;
+  }
+  
+  return query.orderBy(desc(inventoryTransfers.createdAt));
+}
+
+export async function getTransferById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(inventoryTransfers).where(eq(inventoryTransfers.id, id)).limit(1);
+  return result[0] || null;
+}
+
+export async function getTransferItems(transferId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(inventoryTransferItems).where(eq(inventoryTransferItems.transferId, transferId));
+}
+
+export async function createTransfer(data: Omit<InsertInventoryTransfer, 'transferNumber'>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  // Generate transfer number
+  const transferNumber = `TRF-${Date.now().toString(36).toUpperCase()}`;
+  
+  const result = await db.insert(inventoryTransfers).values({
+    ...data,
+    transferNumber,
+  });
+  
+  return { id: result[0].insertId, transferNumber };
+}
+
+export async function addTransferItem(data: InsertInventoryTransferItem) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(inventoryTransferItems).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateTransfer(id: number, data: Partial<InsertInventoryTransfer>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(inventoryTransfers).set(data).where(eq(inventoryTransfers.id, id));
+  return { success: true };
+}
+
+export async function updateTransferItem(id: number, data: Partial<InsertInventoryTransferItem>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(inventoryTransferItems).set(data).where(eq(inventoryTransferItems.id, id));
+  return { success: true };
+}
+
+export async function processTransferShipment(transferId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  // Get transfer and items
+  const transfer = await getTransferById(transferId);
+  if (!transfer) throw new Error("Transfer not found");
+  
+  const items = await getTransferItems(transferId);
+  
+  // Deduct from source warehouse
+  for (const item of items) {
+    const qty = parseFloat(item.requestedQuantity as string) || 0;
+    await updateInventoryQuantity(item.productId, transfer.fromWarehouseId, -qty);
+  }
+  
+  // Update transfer status
+  await updateTransfer(transferId, {
+    status: 'in_transit',
+    shippedDate: new Date(),
+  });
+  
+  // Update items with shipped quantity
+  for (const item of items) {
+    await updateTransferItem(item.id, {
+      shippedQuantity: item.requestedQuantity,
+    });
+  }
+  
+  return { success: true };
+}
+
+export async function processTransferReceipt(transferId: number, receivedItems: { itemId: number; receivedQuantity: number }[]) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  // Get transfer
+  const transfer = await getTransferById(transferId);
+  if (!transfer) throw new Error("Transfer not found");
+  
+  // Add to destination warehouse
+  for (const received of receivedItems) {
+    const item = await db.select().from(inventoryTransferItems).where(eq(inventoryTransferItems.id, received.itemId)).limit(1);
+    if (item[0]) {
+      await updateInventoryQuantity(item[0].productId, transfer.toWarehouseId, received.receivedQuantity);
+      await updateTransferItem(received.itemId, {
+        receivedQuantity: received.receivedQuantity.toString(),
+      });
+    }
+  }
+  
+  // Update transfer status
+  await updateTransfer(transferId, {
+    status: 'received',
+    receivedDate: new Date(),
+  });
+  
+  return { success: true };
+}
+
+export async function getLocationInventorySummary() {
+  const db = await getDb();
+  if (!db) return [];
+  
+  // Get all warehouses with their inventory counts
+  const warehouseList = await db.select().from(warehouses).where(eq(warehouses.status, 'active'));
+  
+  const summaries = [];
+  for (const wh of warehouseList) {
+    const invItems = await db.select({
+      totalProducts: count(),
+      totalQuantity: sum(inventory.quantity),
+    }).from(inventory).where(eq(inventory.warehouseId, wh.id));
+    
+    summaries.push({
+      warehouse: wh,
+      totalProducts: invItems[0]?.totalProducts || 0,
+      totalQuantity: parseFloat(invItems[0]?.totalQuantity as string || '0'),
+    });
+  }
+  
+  return summaries;
 }

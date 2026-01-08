@@ -130,3 +130,12 @@
 ## Navigation Styling Fixes
 - [x] Fix overlapping text in navigation menu
 - [x] Reduce excessive spacing between menu items
+
+## Multi-Location Inventory Management
+- [x] Add locations/facilities table to database (copacker, warehouse, 3PL types)
+- [x] Update inventory to track stock by location
+- [x] Add inventory transfers between locations
+- [x] Location management UI (add/edit facilities)
+- [x] Inventory view with location filter
+- [x] Transfer request workflow (draft → pending → in_transit → received)
+- [x] Consolidated inventory dashboard across all locations
