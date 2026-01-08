@@ -118,8 +118,6 @@ const menuGroups = [
   {
     label: "Freight",
     items: [
-      { icon: Ship, label: "Overview", path: "/freight" },
-      { icon: Building2, label: "Carriers", path: "/freight/carriers" },
       { icon: Send, label: "Quote Requests", path: "/freight/rfqs" },
       { icon: FileCheck, label: "Customs", path: "/freight/customs" },
     ],

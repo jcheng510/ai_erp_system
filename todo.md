@@ -120,3 +120,9 @@
 - [x] Update RFQ status through workflow stages
 - [x] Add email parsing for incoming quote responses
 - [x] AI quote analysis and scoring
+
+## Navigation Consolidation
+- [x] Remove separate Carriers menu item from Freight
+- [x] Add carrier/forwarder tab to Vendors page
+- [x] Simplify Freight menu to just RFQs and Customs
+- [x] Freight carriers now managed in Vendors & Carriers page
