@@ -4,6 +4,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Dialog,
   DialogContent,
@@ -12,6 +14,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -36,6 +45,9 @@ import {
   CheckCircle,
   XCircle,
   Mail,
+  Plus,
+  FileText,
+  Truck,
 } from "lucide-react";
 import { Link, useParams, useLocation } from "wouter";
 import { Streamdown } from "streamdown";
@@ -51,6 +63,26 @@ export default function RFQDetail() {
   const [emailParseOpen, setEmailParseOpen] = useState(false);
   const [emailContent, setEmailContent] = useState({ fromEmail: "", subject: "", body: "" });
   const [selectedCarrierForEmail, setSelectedCarrierForEmail] = useState<number | null>(null);
+  
+  // Manual quote form state
+  const [quoteForm, setQuoteForm] = useState({
+    carrierId: 0,
+    quoteNumber: "",
+    freightCost: "",
+    fuelSurcharge: "",
+    originCharges: "",
+    destinationCharges: "",
+    customsFees: "",
+    insuranceCost: "",
+    otherCharges: "",
+    totalCost: "",
+    currency: "USD",
+    transitDays: "",
+    shippingMode: "",
+    routeDescription: "",
+    validUntil: "",
+    notes: "",
+  });
 
   const utils = trpc.useUtils();
   const { data: rfq, isLoading: rfqLoading } = trpc.freight.rfqs.get.useQuery({ id: rfqId });
@@ -60,7 +92,7 @@ export default function RFQDetail() {
 
   const sendToCarriersMutation = trpc.freight.rfqs.sendToCarriers.useMutation({
     onSuccess: (result) => {
-      toast.success(`RFQ sent to ${result.sent} carriers`);
+      toast.success(`RFQ sent to ${result.sent} carriers! Email drafts created.`);
       utils.freight.rfqs.get.invalidate({ id: rfqId });
       utils.freight.emails.list.invalidate({ rfqId });
       setSendDialogOpen(false);
@@ -71,9 +103,22 @@ export default function RFQDetail() {
     },
   });
 
+  const createQuoteMutation = trpc.freight.quotes.create.useMutation({
+    onSuccess: () => {
+      toast.success("Quote added successfully");
+      utils.freight.quotes.list.invalidate({ rfqId });
+      utils.freight.rfqs.get.invalidate({ id: rfqId });
+      setManualQuoteOpen(false);
+      resetQuoteForm();
+    },
+    onError: (error) => {
+      toast.error(error.message || "Failed to add quote");
+    },
+  });
+
   const analyzeQuotesMutation = trpc.freight.quotes.analyzeQuotes.useMutation({
-    onSuccess: (analysis) => {
-      toast.success("AI analysis complete");
+    onSuccess: () => {
+      toast.success("AI analysis complete - scores updated");
       utils.freight.quotes.list.invalidate({ rfqId });
     },
     onError: (error) => {
@@ -86,17 +131,26 @@ export default function RFQDetail() {
       toast.success(`Quote accepted! Booking ${result.booking.bookingNumber} created`);
       utils.freight.quotes.list.invalidate({ rfqId });
       utils.freight.rfqs.get.invalidate({ id: rfqId });
-      setLocation(`/freight/bookings/${result.booking.id}`);
     },
     onError: (error) => {
       toast.error(error.message || "Failed to accept quote");
     },
   });
 
+  const rejectQuoteMutation = trpc.freight.quotes.update.useMutation({
+    onSuccess: () => {
+      toast.success("Quote rejected");
+      utils.freight.quotes.list.invalidate({ rfqId });
+    },
+    onError: (error) => {
+      toast.error(error.message || "Failed to reject quote");
+    },
+  });
+
   const parseEmailMutation = trpc.freight.emails.parseIncoming.useMutation({
     onSuccess: (result) => {
       if (result.quote) {
-        toast.success("Quote extracted from email");
+        toast.success("Quote extracted from email successfully!");
       } else {
         toast.info("Email saved but no quote data could be extracted");
       }
@@ -104,11 +158,33 @@ export default function RFQDetail() {
       utils.freight.emails.list.invalidate({ rfqId });
       setEmailParseOpen(false);
       setEmailContent({ fromEmail: "", subject: "", body: "" });
+      setSelectedCarrierForEmail(null);
     },
     onError: (error) => {
       toast.error(error.message || "Failed to parse email");
     },
   });
+
+  const resetQuoteForm = () => {
+    setQuoteForm({
+      carrierId: 0,
+      quoteNumber: "",
+      freightCost: "",
+      fuelSurcharge: "",
+      originCharges: "",
+      destinationCharges: "",
+      customsFees: "",
+      insuranceCost: "",
+      otherCharges: "",
+      totalCost: "",
+      currency: "USD",
+      transitDays: "",
+      shippingMode: "",
+      routeDescription: "",
+      validUntil: "",
+      notes: "",
+    });
+  };
 
   const handleSendToCarriers = () => {
     if (selectedCarriers.length === 0) {
@@ -118,9 +194,40 @@ export default function RFQDetail() {
     sendToCarriersMutation.mutate({ rfqId, carrierIds: selectedCarriers });
   };
 
+  const handleAddQuote = () => {
+    if (!quoteForm.carrierId) {
+      toast.error("Please select a carrier");
+      return;
+    }
+    createQuoteMutation.mutate({
+      rfqId,
+      carrierId: quoteForm.carrierId,
+      quoteNumber: quoteForm.quoteNumber || undefined,
+      freightCost: quoteForm.freightCost || undefined,
+      fuelSurcharge: quoteForm.fuelSurcharge || undefined,
+      originCharges: quoteForm.originCharges || undefined,
+      destinationCharges: quoteForm.destinationCharges || undefined,
+      customsFees: quoteForm.customsFees || undefined,
+      insuranceCost: quoteForm.insuranceCost || undefined,
+      otherCharges: quoteForm.otherCharges || undefined,
+      totalCost: quoteForm.totalCost || undefined,
+      currency: quoteForm.currency,
+      transitDays: quoteForm.transitDays ? parseInt(quoteForm.transitDays) : undefined,
+      shippingMode: quoteForm.shippingMode || undefined,
+      routeDescription: quoteForm.routeDescription || undefined,
+      validUntil: quoteForm.validUntil ? new Date(quoteForm.validUntil) : undefined,
+      notes: quoteForm.notes || undefined,
+      receivedVia: 'manual',
+    });
+  };
+
   const handleParseEmail = () => {
     if (!selectedCarrierForEmail) {
       toast.error("Please select a carrier");
+      return;
+    }
+    if (!emailContent.body.trim()) {
+      toast.error("Please paste the email content");
       return;
     }
     parseEmailMutation.mutate({
@@ -128,6 +235,21 @@ export default function RFQDetail() {
       carrierId: selectedCarrierForEmail,
       ...emailContent,
     });
+  };
+
+  // Calculate total from individual costs
+  const calculateTotal = () => {
+    const costs = [
+      quoteForm.freightCost,
+      quoteForm.fuelSurcharge,
+      quoteForm.originCharges,
+      quoteForm.destinationCharges,
+      quoteForm.customsFees,
+      quoteForm.insuranceCost,
+      quoteForm.otherCharges,
+    ];
+    const total = costs.reduce((sum, cost) => sum + (parseFloat(cost) || 0), 0);
+    setQuoteForm({ ...quoteForm, totalCost: total.toFixed(2) });
   };
 
   if (rfqLoading) {
@@ -149,6 +271,9 @@ export default function RFQDetail() {
     );
   }
 
+  const statusSteps = ['draft', 'sent', 'quotes_received', 'awarded'];
+  const currentStepIndex = statusSteps.indexOf(rfq.status);
+
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
@@ -165,6 +290,7 @@ export default function RFQDetail() {
               <Badge variant={
                 rfq.status === 'quotes_received' ? 'default' :
                 rfq.status === 'awarded' ? 'secondary' :
+                rfq.status === 'cancelled' ? 'destructive' :
                 'outline'
               }>
                 {rfq.status.replace(/_/g, ' ')}
@@ -180,13 +306,19 @@ export default function RFQDetail() {
               Send to Carriers
             </Button>
           )}
-          {(rfq.status === 'sent' || rfq.status === 'awaiting_quotes') && (
+          {rfq.status !== 'awarded' && rfq.status !== 'cancelled' && (
+            <Button variant="outline" onClick={() => setManualQuoteOpen(true)}>
+              <Plus className="h-4 w-4 mr-2" />
+              Add Quote Manually
+            </Button>
+          )}
+          {(rfq.status === 'sent' || rfq.status === 'awaiting_quotes' || rfq.status === 'quotes_received') && (
             <Button variant="outline" onClick={() => setEmailParseOpen(true)}>
               <Mail className="h-4 w-4 mr-2" />
               Add Quote from Email
             </Button>
           )}
-          {quotes && quotes.length > 1 && (
+          {quotes && quotes.length > 1 && rfq.status !== 'awarded' && (
             <Button
               variant="outline"
               onClick={() => analyzeQuotesMutation.mutate({ rfqId })}
@@ -202,6 +334,37 @@ export default function RFQDetail() {
           )}
         </div>
       </div>
+
+      {/* Status Progress */}
+      <Card>
+        <CardContent className="pt-6">
+          <div className="flex items-center justify-between">
+            {statusSteps.map((step, index) => (
+              <div key={step} className="flex items-center">
+                <div className={`flex items-center justify-center w-8 h-8 rounded-full ${
+                  index <= currentStepIndex 
+                    ? 'bg-primary text-primary-foreground' 
+                    : 'bg-muted text-muted-foreground'
+                }`}>
+                  {index < currentStepIndex ? (
+                    <CheckCircle className="h-5 w-5" />
+                  ) : (
+                    <span>{index + 1}</span>
+                  )}
+                </div>
+                <span className={`ml-2 text-sm ${index <= currentStepIndex ? 'font-medium' : 'text-muted-foreground'}`}>
+                  {step.replace(/_/g, ' ')}
+                </span>
+                {index < statusSteps.length - 1 && (
+                  <div className={`w-16 h-0.5 mx-4 ${
+                    index < currentStepIndex ? 'bg-primary' : 'bg-muted'
+                  }`} />
+                )}
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Shipment Details */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -298,8 +461,19 @@ export default function RFQDetail() {
       {/* Quotes */}
       <Card>
         <CardHeader>
-          <CardTitle>Quotes Received ({quotes?.length || 0})</CardTitle>
-          <CardDescription>Compare quotes from carriers</CardDescription>
+          <CardTitle className="flex items-center justify-between">
+            <span>Quotes Received ({quotes?.length || 0})</span>
+            {quotes && quotes.length > 0 && (
+              <Badge variant="outline">
+                Best: {quotes.reduce((min, q) => 
+                  parseFloat(q.totalCost || '999999') < parseFloat(min.totalCost || '999999') ? q : min
+                ).totalCost ? `$${quotes.reduce((min, q) => 
+                  parseFloat(q.totalCost || '999999') < parseFloat(min.totalCost || '999999') ? q : min
+                ).totalCost}` : 'N/A'}
+              </Badge>
+            )}
+          </CardTitle>
+          <CardDescription>Compare quotes from carriers and accept the best offer</CardDescription>
         </CardHeader>
         <CardContent>
           {quotesLoading ? (
@@ -323,12 +497,6 @@ export default function RFQDetail() {
               <TableBody>
                 {quotes.map((quote) => {
                   const carrier = carriers?.find(c => c.id === quote.carrierId);
-                  let aiAnalysis: { pros?: string[]; cons?: string[] } = {};
-                  try {
-                    if (quote.aiAnalysis) {
-                      aiAnalysis = JSON.parse(quote.aiAnalysis);
-                    }
-                  } catch {}
                   
                   return (
                     <TableRow key={quote.id} className={quote.aiRecommendation === 'Recommended' ? 'bg-green-50' : ''}>
@@ -349,7 +517,7 @@ export default function RFQDetail() {
                         <div className="flex items-center gap-1">
                           <DollarSign className="h-4 w-4 text-muted-foreground" />
                           <span className="font-medium">
-                            {quote.currency || 'USD'} {quote.totalCost || 'TBD'}
+                            {quote.totalCost ? `${quote.currency || 'USD'} ${quote.totalCost}` : 'TBD'}
                           </span>
                         </div>
                       </TableCell>
@@ -372,7 +540,7 @@ export default function RFQDetail() {
                             <span className="text-sm">{quote.aiScore}</span>
                           </div>
                         ) : (
-                          <span className="text-muted-foreground text-sm">Not analyzed</span>
+                          <span className="text-muted-foreground text-sm">-</span>
                         )}
                       </TableCell>
                       <TableCell>
@@ -391,18 +559,35 @@ export default function RFQDetail() {
                       </TableCell>
                       <TableCell className="text-right">
                         {quote.status === 'received' && rfq.status !== 'awarded' && (
-                          <Button
-                            size="sm"
-                            onClick={() => acceptQuoteMutation.mutate({ quoteId: quote.id })}
-                            disabled={acceptQuoteMutation.isPending}
-                          >
-                            {acceptQuoteMutation.isPending ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                              <CheckCircle className="h-4 w-4 mr-1" />
-                            )}
-                            Accept
-                          </Button>
+                          <div className="flex items-center justify-end gap-2">
+                            <Button
+                              size="sm"
+                              onClick={() => acceptQuoteMutation.mutate({ quoteId: quote.id })}
+                              disabled={acceptQuoteMutation.isPending}
+                            >
+                              {acceptQuoteMutation.isPending ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <CheckCircle className="h-4 w-4 mr-1" />
+                              )}
+                              Accept
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => rejectQuoteMutation.mutate({ id: quote.id, status: 'rejected' })}
+                              disabled={rejectQuoteMutation.isPending}
+                            >
+                              <XCircle className="h-4 w-4 mr-1" />
+                              Reject
+                            </Button>
+                          </div>
+                        )}
+                        {quote.status === 'accepted' && (
+                          <Badge variant="default" className="bg-green-600">
+                            <CheckCircle className="h-3 w-3 mr-1" />
+                            Winner
+                          </Badge>
                         )}
                       </TableCell>
                     </TableRow>
@@ -414,11 +599,18 @@ export default function RFQDetail() {
             <div className="text-center py-8 text-muted-foreground">
               <DollarSign className="h-12 w-12 mx-auto mb-2 opacity-50" />
               <p>No quotes received yet</p>
-              {rfq.status === 'draft' && (
-                <Button variant="link" onClick={() => setSendDialogOpen(true)}>
-                  Send RFQ to carriers
+              <div className="flex items-center justify-center gap-2 mt-4">
+                {rfq.status === 'draft' && (
+                  <Button variant="outline" onClick={() => setSendDialogOpen(true)}>
+                    <Send className="h-4 w-4 mr-2" />
+                    Send RFQ to Carriers
+                  </Button>
+                )}
+                <Button variant="outline" onClick={() => setManualQuoteOpen(true)}>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add Quote Manually
                 </Button>
-              )}
+              </div>
             </div>
           )}
         </CardContent>
@@ -468,42 +660,55 @@ export default function RFQDetail() {
           <DialogHeader>
             <DialogTitle>Send RFQ to Carriers</DialogTitle>
             <DialogDescription>
-              Select carriers to send this quote request to. AI will generate personalized emails.
+              Select carriers to send this quote request to. AI will generate personalized emails for each carrier.
             </DialogDescription>
           </DialogHeader>
           <div className="py-4">
-            <div className="space-y-2 max-h-96 overflow-y-auto">
-              {carriers?.map((carrier) => (
-                <div
-                  key={carrier.id}
-                  className="flex items-center space-x-3 p-3 rounded-lg border hover:bg-muted cursor-pointer"
-                  onClick={() => {
-                    if (selectedCarriers.includes(carrier.id)) {
-                      setSelectedCarriers(selectedCarriers.filter(id => id !== carrier.id));
-                    } else {
-                      setSelectedCarriers([...selectedCarriers, carrier.id]);
-                    }
-                  }}
-                >
-                  <Checkbox
-                    checked={selectedCarriers.includes(carrier.id)}
-                    disabled={!carrier.email}
-                  />
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium">{carrier.name}</span>
-                      {carrier.isPreferred && (
-                        <Star className="h-4 w-4 text-yellow-500 fill-yellow-500" />
-                      )}
+            {carriers && carriers.length > 0 ? (
+              <div className="space-y-2 max-h-96 overflow-y-auto">
+                {carriers.map((carrier) => (
+                  <div
+                    key={carrier.id}
+                    className={`flex items-center space-x-3 p-3 rounded-lg border hover:bg-muted cursor-pointer ${
+                      !carrier.email ? 'opacity-50' : ''
+                    }`}
+                    onClick={() => {
+                      if (!carrier.email) return;
+                      if (selectedCarriers.includes(carrier.id)) {
+                        setSelectedCarriers(selectedCarriers.filter(id => id !== carrier.id));
+                      } else {
+                        setSelectedCarriers([...selectedCarriers, carrier.id]);
+                      }
+                    }}
+                  >
+                    <Checkbox
+                      checked={selectedCarriers.includes(carrier.id)}
+                      disabled={!carrier.email}
+                    />
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{carrier.name}</span>
+                        {carrier.isPreferred && (
+                          <Star className="h-4 w-4 text-yellow-500 fill-yellow-500" />
+                        )}
+                      </div>
+                      <p className="text-sm text-muted-foreground">
+                        {carrier.email || 'No email address - cannot send'}
+                      </p>
                     </div>
-                    <p className="text-sm text-muted-foreground">
-                      {carrier.email || 'No email address'}
-                    </p>
+                    <Badge variant="outline">{carrier.type}</Badge>
                   </div>
-                  <Badge variant="outline">{carrier.type}</Badge>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-8 text-muted-foreground">
+                <Truck className="h-12 w-12 mx-auto mb-2 opacity-50" />
+                <p>No carriers found</p>
+                <Link href="/freight/carriers">
+                  <Button variant="link">Add carriers first</Button>
+                </Link>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setSendDialogOpen(false)}>
@@ -524,53 +729,274 @@ export default function RFQDetail() {
         </DialogContent>
       </Dialog>
 
+      {/* Manual Quote Entry Dialog */}
+      <Dialog open={manualQuoteOpen} onOpenChange={setManualQuoteOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Add Quote Manually</DialogTitle>
+            <DialogDescription>
+              Enter quote details received from a carrier via phone, portal, or other means.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="col-span-2 space-y-2">
+                <Label>Carrier *</Label>
+                <Select
+                  value={quoteForm.carrierId ? quoteForm.carrierId.toString() : ""}
+                  onValueChange={(value) => setQuoteForm({ ...quoteForm, carrierId: parseInt(value) })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select carrier" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {carriers?.map((carrier) => (
+                      <SelectItem key={carrier.id} value={carrier.id.toString()}>
+                        {carrier.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              
+              <div className="space-y-2">
+                <Label>Quote Number</Label>
+                <Input
+                  value={quoteForm.quoteNumber}
+                  onChange={(e) => setQuoteForm({ ...quoteForm, quoteNumber: e.target.value })}
+                  placeholder="e.g., QT-2025-001"
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <Label>Shipping Mode</Label>
+                <Select
+                  value={quoteForm.shippingMode}
+                  onValueChange={(value) => setQuoteForm({ ...quoteForm, shippingMode: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select mode" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ocean_fcl">Ocean FCL</SelectItem>
+                    <SelectItem value="ocean_lcl">Ocean LCL</SelectItem>
+                    <SelectItem value="air">Air Freight</SelectItem>
+                    <SelectItem value="express">Express/Courier</SelectItem>
+                    <SelectItem value="ground">Ground</SelectItem>
+                    <SelectItem value="rail">Rail</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="border-t pt-4">
+              <h4 className="font-medium mb-3">Cost Breakdown ({quoteForm.currency})</h4>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Freight Cost</Label>
+                  <Input
+                    type="number"
+                    value={quoteForm.freightCost}
+                    onChange={(e) => setQuoteForm({ ...quoteForm, freightCost: e.target.value })}
+                    placeholder="0.00"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Fuel Surcharge</Label>
+                  <Input
+                    type="number"
+                    value={quoteForm.fuelSurcharge}
+                    onChange={(e) => setQuoteForm({ ...quoteForm, fuelSurcharge: e.target.value })}
+                    placeholder="0.00"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Origin Charges</Label>
+                  <Input
+                    type="number"
+                    value={quoteForm.originCharges}
+                    onChange={(e) => setQuoteForm({ ...quoteForm, originCharges: e.target.value })}
+                    placeholder="0.00"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Destination Charges</Label>
+                  <Input
+                    type="number"
+                    value={quoteForm.destinationCharges}
+                    onChange={(e) => setQuoteForm({ ...quoteForm, destinationCharges: e.target.value })}
+                    placeholder="0.00"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Customs Fees</Label>
+                  <Input
+                    type="number"
+                    value={quoteForm.customsFees}
+                    onChange={(e) => setQuoteForm({ ...quoteForm, customsFees: e.target.value })}
+                    placeholder="0.00"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Insurance Cost</Label>
+                  <Input
+                    type="number"
+                    value={quoteForm.insuranceCost}
+                    onChange={(e) => setQuoteForm({ ...quoteForm, insuranceCost: e.target.value })}
+                    placeholder="0.00"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Other Charges</Label>
+                  <Input
+                    type="number"
+                    value={quoteForm.otherCharges}
+                    onChange={(e) => setQuoteForm({ ...quoteForm, otherCharges: e.target.value })}
+                    placeholder="0.00"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Currency</Label>
+                  <Select
+                    value={quoteForm.currency}
+                    onValueChange={(value) => setQuoteForm({ ...quoteForm, currency: value })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="USD">USD</SelectItem>
+                      <SelectItem value="EUR">EUR</SelectItem>
+                      <SelectItem value="GBP">GBP</SelectItem>
+                      <SelectItem value="CNY">CNY</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="flex items-center gap-4 mt-4">
+                <Button type="button" variant="outline" size="sm" onClick={calculateTotal}>
+                  Calculate Total
+                </Button>
+                <div className="flex items-center gap-2">
+                  <Label>Total Cost:</Label>
+                  <Input
+                    type="number"
+                    value={quoteForm.totalCost}
+                    onChange={(e) => setQuoteForm({ ...quoteForm, totalCost: e.target.value })}
+                    className="w-32"
+                    placeholder="0.00"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="border-t pt-4">
+              <h4 className="font-medium mb-3">Transit & Validity</h4>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Transit Days</Label>
+                  <Input
+                    type="number"
+                    value={quoteForm.transitDays}
+                    onChange={(e) => setQuoteForm({ ...quoteForm, transitDays: e.target.value })}
+                    placeholder="e.g., 25"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Valid Until</Label>
+                  <Input
+                    type="date"
+                    value={quoteForm.validUntil}
+                    onChange={(e) => setQuoteForm({ ...quoteForm, validUntil: e.target.value })}
+                  />
+                </div>
+                <div className="col-span-2 space-y-2">
+                  <Label>Route Description</Label>
+                  <Input
+                    value={quoteForm.routeDescription}
+                    onChange={(e) => setQuoteForm({ ...quoteForm, routeDescription: e.target.value })}
+                    placeholder="e.g., Shenzhen → Hong Kong → Los Angeles"
+                  />
+                </div>
+                <div className="col-span-2 space-y-2">
+                  <Label>Notes</Label>
+                  <Textarea
+                    value={quoteForm.notes}
+                    onChange={(e) => setQuoteForm({ ...quoteForm, notes: e.target.value })}
+                    placeholder="Any additional notes or conditions..."
+                    rows={3}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setManualQuoteOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleAddQuote}
+              disabled={!quoteForm.carrierId || createQuoteMutation.isPending}
+            >
+              {createQuoteMutation.isPending ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Plus className="h-4 w-4 mr-2" />
+              )}
+              Add Quote
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Parse Email Dialog */}
       <Dialog open={emailParseOpen} onOpenChange={setEmailParseOpen}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Add Quote from Email</DialogTitle>
             <DialogDescription>
-              Paste the carrier's email response and AI will extract the quote details.
+              Paste the carrier's email response and AI will extract the quote details automatically.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <label className="text-sm font-medium">Carrier</label>
-              <select
-                className="w-full p-2 border rounded-md"
-                value={selectedCarrierForEmail || ""}
-                onChange={(e) => setSelectedCarrierForEmail(parseInt(e.target.value))}
+              <Label>Carrier *</Label>
+              <Select
+                value={selectedCarrierForEmail ? selectedCarrierForEmail.toString() : ""}
+                onValueChange={(value) => setSelectedCarrierForEmail(parseInt(value))}
               >
-                <option value="">Select carrier...</option>
-                {carriers?.map((carrier) => (
-                  <option key={carrier.id} value={carrier.id}>
-                    {carrier.name}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select carrier" />
+                </SelectTrigger>
+                <SelectContent>
+                  {carriers?.map((carrier) => (
+                    <SelectItem key={carrier.id} value={carrier.id.toString()}>
+                      {carrier.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium">From Email</label>
-              <input
+              <Label>From Email</Label>
+              <Input
                 type="email"
-                className="w-full p-2 border rounded-md"
                 placeholder="sender@carrier.com"
                 value={emailContent.fromEmail}
                 onChange={(e) => setEmailContent({ ...emailContent, fromEmail: e.target.value })}
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium">Subject</label>
-              <input
+              <Label>Subject</Label>
+              <Input
                 type="text"
-                className="w-full p-2 border rounded-md"
                 placeholder="RE: Quote Request..."
                 value={emailContent.subject}
                 onChange={(e) => setEmailContent({ ...emailContent, subject: e.target.value })}
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium">Email Body</label>
+              <Label>Email Body *</Label>
               <Textarea
                 placeholder="Paste the full email content here..."
                 value={emailContent.body}

@@ -110,3 +110,13 @@
 - [x] Email templates for freight communications
 - [x] Freight dashboard with active RFQs and clearances
 - [x] Unit tests for freight management (28 tests passing)
+
+## RFQ Workflow Fixes
+- [x] Fix RFQ detail page navigation from RFQ list
+- [x] Add manual quote entry form with full cost breakdown
+- [x] Enable sending RFQ to carriers (AI-generated emails)
+- [x] Quote comparison view with accept/reject actions
+- [x] Create booking when quote is accepted
+- [x] Update RFQ status through workflow stages
+- [x] Add email parsing for incoming quote responses
+- [x] AI quote analysis and scoring
