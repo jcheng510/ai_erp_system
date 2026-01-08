@@ -308,11 +308,11 @@ function DashboardLayoutContent({
             </div>
           </SidebarHeader>
 
-          <SidebarContent className="gap-0 overflow-y-auto">
+          <SidebarContent className="gap-0 overflow-y-auto px-1">
             {menuGroups.map((group) => (
-              <SidebarGroup key={group.label} className="py-0">
+              <SidebarGroup key={group.label} className="py-1">
                 {isCollapsed ? (
-                  <SidebarMenu className="px-2 py-1">
+                  <SidebarMenu className="px-1 py-0.5 space-y-0.5">
                     {group.items.map(item => {
                       const isActive = location === item.path;
                       return (
@@ -321,7 +321,7 @@ function DashboardLayoutContent({
                             isActive={isActive}
                             onClick={() => setLocation(item.path)}
                             tooltip={item.label}
-                            className="h-9"
+                            className="h-8"
                           >
                             <item.icon className={`h-4 w-4 ${isActive ? "text-primary" : ""}`} />
                             <span>{item.label}</span>
@@ -336,14 +336,14 @@ function DashboardLayoutContent({
                     onOpenChange={() => toggleGroup(group.label)}
                   >
                     <CollapsibleTrigger asChild>
-                      <SidebarGroupLabel className="cursor-pointer hover:bg-accent/50 rounded-md mx-2 px-2 flex items-center justify-between text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                      <SidebarGroupLabel className="cursor-pointer hover:bg-accent/50 rounded-md mx-1 px-2 py-1.5 flex items-center justify-between text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
                         {group.label}
                         <ChevronDown className={`h-3 w-3 transition-transform ${openGroups.includes(group.label) ? "" : "-rotate-90"}`} />
                       </SidebarGroupLabel>
                     </CollapsibleTrigger>
                     <CollapsibleContent>
                       <SidebarGroupContent>
-                        <SidebarMenu className="px-2 py-1">
+                        <SidebarMenu className="px-1 py-0.5 space-y-0.5">
                           {group.items.map(item => {
                             const isActive = location === item.path;
                             return (
@@ -352,7 +352,7 @@ function DashboardLayoutContent({
                                   isActive={isActive}
                                   onClick={() => setLocation(item.path)}
                                   tooltip={item.label}
-                                  className={`h-9 transition-all font-normal text-sm ${isActive ? "bg-primary/10 text-primary font-medium" : ""}`}
+                                  className={`h-8 transition-all font-normal text-[13px] ${isActive ? "bg-primary/10 text-primary font-medium" : ""}`}
                                 >
                                   <item.icon className={`h-4 w-4 ${isActive ? "text-primary" : "text-muted-foreground"}`} />
                                   <span>{item.label}</span>

@@ -126,3 +126,7 @@
 - [x] Add carrier/forwarder tab to Vendors page
 - [x] Simplify Freight menu to just RFQs and Customs
 - [x] Freight carriers now managed in Vendors & Carriers page
+
+## Navigation Styling Fixes
+- [x] Fix overlapping text in navigation menu
+- [x] Reduce excessive spacing between menu items
