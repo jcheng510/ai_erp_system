@@ -50,6 +50,7 @@ import {
   ChevronDown,
   Search,
   Bell,
+  FileSpreadsheet,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -120,6 +121,7 @@ const menuGroups = [
   {
     label: "Settings",
     items: [
+      { icon: FileSpreadsheet, label: "Import Data", path: "/import" },
       { icon: Settings, label: "Settings", path: "/settings" },
     ],
   },

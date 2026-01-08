@@ -42,6 +42,9 @@ import Documents from "./pages/legal/Documents";
 // Projects
 import Projects from "./pages/projects/Projects";
 
+// Import
+import Import from "./pages/Import";
+
 function Router() {
   return (
     <DashboardLayout>
@@ -81,6 +84,9 @@ function Router() {
 
         {/* Projects */}
         <Route path="/projects" component={Projects} />
+
+        {/* Import */}
+        <Route path="/import" component={Import} />
 
         {/* Fallback */}
         <Route path="/404" component={NotFound} />

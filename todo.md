@@ -76,3 +76,16 @@
 - [x] HR module tests
 - [x] Projects module tests
 - [x] Authentication tests
+
+## Google Sheets Import Feature
+- [x] Google Sheets API backend integration
+- [x] Import UI page with sheet URL input
+- [x] Sheet preview and column mapping interface
+- [x] Data import logic for Customers module
+- [x] Data import logic for Vendors module
+- [x] Data import logic for Products module
+- [x] Data import logic for Invoices module
+- [x] Data import logic for Employees module
+- [x] Data import logic for Contracts module
+- [x] Data import logic for Projects module
+- [x] Unit tests for import functionality (8 tests passing)

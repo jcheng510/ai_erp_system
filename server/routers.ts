@@ -1355,6 +1355,268 @@ export const appRouter = router({
   }),
 
   // ============================================
+  // GOOGLE SHEETS IMPORT
+  // ============================================
+  sheetsImport: router({
+    // Fetch sheet data from a public Google Sheet or using API key
+    fetchSheet: adminProcedure
+      .input(z.object({
+        spreadsheetId: z.string().min(1),
+        sheetName: z.string().optional(),
+        range: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { spreadsheetId, sheetName, range } = input;
+        const apiKey = process.env.GOOGLE_SHEETS_API_KEY;
+        
+        if (!apiKey) {
+          throw new TRPCError({ 
+            code: 'PRECONDITION_FAILED', 
+            message: 'Google Sheets API key not configured. Please add GOOGLE_SHEETS_API_KEY to your environment.' 
+          });
+        }
+        
+        // Build the range string
+        const rangeStr = sheetName ? `${sheetName}${range ? `!${range}` : ''}` : (range || 'A:ZZ');
+        
+        const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(rangeStr)}?key=${apiKey}`;
+        
+        try {
+          const response = await fetch(url);
+          if (!response.ok) {
+            const error = await response.json();
+            throw new TRPCError({ 
+              code: 'BAD_REQUEST', 
+              message: error.error?.message || 'Failed to fetch sheet data' 
+            });
+          }
+          
+          const data = await response.json();
+          const rows = data.values || [];
+          
+          if (rows.length === 0) {
+            return { headers: [], rows: [], totalRows: 0 };
+          }
+          
+          const headers = rows[0] as string[];
+          const dataRows = rows.slice(1).map((row: string[]) => {
+            const obj: Record<string, string> = {};
+            headers.forEach((header, index) => {
+              obj[header] = row[index] || '';
+            });
+            return obj;
+          });
+          
+          return {
+            headers,
+            rows: dataRows,
+            totalRows: dataRows.length,
+          };
+        } catch (error: any) {
+          if (error instanceof TRPCError) throw error;
+          throw new TRPCError({ 
+            code: 'INTERNAL_SERVER_ERROR', 
+            message: `Failed to fetch sheet: ${error.message}` 
+          });
+        }
+      }),
+    
+    // Get list of sheets in a spreadsheet
+    getSheetNames: adminProcedure
+      .input(z.object({ spreadsheetId: z.string().min(1) }))
+      .mutation(async ({ input }) => {
+        const apiKey = process.env.GOOGLE_SHEETS_API_KEY;
+        
+        if (!apiKey) {
+          throw new TRPCError({ 
+            code: 'PRECONDITION_FAILED', 
+            message: 'Google Sheets API key not configured.' 
+          });
+        }
+        
+        const url = `https://sheets.googleapis.com/v4/spreadsheets/${input.spreadsheetId}?key=${apiKey}&fields=sheets.properties.title`;
+        
+        try {
+          const response = await fetch(url);
+          if (!response.ok) {
+            const error = await response.json();
+            throw new TRPCError({ 
+              code: 'BAD_REQUEST', 
+              message: error.error?.message || 'Failed to fetch spreadsheet info' 
+            });
+          }
+          
+          const data = await response.json();
+          const sheets = data.sheets?.map((s: any) => s.properties.title) || [];
+          
+          return { sheets };
+        } catch (error: any) {
+          if (error instanceof TRPCError) throw error;
+          throw new TRPCError({ 
+            code: 'INTERNAL_SERVER_ERROR', 
+            message: `Failed to fetch spreadsheet: ${error.message}` 
+          });
+        }
+      }),
+    
+    // Import data into a specific module
+    importData: adminProcedure
+      .input(z.object({
+        targetModule: z.enum(['customers', 'vendors', 'products', 'invoices', 'employees', 'contracts', 'projects']),
+        data: z.array(z.record(z.string(), z.string())),
+        columnMapping: z.record(z.string(), z.string()), // Maps sheet column to ERP field
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { targetModule, data, columnMapping } = input;
+        const results = { imported: 0, failed: 0, errors: [] as string[] };
+        
+        for (const row of data) {
+          try {
+            // Map the row data to the target fields
+            const mappedData: Record<string, any> = {};
+            for (const [sheetCol, erpField] of Object.entries(columnMapping)) {
+              if (row[sheetCol] !== undefined && row[sheetCol] !== '') {
+                mappedData[erpField] = row[sheetCol];
+              }
+            }
+            
+            // Import based on target module
+            switch (targetModule) {
+              case 'customers':
+                if (!mappedData.name) {
+                  results.errors.push(`Row missing required field: name`);
+                  results.failed++;
+                  continue;
+                }
+                await db.createCustomer({ 
+                  name: mappedData.name,
+                  email: mappedData.email || null,
+                  phone: mappedData.phone || null,
+                  address: mappedData.address || null,
+                  city: mappedData.city || null,
+                  state: mappedData.state || null,
+                  country: mappedData.country || null,
+                  postalCode: mappedData.postalCode || null,
+                  notes: mappedData.notes || null,
+                });
+                break;
+                
+              case 'vendors':
+                if (!mappedData.name) {
+                  results.errors.push(`Row missing required field: name`);
+                  results.failed++;
+                  continue;
+                }
+                await db.createVendor({ 
+                  name: mappedData.name,
+                  email: mappedData.email || null,
+                  phone: mappedData.phone || null,
+                  address: mappedData.address || null,
+                  city: mappedData.city || null,
+                  state: mappedData.state || null,
+                  country: mappedData.country || null,
+                  postalCode: mappedData.postalCode || null,
+                  paymentTerms: mappedData.paymentTerms ? parseInt(mappedData.paymentTerms) : null,
+                  notes: mappedData.notes || null,
+                });
+                break;
+                
+              case 'products':
+                if (!mappedData.name) {
+                  results.errors.push(`Row missing required field: name`);
+                  results.failed++;
+                  continue;
+                }
+                const sku = mappedData.sku || generateNumber('PROD');
+                await db.createProduct({ 
+                  name: mappedData.name,
+                  sku,
+                  unitPrice: mappedData.price || mappedData.unitPrice || '0',
+                  description: mappedData.description || null,
+                  category: mappedData.category || null,
+                  costPrice: mappedData.cost || mappedData.costPrice || null,
+                });
+                break;
+                
+              case 'employees':
+                if (!mappedData.firstName || !mappedData.lastName) {
+                  results.errors.push(`Row missing required fields: firstName, lastName`);
+                  results.failed++;
+                  continue;
+                }
+                const employeeNumber = generateNumber('EMP');
+                await db.createEmployee({ 
+                  ...mappedData, 
+                  employeeNumber,
+                  firstName: mappedData.firstName,
+                  lastName: mappedData.lastName,
+                });
+                break;
+                
+              case 'invoices':
+                if (!mappedData.customerId || !mappedData.amount) {
+                  results.errors.push(`Row missing required fields: customerId, amount`);
+                  results.failed++;
+                  continue;
+                }
+                const invoiceNumber = generateNumber('INV');
+                const amount = mappedData.amount || '0';
+                await db.createInvoice({ 
+                  ...mappedData, 
+                  invoiceNumber,
+                  customerId: parseInt(mappedData.customerId) || 0,
+                  issueDate: new Date(),
+                  dueDate: mappedData.dueDate ? new Date(mappedData.dueDate) : new Date(),
+                  subtotal: amount,
+                  totalAmount: amount,
+                });
+                break;
+                
+              case 'contracts':
+                if (!mappedData.title) {
+                  results.errors.push(`Row missing required field: title`);
+                  results.failed++;
+                  continue;
+                }
+                const contractNumber = generateNumber('CON');
+                await db.createContract({ 
+                  ...mappedData, 
+                  contractNumber,
+                  title: mappedData.title,
+                  type: (mappedData.type as any) || 'service',
+                });
+                break;
+                
+              case 'projects':
+                if (!mappedData.name) {
+                  results.errors.push(`Row missing required field: name`);
+                  results.failed++;
+                  continue;
+                }
+                const projectNumber = generateNumber('PROJ');
+                await db.createProject({ 
+                  ...mappedData, 
+                  projectNumber,
+                  name: mappedData.name,
+                });
+                break;
+            }
+            
+            results.imported++;
+          } catch (error: any) {
+            results.errors.push(`Import error: ${error.message}`);
+            results.failed++;
+          }
+        }
+        
+        // Create audit log for the import
+        await createAuditLog(ctx.user.id, 'create', `${targetModule}_import`, 0, `Imported ${results.imported} records`);
+        
+        return results;
+      }),
+  }),
+
+  // ============================================
   // AI ASSISTANT
   // ============================================
   ai: router({
