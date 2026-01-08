@@ -30,6 +30,14 @@ import Vendors from "./pages/operations/Vendors";
 import PurchaseOrders from "./pages/operations/PurchaseOrders";
 import Shipments from "./pages/operations/Shipments";
 
+// Freight
+import FreightDashboard from "./pages/freight/FreightDashboard";
+import Carriers from "./pages/freight/Carriers";
+import RFQs from "./pages/freight/RFQs";
+import RFQDetail from "./pages/freight/RFQDetail";
+import CustomsClearance from "./pages/freight/CustomsClearance";
+import CustomsDetail from "./pages/freight/CustomsDetail";
+
 // HR
 import Employees from "./pages/hr/Employees";
 import Payroll from "./pages/hr/Payroll";
@@ -72,6 +80,14 @@ function Router() {
         <Route path="/operations/vendors" component={Vendors} />
         <Route path="/operations/purchase-orders" component={PurchaseOrders} />
         <Route path="/operations/shipments" component={Shipments} />
+
+        {/* Freight */}
+        <Route path="/freight" component={FreightDashboard} />
+        <Route path="/freight/carriers" component={Carriers} />
+        <Route path="/freight/rfqs" component={RFQs} />
+        <Route path="/freight/rfqs/:id" component={RFQDetail} />
+        <Route path="/freight/customs" component={CustomsClearance} />
+        <Route path="/freight/customs/:id" component={CustomsDetail} />
 
         {/* HR */}
         <Route path="/hr/employees" component={Employees} />

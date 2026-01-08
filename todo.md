@@ -96,3 +96,17 @@
 - [x] List Google Drive spreadsheets
 - [x] Access private sheets via Drive API
 - [x] Update import UI for OAuth flow
+
+## AI Freight Quote Management System
+- [x] Database schema for freight RFQs, quotes, and carriers
+- [x] Database schema for customs clearance and documentation
+- [x] AI email system for requesting quotes from freight forwarders
+- [x] Quote compilation and comparison interface
+- [x] Shipment document management (BOL, commercial invoice, packing list)
+- [x] Customs clearance workflow and tracking
+- [x] AI-powered quote analysis and recommendations
+- [x] Carrier/forwarder database management
+- [x] Integration with existing shipments module
+- [x] Email templates for freight communications
+- [x] Freight dashboard with active RFQs and clearances
+- [x] Unit tests for freight management (28 tests passing)

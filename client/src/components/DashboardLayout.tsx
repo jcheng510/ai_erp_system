@@ -51,6 +51,9 @@ import {
   Search,
   Bell,
   FileSpreadsheet,
+  Ship,
+  FileCheck,
+  Send,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -110,6 +113,15 @@ const menuGroups = [
       { icon: FileSignature, label: "Contracts", path: "/legal/contracts" },
       { icon: AlertTriangle, label: "Disputes", path: "/legal/disputes" },
       { icon: FileText, label: "Documents", path: "/legal/documents" },
+    ],
+  },
+  {
+    label: "Freight",
+    items: [
+      { icon: Ship, label: "Overview", path: "/freight" },
+      { icon: Building2, label: "Carriers", path: "/freight/carriers" },
+      { icon: Send, label: "Quote Requests", path: "/freight/rfqs" },
+      { icon: FileCheck, label: "Customs", path: "/freight/customs" },
     ],
   },
   {

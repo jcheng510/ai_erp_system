@@ -731,3 +731,280 @@ export type InsertProject = typeof projects.$inferInsert;
 
 export type AuditLog = typeof auditLogs.$inferSelect;
 export type InsertAuditLog = typeof auditLogs.$inferInsert;
+
+// ============================================
+// FREIGHT & LOGISTICS MANAGEMENT
+// ============================================
+
+// Freight carriers and forwarders database
+export const freightCarriers = mysqlTable("freightCarriers", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  type: mysqlEnum("type", ["ocean", "air", "ground", "rail", "multimodal"]).notNull(),
+  contactName: varchar("contactName", { length: 255 }),
+  email: varchar("email", { length: 320 }),
+  phone: varchar("phone", { length: 32 }),
+  address: text("address"),
+  country: varchar("country", { length: 100 }),
+  website: varchar("website", { length: 500 }),
+  notes: text("notes"),
+  rating: int("rating"), // 1-5 star rating
+  isPreferred: boolean("isPreferred").default(false),
+  isActive: boolean("isActive").default(true),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+// Freight Request for Quotes (RFQ)
+export const freightRfqs = mysqlTable("freightRfqs", {
+  id: int("id").autoincrement().primaryKey(),
+  rfqNumber: varchar("rfqNumber", { length: 50 }).notNull().unique(),
+  title: varchar("title", { length: 255 }).notNull(),
+  status: mysqlEnum("status", ["draft", "sent", "awaiting_quotes", "quotes_received", "awarded", "cancelled"]).default("draft").notNull(),
+  
+  // Shipment details
+  originCountry: varchar("originCountry", { length: 100 }),
+  originCity: varchar("originCity", { length: 255 }),
+  originAddress: text("originAddress"),
+  destinationCountry: varchar("destinationCountry", { length: 100 }),
+  destinationCity: varchar("destinationCity", { length: 255 }),
+  destinationAddress: text("destinationAddress"),
+  
+  // Cargo details
+  cargoDescription: text("cargoDescription"),
+  cargoType: mysqlEnum("cargoType", ["general", "hazardous", "refrigerated", "oversized", "fragile", "liquid", "bulk"]).default("general"),
+  totalWeight: decimal("totalWeight", { precision: 12, scale: 2 }), // in kg
+  totalVolume: decimal("totalVolume", { precision: 12, scale: 2 }), // in cbm
+  numberOfPackages: int("numberOfPackages"),
+  dimensions: text("dimensions"), // JSON string for package dimensions
+  hsCode: varchar("hsCode", { length: 20 }),
+  declaredValue: decimal("declaredValue", { precision: 15, scale: 2 }),
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  
+  // Shipping preferences
+  preferredMode: mysqlEnum("preferredMode", ["ocean_fcl", "ocean_lcl", "air", "express", "ground", "rail", "any"]).default("any"),
+  incoterms: varchar("incoterms", { length: 10 }), // EXW, FOB, CIF, DDP, etc.
+  requiredPickupDate: timestamp("requiredPickupDate"),
+  requiredDeliveryDate: timestamp("requiredDeliveryDate"),
+  insuranceRequired: boolean("insuranceRequired").default(false),
+  customsClearanceRequired: boolean("customsClearanceRequired").default(true),
+  
+  // Related records
+  purchaseOrderId: int("purchaseOrderId"),
+  vendorId: int("vendorId"),
+  
+  // Metadata
+  notes: text("notes"),
+  createdById: int("createdById"),
+  quoteDueDate: timestamp("quoteDueDate"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+// Freight quotes received from carriers
+export const freightQuotes = mysqlTable("freightQuotes", {
+  id: int("id").autoincrement().primaryKey(),
+  rfqId: int("rfqId").notNull(),
+  carrierId: int("carrierId").notNull(),
+  quoteNumber: varchar("quoteNumber", { length: 50 }),
+  status: mysqlEnum("status", ["pending", "received", "under_review", "accepted", "rejected", "expired"]).default("pending").notNull(),
+  
+  // Pricing
+  freightCost: decimal("freightCost", { precision: 15, scale: 2 }),
+  fuelSurcharge: decimal("fuelSurcharge", { precision: 15, scale: 2 }),
+  originCharges: decimal("originCharges", { precision: 15, scale: 2 }),
+  destinationCharges: decimal("destinationCharges", { precision: 15, scale: 2 }),
+  customsFees: decimal("customsFees", { precision: 15, scale: 2 }),
+  insuranceCost: decimal("insuranceCost", { precision: 15, scale: 2 }),
+  otherCharges: decimal("otherCharges", { precision: 15, scale: 2 }),
+  totalCost: decimal("totalCost", { precision: 15, scale: 2 }),
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  
+  // Transit details
+  transitDays: int("transitDays"),
+  shippingMode: varchar("shippingMode", { length: 50 }),
+  routeDescription: text("routeDescription"),
+  validUntil: timestamp("validUntil"),
+  
+  // AI analysis
+  aiScore: int("aiScore"), // AI-generated score 1-100
+  aiAnalysis: text("aiAnalysis"), // AI-generated analysis
+  aiRecommendation: text("aiRecommendation"),
+  
+  // Communication
+  receivedVia: mysqlEnum("receivedVia", ["email", "portal", "phone", "manual"]).default("email"),
+  emailThreadId: varchar("emailThreadId", { length: 255 }),
+  rawEmailContent: text("rawEmailContent"),
+  
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+// AI Email communications for freight
+export const freightEmails = mysqlTable("freightEmails", {
+  id: int("id").autoincrement().primaryKey(),
+  rfqId: int("rfqId"),
+  carrierId: int("carrierId"),
+  direction: mysqlEnum("direction", ["outbound", "inbound"]).notNull(),
+  emailType: mysqlEnum("emailType", ["rfq_request", "quote_response", "follow_up", "clarification", "booking_confirmation", "document_request", "customs_update", "other"]).notNull(),
+  
+  // Email details
+  fromEmail: varchar("fromEmail", { length: 320 }),
+  toEmail: varchar("toEmail", { length: 320 }),
+  ccEmails: text("ccEmails"),
+  subject: varchar("subject", { length: 500 }),
+  body: text("body"),
+  htmlBody: text("htmlBody"),
+  
+  // AI processing
+  aiGenerated: boolean("aiGenerated").default(false),
+  aiParsed: boolean("aiParsed").default(false),
+  aiExtractedData: text("aiExtractedData"), // JSON of extracted quote data
+  
+  // Status
+  status: mysqlEnum("status", ["draft", "sent", "delivered", "read", "replied", "failed"]).default("draft"),
+  sentAt: timestamp("sentAt"),
+  readAt: timestamp("readAt"),
+  
+  // Attachments stored in S3
+  attachments: text("attachments"), // JSON array of {name, url, type}
+  
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+// Customs clearance tracking
+export const customsClearances = mysqlTable("customsClearances", {
+  id: int("id").autoincrement().primaryKey(),
+  clearanceNumber: varchar("clearanceNumber", { length: 50 }).notNull().unique(),
+  shipmentId: int("shipmentId"),
+  rfqId: int("rfqId"),
+  
+  // Clearance details
+  type: mysqlEnum("type", ["import", "export"]).notNull(),
+  status: mysqlEnum("status", ["pending_documents", "documents_submitted", "under_review", "additional_info_required", "cleared", "held", "rejected"]).default("pending_documents").notNull(),
+  
+  // Port/customs office
+  customsOffice: varchar("customsOffice", { length: 255 }),
+  portOfEntry: varchar("portOfEntry", { length: 255 }),
+  country: varchar("country", { length: 100 }),
+  
+  // Broker info
+  customsBrokerId: int("customsBrokerId"),
+  brokerReference: varchar("brokerReference", { length: 100 }),
+  
+  // Key dates
+  submissionDate: timestamp("submissionDate"),
+  expectedClearanceDate: timestamp("expectedClearanceDate"),
+  actualClearanceDate: timestamp("actualClearanceDate"),
+  
+  // Duties and taxes
+  dutyAmount: decimal("dutyAmount", { precision: 15, scale: 2 }),
+  taxAmount: decimal("taxAmount", { precision: 15, scale: 2 }),
+  otherFees: decimal("otherFees", { precision: 15, scale: 2 }),
+  totalAmount: decimal("totalAmount", { precision: 15, scale: 2 }),
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  
+  // Compliance
+  hsCode: varchar("hsCode", { length: 20 }),
+  countryOfOrigin: varchar("countryOfOrigin", { length: 100 }),
+  certificateOfOrigin: boolean("certificateOfOrigin").default(false),
+  
+  notes: text("notes"),
+  aiSummary: text("aiSummary"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+// Customs documents
+export const customsDocuments = mysqlTable("customsDocuments", {
+  id: int("id").autoincrement().primaryKey(),
+  clearanceId: int("clearanceId").notNull(),
+  documentType: mysqlEnum("documentType", [
+    "commercial_invoice",
+    "packing_list",
+    "bill_of_lading",
+    "airway_bill",
+    "certificate_of_origin",
+    "customs_declaration",
+    "import_license",
+    "export_license",
+    "insurance_certificate",
+    "inspection_certificate",
+    "phytosanitary_certificate",
+    "fumigation_certificate",
+    "dangerous_goods_declaration",
+    "other"
+  ]).notNull(),
+  
+  name: varchar("name", { length: 255 }).notNull(),
+  fileUrl: text("fileUrl"),
+  fileKey: varchar("fileKey", { length: 500 }),
+  mimeType: varchar("mimeType", { length: 100 }),
+  fileSize: int("fileSize"),
+  
+  status: mysqlEnum("status", ["pending", "uploaded", "verified", "rejected", "expired"]).default("pending"),
+  expiryDate: timestamp("expiryDate"),
+  verifiedAt: timestamp("verifiedAt"),
+  verifiedById: int("verifiedById"),
+  
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+// Freight bookings (when a quote is accepted)
+export const freightBookings = mysqlTable("freightBookings", {
+  id: int("id").autoincrement().primaryKey(),
+  bookingNumber: varchar("bookingNumber", { length: 50 }).notNull().unique(),
+  quoteId: int("quoteId").notNull(),
+  rfqId: int("rfqId").notNull(),
+  carrierId: int("carrierId").notNull(),
+  
+  status: mysqlEnum("status", ["pending", "confirmed", "in_transit", "arrived", "delivered", "cancelled"]).default("pending").notNull(),
+  
+  // Tracking
+  trackingNumber: varchar("trackingNumber", { length: 100 }),
+  containerNumber: varchar("containerNumber", { length: 50 }),
+  vesselName: varchar("vesselName", { length: 255 }),
+  voyageNumber: varchar("voyageNumber", { length: 50 }),
+  
+  // Key dates
+  bookingDate: timestamp("bookingDate"),
+  pickupDate: timestamp("pickupDate"),
+  departureDate: timestamp("departureDate"),
+  arrivalDate: timestamp("arrivalDate"),
+  deliveryDate: timestamp("deliveryDate"),
+  
+  // Costs
+  agreedCost: decimal("agreedCost", { precision: 15, scale: 2 }),
+  actualCost: decimal("actualCost", { precision: 15, scale: 2 }),
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+// Type exports for freight tables
+export type FreightCarrier = typeof freightCarriers.$inferSelect;
+export type InsertFreightCarrier = typeof freightCarriers.$inferInsert;
+
+export type FreightRfq = typeof freightRfqs.$inferSelect;
+export type InsertFreightRfq = typeof freightRfqs.$inferInsert;
+
+export type FreightQuote = typeof freightQuotes.$inferSelect;
+export type InsertFreightQuote = typeof freightQuotes.$inferInsert;
+
+export type FreightEmail = typeof freightEmails.$inferSelect;
+export type InsertFreightEmail = typeof freightEmails.$inferInsert;
+
+export type CustomsClearance = typeof customsClearances.$inferSelect;
+export type InsertCustomsClearance = typeof customsClearances.$inferInsert;
+
+export type CustomsDocument = typeof customsDocuments.$inferSelect;
+export type InsertCustomsDocument = typeof customsDocuments.$inferInsert;
+
+export type FreightBooking = typeof freightBookings.$inferSelect;
+export type InsertFreightBooking = typeof freightBookings.$inferInsert;
