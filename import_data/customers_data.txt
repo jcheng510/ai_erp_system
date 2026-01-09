@@ -1,0 +1,69 @@
+Customers Sheet Data:
+Headers: Customer Name, Currency, Payment Term, Account Receivable, Tax Rule, Sale Price Tier, Sale Account
+
+Row 2: Oexone, USD
+Row 3: Compass, USD
+Row 4: Sodexo, USD
+Row 5: US Foods, USD
+Row 6: Sysco, USD
+
+---
+Suppliers Sheet Data:
+Headers: Supplier Name, Payment Term, Account Payable, Supplier taxation rule, Currency
+
+Row 2: Plant & Bean (Thailand) Co., Ltd, 100% T/T, Plant & Bean (Thailand) Co., Ltd, "Importing under Plant & Bean (Thailand) Co., Ltd, the importing documents must be according to given name, we process thru BOI and the goods are waived for import taxations.", USD
+Row 3: Lam Soon (Thailand) Public Company Limited, 100% T/T Transfer 7 days before delivery
+Row 4: (empty)
+Row 5: Shaanxi Rainwood Biotech CO. LTD, 100% T/T, 7775003408 Swift address: AYUDTHBK, "Value added tax (VAT) is a tax on the sale of goods or the provision of services. The current rates are 7%", USD
+Row 6: XI'AN International Healthcare Factory CO..., 50% deposit and 50% balance before shipping, Amy Hu sales08@latelgroup.com, 91620132MA8XMERPX1_general taxpayer, USD
+Row 7: Jinan Bright Sunshine Imp. and Exp. Co. LTD, 30% deposit, 70% balance, , , USD
+
+---
+Product Info Sheet Data:
+Headers: Product SKU, Product Name, Type, Category, Size, UOM, Unit of, Costing Method, Average cost, Location, Received Date (YYY)
+
+Row 2: , Plant Protein - Taco Meat 10 oz, Stock, Plant Protein, , EA, FEFO - Batch, $3.30, Alex Meats
+Row 3: , Plant Protein - Pulled Pork 10 oz, Stock, , , EA, FEFO - Batch, $3.30
+Row 4: , Plant Protein - Beef Barbacoa 10 oz, Stock, Plant Protein, , EA, FEFO - Batch, $3.30
+Row 5: , Plant Protein - Korean BBQ 10 oz, Stock, Plant Protein, , EA, FEFO - Batch, $3.30
+Row 6: 61045295043, Plant Based Jerky - Signature Flavor 2.5 oz, Stock, Plant Based Jerky, , EA, FEFO - Batch, $3.05
+Row 7: 61045295050, Plant Based Jerky - Korean BBQ Flavor 2.5 oz, Stock, Plant Based Jerky, , EA, FEFO - Batch, $3.05
+Row 8: 61045295049, Plant Based Jerky - Chili Crisp Flavor 2.5 oz, Stock, Plant Based Jerky, , EA, FEFO - Batch, $3.05
+
+Row 10: SKU, Product (header row for second section)
+Row 11: SHBB8, Beef Barbacoa- 8 oz, , Beef Barbacoa, 8, oz, EA, FEFO - Batch, , Alex Meats
+Row 12: SHBB2, Beef Barbacoa- 2 lb, , Beef Barbacoa, 2, lb, EA, FEFO - Batch, , Alex Meats
+Row 13: SHBB8, Beef Barbacoa- 8 lb, , Beef Barbacoa, 8, lb, EA, FEFO - Batch, , Alex Meats
+Row 14: SHBB10, Beef Barbacoa- 10 oz, , Beef Barbacoa, 10, oz, EA, FEFO - Batch, $1.99, Alex Meats
+
+---
+Assembly BOM Sheet Data:
+Headers: Product SKU, Component SKU, Quantity
+
+Row 2: Plant Based Beef Slice, BEEF DOUGH
+Row 3: Plant Based Beef Slice, Protein Dry Mix #1
+Row 4: Plant Based Beef Slice, Beef Flavor Blend #1
+Row 5: Plant Based Beef Slice, Water
+Row 6: Plant Based Beef Slice, Coconut Oil
+Row 7: Dried Ground Beef
+Row 8: Beef Barbacoa Spice, toasted dried onion, 200
+Row 9: Beef Barbacoa Spice, black pepper, 10
+Row 10: Beef Barbacoa Spice, smoked paprika, 10
+Row 11: Beef Barbacoa Spice, ground cumin, 8
+Row 12: Beef Barbacoa Spice, dried oregano, 5
+Row 13: Beef Barbacoa Spice, smoke powder, 4
+Row 14: Beef Barbacoa Spice, ground cloves, 2
+Row 15: Taco Spice, sea salt, 10
+
+---
+Requirement Summary Sheet Data:
+Reference: https://help.core.cin7.com/hc/en-us/articles/9034481552783-Getting-Started-Guide
+
+Field Definitions:
+- Customer Name: Customer Name
+- Currency: Customer currency. A 3-character currency code.
+- Payment Term: Customer payment term. Payment terms applied to all sales for this customer by default. (Eg: 30 days).
+- Account Receivable: The relevant 'Account Receivable' account name that corresponds to the Customer. This account name or account code should be obtained from the XERO or QuickBooks Application end. Please get in touch with your bookkeeper/accountant if you are unsure of this field
+- Tax Rule: Specify an active Tax rule that will be applied for all sales for this customer by default. The product Sale Tax Rule will override this setting.
+- Sale Price Tier: Price tier name used for all sales to the customer by default. Price Tier names can be viewed/changed on the General Settings page.
+- Sale Account: The relevant 'Sale Account' account name that corresponds to the Customer. This account name or account code should be obtained from the XERO or QuickBooks Application end. Please get in touch with your bookkeeper/accountant if you are unsure of this field.
