@@ -1192,3 +1192,143 @@ export type RawMaterial = typeof rawMaterials.$inferSelect;
 export type InsertRawMaterial = typeof rawMaterials.$inferInsert;
 export type BomVersionHistory = typeof bomVersionHistory.$inferSelect;
 export type InsertBomVersionHistory = typeof bomVersionHistory.$inferInsert;
+
+// ============================================
+// PRODUCTION & WORK ORDERS
+// ============================================
+
+// Work orders for production runs
+export const workOrders = mysqlTable("workOrders", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  workOrderNumber: varchar("workOrderNumber", { length: 64 }).notNull(),
+  bomId: int("bomId").notNull(),
+  productId: int("productId").notNull(),
+  warehouseId: int("warehouseId"), // Production location
+  quantity: decimal("quantity", { precision: 15, scale: 4 }).notNull(), // Target production quantity
+  completedQuantity: decimal("completedQuantity", { precision: 15, scale: 4 }).default("0"),
+  unit: varchar("unit", { length: 32 }).default("EA").notNull(),
+  status: mysqlEnum("status", ["draft", "scheduled", "in_progress", "completed", "cancelled"]).default("draft").notNull(),
+  priority: mysqlEnum("priority", ["low", "normal", "high", "urgent"]).default("normal").notNull(),
+  scheduledStartDate: timestamp("scheduledStartDate"),
+  scheduledEndDate: timestamp("scheduledEndDate"),
+  actualStartDate: timestamp("actualStartDate"),
+  actualEndDate: timestamp("actualEndDate"),
+  notes: text("notes"),
+  createdBy: int("createdBy"),
+  assignedTo: int("assignedTo"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+// Work order material requirements (auto-calculated from BOM)
+export const workOrderMaterials = mysqlTable("workOrderMaterials", {
+  id: int("id").autoincrement().primaryKey(),
+  workOrderId: int("workOrderId").notNull(),
+  rawMaterialId: int("rawMaterialId"),
+  productId: int("productId"), // For sub-assemblies
+  name: varchar("name", { length: 255 }).notNull(),
+  requiredQuantity: decimal("requiredQuantity", { precision: 15, scale: 4 }).notNull(),
+  reservedQuantity: decimal("reservedQuantity", { precision: 15, scale: 4 }).default("0"),
+  consumedQuantity: decimal("consumedQuantity", { precision: 15, scale: 4 }).default("0"),
+  unit: varchar("unit", { length: 32 }).notNull(),
+  status: mysqlEnum("status", ["pending", "reserved", "partial", "consumed", "shortage"]).default("pending").notNull(),
+  warehouseId: int("warehouseId"), // Source location for material
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+// Raw material inventory (separate from finished goods inventory)
+export const rawMaterialInventory = mysqlTable("rawMaterialInventory", {
+  id: int("id").autoincrement().primaryKey(),
+  rawMaterialId: int("rawMaterialId").notNull(),
+  warehouseId: int("warehouseId").notNull(),
+  quantity: decimal("quantity", { precision: 15, scale: 4 }).default("0").notNull(),
+  reservedQuantity: decimal("reservedQuantity", { precision: 15, scale: 4 }).default("0"),
+  availableQuantity: decimal("availableQuantity", { precision: 15, scale: 4 }).default("0"),
+  unit: varchar("unit", { length: 32 }).notNull(),
+  lotNumber: varchar("lotNumber", { length: 64 }),
+  expirationDate: timestamp("expirationDate"),
+  lastReceivedDate: timestamp("lastReceivedDate"),
+  lastCountDate: timestamp("lastCountDate"),
+  reorderPoint: decimal("reorderPoint", { precision: 15, scale: 4 }),
+  reorderQuantity: decimal("reorderQuantity", { precision: 15, scale: 4 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+// Raw material inventory transactions (ledger)
+export const rawMaterialTransactions = mysqlTable("rawMaterialTransactions", {
+  id: int("id").autoincrement().primaryKey(),
+  rawMaterialId: int("rawMaterialId").notNull(),
+  warehouseId: int("warehouseId").notNull(),
+  transactionType: mysqlEnum("transactionType", ["receive", "consume", "adjust", "transfer_in", "transfer_out", "return"]).notNull(),
+  quantity: decimal("quantity", { precision: 15, scale: 4 }).notNull(), // Positive for in, negative for out
+  previousQuantity: decimal("previousQuantity", { precision: 15, scale: 4 }).notNull(),
+  newQuantity: decimal("newQuantity", { precision: 15, scale: 4 }).notNull(),
+  unit: varchar("unit", { length: 32 }).notNull(),
+  referenceType: varchar("referenceType", { length: 64 }), // 'purchase_order', 'work_order', 'adjustment'
+  referenceId: int("referenceId"),
+  lotNumber: varchar("lotNumber", { length: 64 }),
+  notes: text("notes"),
+  performedBy: int("performedBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+// Link PO items to raw materials for receiving
+export const purchaseOrderRawMaterials = mysqlTable("purchaseOrderRawMaterials", {
+  id: int("id").autoincrement().primaryKey(),
+  purchaseOrderItemId: int("purchaseOrderItemId").notNull(),
+  rawMaterialId: int("rawMaterialId").notNull(),
+  orderedQuantity: decimal("orderedQuantity", { precision: 15, scale: 4 }).notNull(),
+  receivedQuantity: decimal("receivedQuantity", { precision: 15, scale: 4 }).default("0"),
+  unit: varchar("unit", { length: 32 }).notNull(),
+  unitCost: decimal("unitCost", { precision: 15, scale: 4 }),
+  status: mysqlEnum("status", ["ordered", "partial", "received", "cancelled"]).default("ordered").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+// PO Receiving records (when shipments arrive)
+export const poReceivingRecords = mysqlTable("poReceivingRecords", {
+  id: int("id").autoincrement().primaryKey(),
+  purchaseOrderId: int("purchaseOrderId").notNull(),
+  shipmentId: int("shipmentId"),
+  receivedDate: timestamp("receivedDate").notNull(),
+  receivedBy: int("receivedBy"),
+  warehouseId: int("warehouseId").notNull(),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+// Individual items received in a PO receiving
+export const poReceivingItems = mysqlTable("poReceivingItems", {
+  id: int("id").autoincrement().primaryKey(),
+  receivingRecordId: int("receivingRecordId").notNull(),
+  purchaseOrderItemId: int("purchaseOrderItemId"),
+  rawMaterialId: int("rawMaterialId"),
+  productId: int("productId"),
+  receivedQuantity: decimal("receivedQuantity", { precision: 15, scale: 4 }).notNull(),
+  unit: varchar("unit", { length: 32 }).notNull(),
+  lotNumber: varchar("lotNumber", { length: 64 }),
+  expirationDate: timestamp("expirationDate"),
+  condition: mysqlEnum("condition", ["good", "damaged", "rejected"]).default("good").notNull(),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+// Type exports
+export type WorkOrder = typeof workOrders.$inferSelect;
+export type InsertWorkOrder = typeof workOrders.$inferInsert;
+export type WorkOrderMaterial = typeof workOrderMaterials.$inferSelect;
+export type InsertWorkOrderMaterial = typeof workOrderMaterials.$inferInsert;
+export type RawMaterialInventory = typeof rawMaterialInventory.$inferSelect;
+export type InsertRawMaterialInventory = typeof rawMaterialInventory.$inferInsert;
+export type RawMaterialTransaction = typeof rawMaterialTransactions.$inferSelect;
+export type InsertRawMaterialTransaction = typeof rawMaterialTransactions.$inferInsert;
+export type PurchaseOrderRawMaterial = typeof purchaseOrderRawMaterials.$inferSelect;
+export type InsertPurchaseOrderRawMaterial = typeof purchaseOrderRawMaterials.$inferInsert;
+export type PoReceivingRecord = typeof poReceivingRecords.$inferSelect;
+export type InsertPoReceivingRecord = typeof poReceivingRecords.$inferInsert;
+export type PoReceivingItem = typeof poReceivingItems.$inferSelect;
+export type InsertPoReceivingItem = typeof poReceivingItems.$inferInsert;

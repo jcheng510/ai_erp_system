@@ -174,3 +174,18 @@
 - [x] BOM cost analysis view
 - [x] Raw materials management page
 - [x] Production requirements calculation
+
+## Integrated Production Workflow
+- [x] Work orders schema (link to BOM, production quantity, status)
+- [x] Link POs to raw materials (PO line items reference raw material IDs)
+- [x] PO receiving workflow (mark items received, update raw material inventory)
+- [x] Shipment tracking linked to PO receiving
+- [x] Raw material inventory ledger (track quantities by location)
+- [x] Work order creation from BOM (auto-calculate material requirements)
+- [x] Material consumption on work order completion
+- [ ] Inventory reservation for pending work orders
+- [x] Production dashboard showing active work orders (Work Orders page)
+- [ ] Material shortage alerts when inventory < requirements
+- [x] Work Orders UI page with list and detail views
+- [x] PO Receiving UI page with receiving workflow
+- [x] Unit tests for production workflow (21 tests passing)

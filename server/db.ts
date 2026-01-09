@@ -15,6 +15,8 @@ import {
   inventoryTransfers, inventoryTransferItems,
   teamInvitations, userPermissions,
   billOfMaterials, bomComponents, rawMaterials, bomVersionHistory,
+  workOrders, workOrderMaterials, rawMaterialInventory, rawMaterialTransactions,
+  purchaseOrderRawMaterials, poReceivingRecords, poReceivingItems,
   InsertCompany, InsertCustomer, InsertVendor, InsertProduct,
   InsertAccount, InsertInvoice, InsertPayment, InsertTransaction,
   InsertOrder, InsertInventory, InsertPurchaseOrder, InsertWarehouse,
@@ -24,7 +26,9 @@ import {
   InsertCustomsClearance, InsertCustomsDocument, InsertFreightBooking,
   InsertInventoryTransfer, InsertInventoryTransferItem,
   InsertTeamInvitation, InsertUserPermission,
-  InsertBillOfMaterials, InsertBomComponent, InsertRawMaterial, InsertBomVersionHistory
+  InsertBillOfMaterials, InsertBomComponent, InsertRawMaterial, InsertBomVersionHistory,
+  InsertWorkOrder, InsertWorkOrderMaterial, InsertRawMaterialInventory, InsertRawMaterialTransaction,
+  InsertPurchaseOrderRawMaterial, InsertPoReceivingRecord, InsertPoReceivingItem
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -2374,4 +2378,360 @@ export async function calculateBomCosts(bomId: number) {
   });
   
   return { totalMaterialCost, laborCost, overheadCost, totalCost };
+}
+
+
+// ============================================
+// WORK ORDERS
+// ============================================
+
+export async function getWorkOrders(filters?: { status?: string; warehouseId?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  let query = db.select().from(workOrders).orderBy(desc(workOrders.createdAt));
+  return query;
+}
+
+export async function getWorkOrderById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(workOrders).where(eq(workOrders.id, id)).limit(1);
+  return result[0];
+}
+
+export async function createWorkOrder(data: Omit<InsertWorkOrder, 'workOrderNumber'>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const workOrderNumber = `WO-${Date.now().toString(36).toUpperCase()}`;
+  const result = await db.insert(workOrders).values({ ...data, workOrderNumber });
+  return { id: result[0].insertId, workOrderNumber };
+}
+
+export async function updateWorkOrder(id: number, data: Partial<InsertWorkOrder>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(workOrders).set(data).where(eq(workOrders.id, id));
+}
+
+// ============================================
+// WORK ORDER MATERIALS
+// ============================================
+
+export async function getWorkOrderMaterials(workOrderId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(workOrderMaterials).where(eq(workOrderMaterials.workOrderId, workOrderId));
+}
+
+export async function createWorkOrderMaterial(data: InsertWorkOrderMaterial) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(workOrderMaterials).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateWorkOrderMaterial(id: number, data: Partial<InsertWorkOrderMaterial>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(workOrderMaterials).set(data).where(eq(workOrderMaterials.id, id));
+}
+
+// Generate materials from BOM for a work order
+export async function generateWorkOrderMaterialsFromBom(workOrderId: number, bomId: number, quantity: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  const components = await getBomComponents(bomId);
+  const bom = await getBomById(bomId);
+  if (!bom) throw new Error("BOM not found");
+  
+  const batchSize = parseFloat(bom.batchSize?.toString() || '1');
+  const multiplier = quantity / batchSize;
+  
+  for (const comp of components) {
+    const compQty = parseFloat(comp.quantity?.toString() || '0');
+    const wastage = parseFloat(comp.wastagePercent?.toString() || '0') / 100;
+    const requiredQty = compQty * multiplier * (1 + wastage);
+    
+    await createWorkOrderMaterial({
+      workOrderId,
+      rawMaterialId: comp.rawMaterialId,
+      productId: comp.productId,
+      name: comp.name,
+      requiredQuantity: requiredQty.toFixed(4),
+      unit: comp.unit,
+      status: 'pending',
+    });
+  }
+}
+
+// ============================================
+// RAW MATERIAL INVENTORY
+// ============================================
+
+export async function getRawMaterialInventory(filters?: { rawMaterialId?: number; warehouseId?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  let query = db.select().from(rawMaterialInventory);
+  if (filters?.rawMaterialId) {
+    query = query.where(eq(rawMaterialInventory.rawMaterialId, filters.rawMaterialId)) as typeof query;
+  }
+  if (filters?.warehouseId) {
+    query = query.where(eq(rawMaterialInventory.warehouseId, filters.warehouseId)) as typeof query;
+  }
+  return query;
+}
+
+export async function getRawMaterialInventoryByLocation(rawMaterialId: number, warehouseId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(rawMaterialInventory)
+    .where(and(
+      eq(rawMaterialInventory.rawMaterialId, rawMaterialId),
+      eq(rawMaterialInventory.warehouseId, warehouseId)
+    ))
+    .limit(1);
+  return result[0];
+}
+
+export async function upsertRawMaterialInventory(rawMaterialId: number, warehouseId: number, data: Partial<InsertRawMaterialInventory>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  const existing = await getRawMaterialInventoryByLocation(rawMaterialId, warehouseId);
+  if (existing) {
+    await db.update(rawMaterialInventory).set(data).where(eq(rawMaterialInventory.id, existing.id));
+    return { id: existing.id };
+  } else {
+    const result = await db.insert(rawMaterialInventory).values({
+      rawMaterialId,
+      warehouseId,
+      unit: data.unit || 'EA',
+      ...data,
+    });
+    return { id: result[0].insertId };
+  }
+}
+
+// ============================================
+// RAW MATERIAL TRANSACTIONS
+// ============================================
+
+export async function createRawMaterialTransaction(data: InsertRawMaterialTransaction) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(rawMaterialTransactions).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getRawMaterialTransactions(rawMaterialId: number, limit = 50) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(rawMaterialTransactions)
+    .where(eq(rawMaterialTransactions.rawMaterialId, rawMaterialId))
+    .orderBy(desc(rawMaterialTransactions.createdAt))
+    .limit(limit);
+}
+
+// ============================================
+// PO RECEIVING
+// ============================================
+
+export async function createPoReceivingRecord(data: InsertPoReceivingRecord) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(poReceivingRecords).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getPoReceivingRecords(purchaseOrderId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(poReceivingRecords)
+    .where(eq(poReceivingRecords.purchaseOrderId, purchaseOrderId))
+    .orderBy(desc(poReceivingRecords.receivedDate));
+}
+
+export async function createPoReceivingItem(data: InsertPoReceivingItem) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(poReceivingItems).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getPoReceivingItems(receivingRecordId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(poReceivingItems)
+    .where(eq(poReceivingItems.receivingRecordId, receivingRecordId));
+}
+
+// Receive PO items and update raw material inventory
+export async function receivePurchaseOrderItems(
+  purchaseOrderId: number,
+  warehouseId: number,
+  items: Array<{ purchaseOrderItemId: number; rawMaterialId?: number; productId?: number; quantity: number; unit: string; lotNumber?: string; expirationDate?: Date }>,
+  receivedBy?: number,
+  shipmentId?: number
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  // Create receiving record
+  const receiving = await createPoReceivingRecord({
+    purchaseOrderId,
+    shipmentId,
+    receivedDate: new Date(),
+    receivedBy,
+    warehouseId,
+  });
+  
+  for (const item of items) {
+    // Create receiving item record
+    await createPoReceivingItem({
+      receivingRecordId: receiving.id,
+      purchaseOrderItemId: item.purchaseOrderItemId,
+      rawMaterialId: item.rawMaterialId,
+      productId: item.productId,
+      receivedQuantity: item.quantity.toString(),
+      unit: item.unit,
+      lotNumber: item.lotNumber,
+      expirationDate: item.expirationDate,
+      condition: 'good',
+    });
+    
+    // Update raw material inventory if it's a raw material
+    if (item.rawMaterialId) {
+      const currentInv = await getRawMaterialInventoryByLocation(item.rawMaterialId, warehouseId);
+      const currentQty = parseFloat(currentInv?.quantity?.toString() || '0');
+      const newQty = currentQty + item.quantity;
+      
+      await upsertRawMaterialInventory(item.rawMaterialId, warehouseId, {
+        quantity: newQty.toFixed(4),
+        availableQuantity: newQty.toFixed(4),
+        unit: item.unit,
+        lastReceivedDate: new Date(),
+        lotNumber: item.lotNumber,
+        expirationDate: item.expirationDate,
+      });
+      
+      // Create transaction record
+      await createRawMaterialTransaction({
+        rawMaterialId: item.rawMaterialId,
+        warehouseId,
+        transactionType: 'receive',
+        quantity: item.quantity.toFixed(4),
+        previousQuantity: currentQty.toFixed(4),
+        newQuantity: newQty.toFixed(4),
+        unit: item.unit,
+        referenceType: 'purchase_order',
+        referenceId: purchaseOrderId,
+        lotNumber: item.lotNumber,
+        performedBy: receivedBy,
+      });
+    }
+    
+    // Update PO item received quantity
+    const poItem = await db.select().from(purchaseOrderItems)
+      .where(eq(purchaseOrderItems.id, item.purchaseOrderItemId)).limit(1);
+    if (poItem[0]) {
+      const prevReceived = parseFloat(poItem[0].receivedQuantity?.toString() || '0');
+      await db.update(purchaseOrderItems)
+        .set({ receivedQuantity: (prevReceived + item.quantity).toFixed(4) })
+        .where(eq(purchaseOrderItems.id, item.purchaseOrderItemId));
+    }
+  }
+  
+  // Check if PO is fully received and update status
+  const poItems = await db.select().from(purchaseOrderItems)
+    .where(eq(purchaseOrderItems.purchaseOrderId, purchaseOrderId));
+  
+  let allReceived = true;
+  let anyReceived = false;
+  for (const poi of poItems) {
+    const ordered = parseFloat(poi.quantity?.toString() || '0');
+    const received = parseFloat(poi.receivedQuantity?.toString() || '0');
+    if (received >= ordered) {
+      anyReceived = true;
+    } else if (received > 0) {
+      anyReceived = true;
+      allReceived = false;
+    } else {
+      allReceived = false;
+    }
+  }
+  
+  if (allReceived) {
+    await db.update(purchaseOrders).set({ status: 'received', receivedDate: new Date() })
+      .where(eq(purchaseOrders.id, purchaseOrderId));
+  } else if (anyReceived) {
+    await db.update(purchaseOrders).set({ status: 'partial' })
+      .where(eq(purchaseOrders.id, purchaseOrderId));
+  }
+  
+  return receiving;
+}
+
+// Consume materials for a work order
+export async function consumeWorkOrderMaterials(workOrderId: number, performedBy?: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  const workOrder = await getWorkOrderById(workOrderId);
+  if (!workOrder) throw new Error("Work order not found");
+  
+  const materials = await getWorkOrderMaterials(workOrderId);
+  
+  for (const mat of materials) {
+    if (!mat.rawMaterialId) continue;
+    
+    const requiredQty = parseFloat(mat.requiredQuantity?.toString() || '0');
+    const inv = await getRawMaterialInventoryByLocation(mat.rawMaterialId, workOrder.warehouseId || 0);
+    
+    if (!inv) {
+      await updateWorkOrderMaterial(mat.id, { status: 'shortage' });
+      continue;
+    }
+    
+    const currentQty = parseFloat(inv.quantity?.toString() || '0');
+    const consumeQty = Math.min(requiredQty, currentQty);
+    const newQty = currentQty - consumeQty;
+    
+    // Update inventory
+    await upsertRawMaterialInventory(mat.rawMaterialId, workOrder.warehouseId || 0, {
+      quantity: newQty.toFixed(4),
+      availableQuantity: newQty.toFixed(4),
+    });
+    
+    // Create transaction
+    await createRawMaterialTransaction({
+      rawMaterialId: mat.rawMaterialId,
+      warehouseId: workOrder.warehouseId || 0,
+      transactionType: 'consume',
+      quantity: (-consumeQty).toFixed(4),
+      previousQuantity: currentQty.toFixed(4),
+      newQuantity: newQty.toFixed(4),
+      unit: mat.unit,
+      referenceType: 'work_order',
+      referenceId: workOrderId,
+      performedBy,
+    });
+    
+    // Update material status
+    await updateWorkOrderMaterial(mat.id, {
+      consumedQuantity: consumeQty.toFixed(4),
+      status: consumeQty >= requiredQty ? 'consumed' : 'partial',
+    });
+  }
+  
+  // Update work order status
+  await updateWorkOrder(workOrderId, { status: 'completed', actualEndDate: new Date() });
+}
+
+
+// Get purchase order items
+export async function getPurchaseOrderItems(purchaseOrderId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(purchaseOrderItems).where(eq(purchaseOrderItems.purchaseOrderId, purchaseOrderId));
 }

@@ -991,6 +991,9 @@ export const appRouter = router({
     get: opsProcedure
       .input(z.object({ id: z.number() }))
       .query(({ input }) => db.getPurchaseOrderWithItems(input.id)),
+    getItems: opsProcedure
+      .input(z.object({ purchaseOrderId: z.number() }))
+      .query(({ input }) => db.getPurchaseOrderItems(input.purchaseOrderId)),
     create: opsProcedure
       .input(z.object({
         companyId: z.number().optional(),
@@ -3463,6 +3466,163 @@ Provide a brief status summary, any missing documents, and next steps.`;
       .mutation(async ({ input }) => {
         await db.deleteRawMaterial(input.id);
         return { success: true };
+      }),
+  }),
+
+  // Work Orders
+  workOrders: router({
+    list: protectedProcedure.query(async () => {
+      return db.getWorkOrders();
+    }),
+    getById: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        return db.getWorkOrderById(input.id);
+      }),
+    create: protectedProcedure
+      .input(z.object({
+        bomId: z.number(),
+        productId: z.number(),
+        warehouseId: z.number().optional(),
+        quantity: z.string(),
+        unit: z.string().default('EA'),
+        priority: z.enum(['low', 'normal', 'high', 'urgent']).default('normal'),
+        scheduledStartDate: z.date().optional(),
+        scheduledEndDate: z.date().optional(),
+        notes: z.string().optional(),
+        assignedTo: z.number().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.createWorkOrder({ ...input, createdBy: ctx.user?.id });
+        // Auto-generate material requirements from BOM
+        await db.generateWorkOrderMaterialsFromBom(result.id, input.bomId, parseFloat(input.quantity));
+        return result;
+      }),
+    update: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        status: z.enum(['draft', 'scheduled', 'in_progress', 'completed', 'cancelled']).optional(),
+        quantity: z.string().optional(),
+        priority: z.enum(['low', 'normal', 'high', 'urgent']).optional(),
+        scheduledStartDate: z.date().optional(),
+        scheduledEndDate: z.date().optional(),
+        actualStartDate: z.date().optional(),
+        notes: z.string().optional(),
+        assignedTo: z.number().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { id, ...data } = input;
+        await db.updateWorkOrder(id, data);
+        return { success: true };
+      }),
+    getMaterials: protectedProcedure
+      .input(z.object({ workOrderId: z.number() }))
+      .query(async ({ input }) => {
+        return db.getWorkOrderMaterials(input.workOrderId);
+      }),
+    startProduction: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input }) => {
+        await db.updateWorkOrder(input.id, { status: 'in_progress', actualStartDate: new Date() });
+        return { success: true };
+      }),
+    completeProduction: protectedProcedure
+      .input(z.object({ id: z.number(), completedQuantity: z.string() }))
+      .mutation(async ({ input, ctx }) => {
+        // Consume materials
+        await db.consumeWorkOrderMaterials(input.id, ctx.user?.id);
+        // Update completed quantity
+        await db.updateWorkOrder(input.id, { completedQuantity: input.completedQuantity });
+        return { success: true };
+      }),
+  }),
+
+  // Raw Material Inventory
+  rawMaterialInventory: router({
+    list: protectedProcedure
+      .input(z.object({
+        rawMaterialId: z.number().optional(),
+        warehouseId: z.number().optional(),
+      }).optional())
+      .query(async ({ input }) => {
+        return db.getRawMaterialInventory(input);
+      }),
+    getTransactions: protectedProcedure
+      .input(z.object({ rawMaterialId: z.number(), limit: z.number().optional() }))
+      .query(async ({ input }) => {
+        return db.getRawMaterialTransactions(input.rawMaterialId, input.limit);
+      }),
+    adjust: protectedProcedure
+      .input(z.object({
+        rawMaterialId: z.number(),
+        warehouseId: z.number(),
+        quantity: z.number(),
+        unit: z.string(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const current = await db.getRawMaterialInventoryByLocation(input.rawMaterialId, input.warehouseId);
+        const currentQty = parseFloat(current?.quantity?.toString() || '0');
+        const newQty = currentQty + input.quantity;
+        
+        await db.upsertRawMaterialInventory(input.rawMaterialId, input.warehouseId, {
+          quantity: newQty.toFixed(4),
+          availableQuantity: newQty.toFixed(4),
+          unit: input.unit,
+        });
+        
+        await db.createRawMaterialTransaction({
+          rawMaterialId: input.rawMaterialId,
+          warehouseId: input.warehouseId,
+          transactionType: 'adjust',
+          quantity: input.quantity.toFixed(4),
+          previousQuantity: currentQty.toFixed(4),
+          newQuantity: newQty.toFixed(4),
+          unit: input.unit,
+          notes: input.notes,
+          performedBy: ctx.user?.id,
+        });
+        
+        return { success: true };
+      }),
+  }),
+
+  // PO Receiving
+  poReceiving: router({
+    getRecords: protectedProcedure
+      .input(z.object({ purchaseOrderId: z.number() }))
+      .query(async ({ input }) => {
+        return db.getPoReceivingRecords(input.purchaseOrderId);
+      }),
+    getItems: protectedProcedure
+      .input(z.object({ receivingRecordId: z.number() }))
+      .query(async ({ input }) => {
+        return db.getPoReceivingItems(input.receivingRecordId);
+      }),
+    receive: protectedProcedure
+      .input(z.object({
+        purchaseOrderId: z.number(),
+        warehouseId: z.number(),
+        shipmentId: z.number().optional(),
+        items: z.array(z.object({
+          purchaseOrderItemId: z.number(),
+          rawMaterialId: z.number().optional(),
+          productId: z.number().optional(),
+          quantity: z.number(),
+          unit: z.string(),
+          lotNumber: z.string().optional(),
+          expirationDate: z.date().optional(),
+        })),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.receivePurchaseOrderItems(
+          input.purchaseOrderId,
+          input.warehouseId,
+          input.items,
+          ctx.user?.id,
+          input.shipmentId
+        );
+        return result;
       }),
   }),
 });

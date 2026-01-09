@@ -35,6 +35,9 @@ import TransferDetail from "./pages/operations/TransferDetail";
 import BOM from "./pages/operations/BOM";
 import BOMDetail from "./pages/operations/BOMDetail";
 import RawMaterials from "./pages/operations/RawMaterials";
+import WorkOrders from "./pages/operations/WorkOrders";
+import WorkOrderDetail from "./pages/operations/WorkOrderDetail";
+import POReceiving from "./pages/operations/POReceiving";
 
 // Freight
 import FreightDashboard from "./pages/freight/FreightDashboard";
@@ -99,6 +102,9 @@ function Router() {
         <Route path="/operations/bom" component={BOM} />
         <Route path="/operations/bom/:id" component={BOMDetail} />
         <Route path="/operations/raw-materials" component={RawMaterials} />
+        <Route path="/operations/work-orders" component={WorkOrders} />
+        <Route path="/operations/work-orders/:id" component={WorkOrderDetail} />
+        <Route path="/operations/receiving" component={POReceiving} />
 
         {/* Freight */}
         <Route path="/freight" component={FreightDashboard} />

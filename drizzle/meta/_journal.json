@@ -57,6 +57,13 @@
       "when": 1767921650285,
       "tag": "0007_loud_onslaught",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "5",
+      "when": 1767923219377,
+      "tag": "0008_lush_iron_lad",
+      "breakpoints": true
     }
   ]
 }

@@ -56,6 +56,8 @@ import {
   Send,
   MapPin,
   ArrowRightLeft,
+  ClipboardList,
+  PackageCheck,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -104,6 +106,8 @@ const menuGroups = [
       { icon: Truck, label: "Shipments", path: "/operations/shipments" },
       { icon: FileText, label: "Bill of Materials", path: "/operations/bom" },
       { icon: Package, label: "Raw Materials", path: "/operations/raw-materials" },
+      { icon: ClipboardList, label: "Work Orders", path: "/operations/work-orders" },
+      { icon: PackageCheck, label: "Receiving", path: "/operations/receiving" },
     ],
   },
   {
