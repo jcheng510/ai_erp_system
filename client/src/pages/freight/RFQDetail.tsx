@@ -92,7 +92,11 @@ export default function RFQDetail() {
 
   const sendToCarriersMutation = trpc.freight.rfqs.sendToCarriers.useMutation({
     onSuccess: (result) => {
-      toast.success(`RFQ sent to ${result.sent} carriers! Email drafts created.`);
+      if (result.emailConfigured) {
+        toast.success(`RFQ emails sent to ${result.sent} carriers!`);
+      } else {
+        toast.info(`Email drafts created for ${result.sent + result.failed} carriers. Configure SendGrid to send actual emails.`);
+      }
       utils.freight.rfqs.get.invalidate({ id: rfqId });
       utils.freight.emails.list.invalidate({ rfqId });
       setSendDialogOpen(false);

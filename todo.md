@@ -227,5 +227,14 @@
 - [x] Display quote comparison with all received quotes (quotes table with AI scoring)
 - [x] Enable selection of best quote option (accept/reject buttons on each quote)
 - [x] Create booking when quote is accepted (accept procedure creates booking)
-- [ ] Connect to actual SMTP/email service for real email delivery
+- [x] Connect to actual SMTP/email service for real email delivery (SendGrid integrated)
 - [ ] Add automatic email inbox monitoring for response collection
+
+## SendGrid Email Integration
+- [x] Request SendGrid API key from user (user will add later via Settings → Secrets)
+- [x] Create SendGrid email service helper (server/_core/email.ts)
+- [x] Update freight RFQ sendToCarriers to use SendGrid
+- [x] Update email status from 'draft' to 'sent' after successful delivery
+- [x] Add error handling for failed email delivery
+- [x] Configure sender email address (from address via SENDGRID_FROM_EMAIL)
+- [x] Write unit tests for email sending (12 tests, 160 total passing)

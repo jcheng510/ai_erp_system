@@ -5,6 +5,7 @@ import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
 import { invokeLLM } from "./_core/llm";
+import { sendEmail, isEmailConfigured, formatEmailHtml } from "./_core/email";
 import * as db from "./db";
 import { storagePut } from "./storage";
 import { nanoid } from "nanoid";
@@ -2362,29 +2363,64 @@ Format the email professionally and request a response by ${rfq.quoteDueDate ? n
             const rawEmailBody = response.choices[0]?.message?.content;
             const emailBody = typeof rawEmailBody === 'string' ? rawEmailBody : 'Unable to generate email content.';
             
+            const emailSubject = `Request for Quote: ${rfq.rfqNumber} - ${rfq.title}`;
+            let emailStatus: 'draft' | 'sent' | 'failed' = 'draft';
+            let deliveryError: string | undefined;
+            
+            // Try to send via SendGrid if configured
+            if (isEmailConfigured()) {
+              const sendResult = await sendEmail({
+                to: carrier.email,
+                subject: emailSubject,
+                text: emailBody,
+                html: formatEmailHtml(emailBody),
+              });
+              
+              if (sendResult.success) {
+                emailStatus = 'sent';
+              } else {
+                emailStatus = 'failed';
+                deliveryError = sendResult.error;
+              }
+            }
+            
             // Save the email record
             const emailResult = await db.createFreightEmail({
               rfqId: input.rfqId,
               carrierId,
               direction: 'outbound',
               emailType: 'rfq_request',
-              fromEmail: 'logistics@company.com',
+              fromEmail: process.env.SENDGRID_FROM_EMAIL || 'logistics@company.com',
               toEmail: carrier.email,
-              subject: `Request for Quote: ${rfq.rfqNumber} - ${rfq.title}`,
+              subject: emailSubject,
               body: emailBody,
               aiGenerated: true,
-              status: 'draft',
+              status: emailStatus,
             });
             
-            results.sent++;
-            results.emails.push({ carrierId, carrierName: carrier.name, emailId: emailResult.id });
+            if (emailStatus === 'sent') {
+              results.sent++;
+            } else {
+              results.failed++;
+            }
+            results.emails.push({ 
+              carrierId, 
+              carrierName: carrier.name, 
+              emailId: emailResult.id,
+              status: emailStatus,
+              error: deliveryError,
+            });
           }
           
           // Update RFQ status
           await db.updateFreightRfq(input.rfqId, { status: 'sent' });
-          await createAuditLog(ctx.user.id, 'update', 'freight_rfq', input.rfqId, `Sent to ${results.sent} carriers`);
+          const emailConfigured = isEmailConfigured();
+          const auditMessage = emailConfigured 
+            ? `Emails sent to ${results.sent} carriers` 
+            : `Email drafts created for ${results.sent + results.failed} carriers (SendGrid not configured)`;
+          await createAuditLog(ctx.user.id, 'update', 'freight_rfq', input.rfqId, auditMessage);
           
-          return results;
+          return { ...results, emailConfigured };
         }),
     }),
     
