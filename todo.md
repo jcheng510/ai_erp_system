@@ -219,3 +219,13 @@
 - [x] Update existing products with new data (override)
 - [x] Create new products for new SKUs (8 products created)
 - [x] Verify import results
+
+## Freight Quotes Workflow Fix
+- [x] Fix freight quotes button navigation/action (WORKS - opens carrier selection dialog)
+- [x] Send RFQ emails to freight vendors when requested (AI generates personalized emails)
+- [x] Monitor and collect quote responses from vendors (Add Quote from Email dialog with AI parsing)
+- [x] Display quote comparison with all received quotes (quotes table with AI scoring)
+- [x] Enable selection of best quote option (accept/reject buttons on each quote)
+- [x] Create booking when quote is accepted (accept procedure creates booking)
+- [ ] Connect to actual SMTP/email service for real email delivery
+- [ ] Add automatic email inbox monitoring for response collection
