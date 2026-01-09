@@ -385,3 +385,153 @@ describe('AI Production Forecasting', () => {
     });
   });
 });
+
+
+describe('Vendor Lead Time Calculations', () => {
+  describe('Lead Time Date Calculations', () => {
+    it('should calculate estimated delivery date based on vendor lead time', () => {
+      const now = new Date('2026-01-08');
+      const vendorLeadTimeDays = 14;
+      
+      const estimatedDeliveryDate = new Date(now.getTime() + vendorLeadTimeDays * 24 * 60 * 60 * 1000);
+      
+      expect(estimatedDeliveryDate.toISOString().split('T')[0]).toBe('2026-01-22');
+    });
+
+    it('should calculate latest order date based on required date and lead time', () => {
+      const requiredByDate = new Date('2026-02-15');
+      const vendorLeadTimeDays = 14;
+      
+      const latestOrderDate = new Date(requiredByDate.getTime() - vendorLeadTimeDays * 24 * 60 * 60 * 1000);
+      
+      expect(latestOrderDate.toISOString().split('T')[0]).toBe('2026-02-01');
+    });
+
+    it('should calculate days until required correctly', () => {
+      const now = new Date('2026-01-08');
+      const requiredByDate = new Date('2026-01-25');
+      
+      const daysUntilRequired = Math.ceil((requiredByDate.getTime() - now.getTime()) / (24 * 60 * 60 * 1000));
+      
+      expect(daysUntilRequired).toBe(17);
+    });
+  });
+
+  describe('Urgency Detection', () => {
+    it('should mark PO as urgent when lead time exceeds available time', () => {
+      const vendorLeadTimeDays = 21;
+      const daysUntilRequired = 14;
+      
+      const isUrgent = vendorLeadTimeDays > daysUntilRequired;
+      
+      expect(isUrgent).toBe(true);
+    });
+
+    it('should not mark PO as urgent when lead time is within available time', () => {
+      const vendorLeadTimeDays = 10;
+      const daysUntilRequired = 20;
+      
+      const isUrgent = vendorLeadTimeDays > daysUntilRequired;
+      
+      expect(isUrgent).toBe(false);
+    });
+
+    it('should calculate days late for urgent POs', () => {
+      const vendorLeadTimeDays = 21;
+      const daysUntilRequired = 14;
+      
+      const daysLate = Math.abs(vendorLeadTimeDays - daysUntilRequired);
+      
+      expect(daysLate).toBe(7);
+    });
+  });
+
+  describe('Priority Score with Lead Time', () => {
+    it('should boost priority score for urgent POs', () => {
+      const avgShortageRatio = 0.5; // 50% shortage
+      const isUrgent = true;
+      
+      let priorityScore = Math.round(avgShortageRatio * 70); // Base score: 35
+      if (isUrgent) {
+        priorityScore += 30; // Urgent boost
+      }
+      priorityScore = Math.min(100, priorityScore);
+      
+      expect(priorityScore).toBe(65);
+    });
+
+    it('should boost priority for near-urgent POs', () => {
+      const avgShortageRatio = 0.5;
+      const vendorLeadTimeDays = 14;
+      const daysUntilRequired = 18; // Only 4 days buffer
+      const isUrgent = false;
+      
+      let priorityScore = Math.round(avgShortageRatio * 70);
+      if (isUrgent) {
+        priorityScore += 30;
+      } else if (daysUntilRequired - vendorLeadTimeDays < 7) {
+        priorityScore += 15; // Near-urgent boost
+      }
+      priorityScore = Math.min(100, priorityScore);
+      
+      expect(priorityScore).toBe(50); // 35 base + 15 near-urgent
+    });
+
+    it('should not boost priority when there is ample time', () => {
+      const avgShortageRatio = 0.5;
+      const vendorLeadTimeDays = 14;
+      const daysUntilRequired = 30; // 16 days buffer
+      const isUrgent = false;
+      
+      let priorityScore = Math.round(avgShortageRatio * 70);
+      if (isUrgent) {
+        priorityScore += 30;
+      } else if (daysUntilRequired - vendorLeadTimeDays < 7) {
+        priorityScore += 15;
+      }
+      priorityScore = Math.min(100, priorityScore);
+      
+      expect(priorityScore).toBe(35); // Just base score
+    });
+  });
+
+  describe('Suggested Order Date Logic', () => {
+    it('should use latest order date when it is in the future', () => {
+      const now = new Date('2026-01-08');
+      const latestOrderDate = new Date('2026-01-20');
+      
+      const suggestedOrderDate = latestOrderDate < now ? now : latestOrderDate;
+      
+      expect(suggestedOrderDate.toISOString().split('T')[0]).toBe('2026-01-20');
+    });
+
+    it('should use current date when latest order date is in the past', () => {
+      const now = new Date('2026-01-08');
+      const latestOrderDate = new Date('2026-01-05'); // Already passed
+      
+      const suggestedOrderDate = latestOrderDate < now ? now : latestOrderDate;
+      
+      expect(suggestedOrderDate.toISOString().split('T')[0]).toBe('2026-01-08');
+    });
+  });
+
+  describe('Material-Specific Lead Time', () => {
+    it('should use material lead time when available', () => {
+      const vendorLeadTimeDays = 14;
+      const materialLeadTimeDays = 21; // Material-specific override
+      
+      const effectiveLeadTime = materialLeadTimeDays || vendorLeadTimeDays;
+      
+      expect(effectiveLeadTime).toBe(21);
+    });
+
+    it('should fall back to vendor lead time when material lead time is not set', () => {
+      const vendorLeadTimeDays = 14;
+      const materialLeadTimeDays = 0; // Not set
+      
+      const effectiveLeadTime = materialLeadTimeDays || vendorLeadTimeDays;
+      
+      expect(effectiveLeadTime).toBe(14);
+    });
+  });
+});

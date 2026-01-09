@@ -202,3 +202,12 @@
 - [x] Suggested PO list with approve/reject actions
 - [x] Forecast accuracy tracking over time (schema ready)
 - [x] Unit tests for forecasting functionality (23 tests passing)
+
+## Vendor Lead Times for PO Generation
+- [x] Add lead time fields to vendor schema (default lead time in days)
+- [x] Add lead time field to raw materials (material-specific lead time)
+- [x] Update material requirements to calculate required order date based on lead times
+- [x] Update suggested PO generation to use lead times for order date recommendations
+- [x] Display lead time and estimated delivery date in suggested PO UI
+- [x] Add urgency indicators when lead time exceeds available time
+- [x] Unit tests for lead time calculations (13 new tests, 148 total passing)

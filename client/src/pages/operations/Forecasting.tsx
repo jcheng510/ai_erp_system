@@ -23,7 +23,10 @@ import {
   RefreshCw,
   FileText,
   AlertTriangle,
-  Sparkles
+  Sparkles,
+  Clock,
+  Truck,
+  Calendar
 } from "lucide-react";
 
 export default function Forecasting() {
@@ -306,59 +309,109 @@ export default function Forecasting() {
                       <TableHead>PO #</TableHead>
                       <TableHead>Vendor</TableHead>
                       <TableHead>Total Amount</TableHead>
-                      <TableHead>Priority</TableHead>
+                      <TableHead>Lead Time</TableHead>
+                      <TableHead>Delivery Estimate</TableHead>
                       <TableHead>Required By</TableHead>
+                      <TableHead>Priority</TableHead>
                       <TableHead>Status</TableHead>
-                      <TableHead>AI Rationale</TableHead>
                       <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {suggestedPOs.map((po) => (
-                      <TableRow key={po.id}>
-                        <TableCell className="font-medium">{po.suggestedPoNumber}</TableCell>
-                        <TableCell>Vendor #{po.vendorId}</TableCell>
-                        <TableCell className="font-medium">${parseFloat(po.totalAmount?.toString() || '0').toLocaleString()}</TableCell>
-                        <TableCell>
-                          <Badge variant={po.priorityScore && po.priorityScore > 70 ? "destructive" : po.priorityScore && po.priorityScore > 40 ? "default" : "secondary"}>
-                            {po.priorityScore || 0}/100
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          {po.requiredByDate ? new Date(po.requiredByDate).toLocaleDateString() : '-'}
-                        </TableCell>
-                        <TableCell>{getStatusBadge(po.status)}</TableCell>
-                        <TableCell className="max-w-xs truncate text-sm text-muted-foreground">
-                          {po.aiRationale || '-'}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          {po.status === 'pending' && (
-                            <div className="flex justify-end gap-2">
-                              <Button
-                                size="sm"
-                                onClick={() => handleApprovePO(po.id)}
-                                disabled={approvePOMutation.isPending}
-                              >
-                                <CheckCircle className="h-4 w-4 mr-1" />
-                                Approve
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => handleRejectPO(po.id)}
-                                disabled={rejectPOMutation.isPending}
-                              >
-                                <XCircle className="h-4 w-4 mr-1" />
-                                Reject
-                              </Button>
+                    {suggestedPOs.map((po) => {
+                      const isUrgent = po.isUrgent;
+                      const leadTimeDays = po.vendorLeadTimeDays || 14;
+                      const daysUntilRequired = po.daysUntilRequired || 0;
+                      
+                      return (
+                        <TableRow key={po.id} className={isUrgent ? 'bg-red-50 dark:bg-red-950/20' : ''}>
+                          <TableCell className="font-medium">
+                            <div className="flex items-center gap-2">
+                              {po.suggestedPoNumber}
+                              {isUrgent && (
+                                <Badge variant="destructive" className="text-xs">
+                                  <AlertTriangle className="h-3 w-3 mr-1" />
+                                  URGENT
+                                </Badge>
+                              )}
                             </div>
-                          )}
-                          {po.status === 'converted' && (
-                            <Badge variant="default">Converted to PO</Badge>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                          </TableCell>
+                          <TableCell>Vendor #{po.vendorId}</TableCell>
+                          <TableCell className="font-medium">${parseFloat(po.totalAmount?.toString() || '0').toLocaleString()}</TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-1 text-sm">
+                              <Clock className="h-3.5 w-3.5 text-muted-foreground" />
+                              <span>{leadTimeDays} days</span>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex flex-col">
+                              <div className="flex items-center gap-1 text-sm">
+                                <Truck className="h-3.5 w-3.5 text-muted-foreground" />
+                                <span>
+                                  {po.estimatedDeliveryDate 
+                                    ? new Date(po.estimatedDeliveryDate).toLocaleDateString() 
+                                    : '-'}
+                                </span>
+                              </div>
+                              {isUrgent && (
+                                <span className="text-xs text-red-600 dark:text-red-400">
+                                  {Math.abs(leadTimeDays - daysUntilRequired)} days late
+                                </span>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex flex-col">
+                              <div className="flex items-center gap-1 text-sm">
+                                <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
+                                <span>
+                                  {po.requiredByDate 
+                                    ? new Date(po.requiredByDate).toLocaleDateString() 
+                                    : '-'}
+                                </span>
+                              </div>
+                              <span className="text-xs text-muted-foreground">
+                                {daysUntilRequired > 0 ? `${daysUntilRequired} days` : 'Overdue'}
+                              </span>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={po.priorityScore && po.priorityScore > 70 ? "destructive" : po.priorityScore && po.priorityScore > 40 ? "default" : "secondary"}>
+                              {po.priorityScore || 0}/100
+                            </Badge>
+                          </TableCell>
+                          <TableCell>{getStatusBadge(po.status)}</TableCell>
+                          <TableCell className="text-right">
+                            {po.status === 'pending' && (
+                              <div className="flex justify-end gap-2">
+                                <Button
+                                  size="sm"
+                                  variant={isUrgent ? "destructive" : "default"}
+                                  onClick={() => handleApprovePO(po.id)}
+                                  disabled={approvePOMutation.isPending}
+                                >
+                                  <CheckCircle className="h-4 w-4 mr-1" />
+                                  {isUrgent ? 'Approve Now' : 'Approve'}
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleRejectPO(po.id)}
+                                  disabled={rejectPOMutation.isPending}
+                                >
+                                  <XCircle className="h-4 w-4 mr-1" />
+                                  Reject
+                                </Button>
+                              </div>
+                            )}
+                            {po.status === 'converted' && (
+                              <Badge variant="default">Converted to PO</Badge>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
                   </TableBody>
                 </Table>
               ) : (

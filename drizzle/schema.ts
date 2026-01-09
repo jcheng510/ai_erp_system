@@ -150,6 +150,9 @@ export const vendors = mysqlTable("vendors", {
   bankRouting: varchar("bankRouting", { length: 64 }),
   notes: text("notes"),
   quickbooksVendorId: varchar("quickbooksVendorId", { length: 64 }),
+  defaultLeadTimeDays: int("defaultLeadTimeDays").default(14), // Default lead time for this vendor
+  minOrderAmount: decimal("minOrderAmount", { precision: 12, scale: 2 }), // Minimum order amount
+  shippingMethod: varchar("shippingMethod", { length: 64 }), // Preferred shipping method
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -1406,6 +1409,10 @@ export const materialRequirements = mysqlTable("materialRequirements", {
   estimatedUnitCost: decimal("estimatedUnitCost", { precision: 12, scale: 4 }),
   estimatedTotalCost: decimal("estimatedTotalCost", { precision: 12, scale: 4 }),
   leadTimeDays: int("leadTimeDays"),
+  requiredByDate: timestamp("requiredByDate"), // When material is needed for production
+  latestOrderDate: timestamp("latestOrderDate"), // Latest date to place order based on lead time
+  estimatedDeliveryDate: timestamp("estimatedDeliveryDate"), // Expected delivery if ordered now
+  isUrgent: boolean("isUrgent").default(false), // True if lead time exceeds available time
   status: mysqlEnum("status", ["pending", "po_generated", "ordered", "received"]).default("pending").notNull(),
   generatedPoId: int("generatedPoId"), // Link to auto-generated PO
   createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -1425,6 +1432,10 @@ export const suggestedPurchaseOrders = mysqlTable("suggestedPurchaseOrders", {
   currency: varchar("currency", { length: 8 }).default("USD"),
   suggestedOrderDate: timestamp("suggestedOrderDate"),
   requiredByDate: timestamp("requiredByDate"),
+  estimatedDeliveryDate: timestamp("estimatedDeliveryDate"), // Based on vendor lead time
+  vendorLeadTimeDays: int("vendorLeadTimeDays"), // Lead time used for calculation
+  daysUntilRequired: int("daysUntilRequired"), // Days between now and required date
+  isUrgent: boolean("isUrgent").default(false), // True if lead time > days until required
   aiRationale: text("aiRationale"), // AI explanation for this suggestion
   priorityScore: int("priorityScore"), // 1-100, higher = more urgent
   status: mysqlEnum("status", ["pending", "approved", "rejected", "converted"]).default("pending").notNull(),

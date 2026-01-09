@@ -374,6 +374,7 @@ export const appRouter = router({
         postalCode: z.string().optional(),
         type: z.enum(['supplier', 'contractor', 'service']).optional(),
         paymentTerms: z.number().optional(),
+        defaultLeadTimeDays: z.number().optional(),
         taxId: z.string().optional(),
         notes: z.string().optional(),
       }))
@@ -392,6 +393,7 @@ export const appRouter = router({
         address: z.string().optional(),
         status: z.enum(['active', 'inactive', 'pending']).optional(),
         paymentTerms: z.number().optional(),
+        defaultLeadTimeDays: z.number().optional(),
         notes: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
@@ -3948,33 +3950,60 @@ Provide your forecast in JSON format with the following structure:
         }
         
         const suggestedPOs = [];
+        const now = new Date();
+        const requiredByDate = plan.plannedStartDate ? new Date(plan.plannedStartDate) : new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000); // Default 30 days
         
         for (const [vendorIdStr, items] of Object.entries(byVendor)) {
           const vendorId = parseInt(vendorIdStr);
           if (vendorId === 0) continue; // Skip items without vendor
           
+          // Get vendor details including lead time
+          const vendor = await db.getVendorById(vendorId);
+          const vendorLeadTimeDays = vendor?.defaultLeadTimeDays || 14; // Default 14 days if not set
+          
+          // Calculate delivery dates based on lead time
+          const estimatedDeliveryDate = new Date(now.getTime() + vendorLeadTimeDays * 24 * 60 * 60 * 1000);
+          const daysUntilRequired = Math.ceil((requiredByDate.getTime() - now.getTime()) / (24 * 60 * 60 * 1000));
+          const isUrgent = vendorLeadTimeDays > daysUntilRequired;
+          
+          // Calculate latest order date (required date minus lead time)
+          const latestOrderDate = new Date(requiredByDate.getTime() - vendorLeadTimeDays * 24 * 60 * 60 * 1000);
+          const suggestedOrderDate = latestOrderDate < now ? now : latestOrderDate;
+          
           const totalAmount = items.reduce((sum, item) => sum + parseFloat(item.estimatedTotalCost?.toString() || '0'), 0);
           
-          // Calculate priority based on lead time and shortage severity
+          // Calculate priority based on lead time urgency and shortage severity
           const avgShortageRatio = items.reduce((sum, item) => {
             const required = parseFloat(item.requiredQuantity?.toString() || '1');
             const shortage = parseFloat(item.shortageQuantity?.toString() || '0');
             return sum + (shortage / required);
           }, 0) / items.length;
-          const priorityScore = Math.min(100, Math.round(avgShortageRatio * 100));
           
-          // Use AI to generate rationale
+          // Boost priority if urgent (lead time exceeds available time)
+          let priorityScore = Math.round(avgShortageRatio * 70); // Base score from shortage
+          if (isUrgent) {
+            priorityScore += 30; // Urgent boost
+          } else if (daysUntilRequired - vendorLeadTimeDays < 7) {
+            priorityScore += 15; // Near-urgent boost
+          }
+          priorityScore = Math.min(100, priorityScore);
+          
+          // Use AI to generate rationale including lead time info
           const { invokeLLM } = await import('./_core/llm');
           let aiRationale = '';
           try {
-            const vendor = await db.getVendorById(vendorId);
             const response = await invokeLLM({
               messages: [
                 { role: 'system', content: 'You are an ERP procurement assistant. Provide brief, professional rationale for purchase orders.' },
                 { role: 'user', content: `Generate a brief rationale (2-3 sentences) for this suggested purchase order:
 - Vendor: ${vendor?.name || 'Unknown'}
+- Vendor Lead Time: ${vendorLeadTimeDays} days
 - Items: ${items.length} raw materials
 - Total Amount: $${totalAmount.toFixed(2)}
+- Required By: ${requiredByDate.toLocaleDateString()}
+- Days Until Required: ${daysUntilRequired}
+- Is Urgent: ${isUrgent ? 'YES - Lead time exceeds available time!' : 'No'}
+- Estimated Delivery: ${estimatedDeliveryDate.toLocaleDateString()}
 - Priority Score: ${priorityScore}/100
 - Materials needed for production plan ${plan.planNumber}` }
               ]
@@ -3983,7 +4012,9 @@ Provide your forecast in JSON format with the following structure:
               ? response.choices[0].message.content 
               : 'Purchase order suggested based on production requirements and inventory analysis.';
           } catch {
-            aiRationale = 'Purchase order suggested based on production requirements and inventory analysis.';
+            aiRationale = isUrgent 
+              ? `URGENT: Lead time (${vendorLeadTimeDays} days) exceeds available time (${daysUntilRequired} days). Order immediately to minimize production delays.`
+              : `Purchase order suggested based on production requirements. Vendor lead time: ${vendorLeadTimeDays} days. Order by ${latestOrderDate.toLocaleDateString()} for on-time delivery.`;
           }
           
           const suggestedPo = await db.createSuggestedPurchaseOrder({
@@ -3991,16 +4022,35 @@ Provide your forecast in JSON format with the following structure:
             productionPlanId: plan.id,
             totalAmount: totalAmount.toFixed(2),
             currency: 'USD',
-            suggestedOrderDate: new Date(),
-            requiredByDate: plan.plannedStartDate || undefined,
+            suggestedOrderDate,
+            requiredByDate,
+            estimatedDeliveryDate,
+            vendorLeadTimeDays,
+            daysUntilRequired,
+            isUrgent,
             aiRationale,
             priorityScore,
             status: 'pending',
           });
           
-          // Create line items
+          // Create line items and update material requirements with lead time info
           for (const item of items) {
             const rawMaterial = await db.getRawMaterialById(item.rawMaterialId);
+            // Use material-specific lead time if available, otherwise vendor default
+            const materialLeadTime = rawMaterial?.leadTimeDays || vendorLeadTimeDays;
+            const materialDeliveryDate = new Date(now.getTime() + materialLeadTime * 24 * 60 * 60 * 1000);
+            const materialLatestOrderDate = new Date(requiredByDate.getTime() - materialLeadTime * 24 * 60 * 60 * 1000);
+            const materialIsUrgent = materialLeadTime > daysUntilRequired;
+            
+            // Update material requirement with lead time calculations
+            await db.updateMaterialRequirement(item.id, {
+              leadTimeDays: materialLeadTime,
+              requiredByDate,
+              latestOrderDate: materialLatestOrderDate,
+              estimatedDeliveryDate: materialDeliveryDate,
+              isUrgent: materialIsUrgent,
+            });
+            
             await db.createSuggestedPoItem({
               suggestedPoId: suggestedPo.id,
               materialRequirementId: item.id,
@@ -4013,7 +4063,14 @@ Provide your forecast in JSON format with the following structure:
             });
           }
           
-          suggestedPOs.push(suggestedPo);
+          suggestedPOs.push({
+            ...suggestedPo,
+            vendorName: vendor?.name,
+            vendorLeadTimeDays,
+            estimatedDeliveryDate,
+            isUrgent,
+            daysUntilRequired,
+          });
         }
         
         return { suggestedPOs, count: suggestedPOs.length };

@@ -55,6 +55,7 @@ export default function Vendors() {
     country: "",
     postalCode: "",
     paymentTerms: 30,
+    defaultLeadTimeDays: 14,
     notes: "",
   });
 
@@ -106,7 +107,7 @@ export default function Vendors() {
     setFormData({
       name: "", contactName: "", email: "", phone: "", type: "supplier",
       address: "", city: "", state: "", country: "", postalCode: "",
-      paymentTerms: 30, notes: "",
+      paymentTerms: 30, defaultLeadTimeDays: 14, notes: "",
     });
   };
 
@@ -164,6 +165,7 @@ export default function Vendors() {
       country: formData.country || undefined,
       postalCode: formData.postalCode || undefined,
       paymentTerms: formData.paymentTerms,
+      defaultLeadTimeDays: formData.defaultLeadTimeDays,
       notes: formData.notes || undefined,
     });
   };
@@ -321,6 +323,17 @@ export default function Vendors() {
                         value={formData.paymentTerms}
                         onChange={(e) => setFormData({ ...formData, paymentTerms: parseInt(e.target.value) || 30 })}
                       />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="defaultLeadTimeDays">Default Lead Time (days)</Label>
+                      <Input
+                        id="defaultLeadTimeDays"
+                        type="number"
+                        value={formData.defaultLeadTimeDays}
+                        onChange={(e) => setFormData({ ...formData, defaultLeadTimeDays: parseInt(e.target.value) || 14 })}
+                        placeholder="14"
+                      />
+                      <p className="text-xs text-muted-foreground">Average time from order to delivery</p>
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="notes">Notes</Label>
