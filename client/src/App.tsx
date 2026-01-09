@@ -38,6 +38,7 @@ import RawMaterials from "./pages/operations/RawMaterials";
 import WorkOrders from "./pages/operations/WorkOrders";
 import WorkOrderDetail from "./pages/operations/WorkOrderDetail";
 import POReceiving from "./pages/operations/POReceiving";
+import Forecasting from "./pages/operations/Forecasting";
 
 // Freight
 import FreightDashboard from "./pages/freight/FreightDashboard";
@@ -105,6 +106,7 @@ function Router() {
         <Route path="/operations/work-orders" component={WorkOrders} />
         <Route path="/operations/work-orders/:id" component={WorkOrderDetail} />
         <Route path="/operations/receiving" component={POReceiving} />
+        <Route path="/operations/forecasting" component={Forecasting} />
 
         {/* Freight */}
         <Route path="/freight" component={FreightDashboard} />

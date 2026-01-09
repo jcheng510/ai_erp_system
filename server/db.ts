@@ -17,6 +17,7 @@ import {
   billOfMaterials, bomComponents, rawMaterials, bomVersionHistory,
   workOrders, workOrderMaterials, rawMaterialInventory, rawMaterialTransactions,
   purchaseOrderRawMaterials, poReceivingRecords, poReceivingItems,
+  demandForecasts, productionPlans, materialRequirements, suggestedPurchaseOrders, suggestedPoItems, forecastAccuracy,
   InsertCompany, InsertCustomer, InsertVendor, InsertProduct,
   InsertAccount, InsertInvoice, InsertPayment, InsertTransaction,
   InsertOrder, InsertInventory, InsertPurchaseOrder, InsertWarehouse,
@@ -28,7 +29,8 @@ import {
   InsertTeamInvitation, InsertUserPermission,
   InsertBillOfMaterials, InsertBomComponent, InsertRawMaterial, InsertBomVersionHistory,
   InsertWorkOrder, InsertWorkOrderMaterial, InsertRawMaterialInventory, InsertRawMaterialTransaction,
-  InsertPurchaseOrderRawMaterial, InsertPoReceivingRecord, InsertPoReceivingItem
+  InsertPurchaseOrderRawMaterial, InsertPoReceivingRecord, InsertPoReceivingItem,
+  InsertDemandForecast, InsertProductionPlan, InsertMaterialRequirement, InsertSuggestedPurchaseOrder, InsertSuggestedPoItem, InsertForecastAccuracy
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -2734,4 +2736,355 @@ export async function getPurchaseOrderItems(purchaseOrderId: number) {
   const db = await getDb();
   if (!db) return [];
   return db.select().from(purchaseOrderItems).where(eq(purchaseOrderItems.purchaseOrderId, purchaseOrderId));
+}
+
+
+// ============================================
+// AI PRODUCTION FORECASTING
+// ============================================
+
+// Generate forecast number
+function generateForecastNumber() {
+  const date = new Date();
+  const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
+  const random = Math.random().toString(36).substring(2, 6).toUpperCase();
+  return `FC-${dateStr}-${random}`;
+}
+
+// Generate production plan number
+function generatePlanNumber() {
+  const date = new Date();
+  const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
+  const random = Math.random().toString(36).substring(2, 6).toUpperCase();
+  return `PP-${dateStr}-${random}`;
+}
+
+// Generate suggested PO number
+function generateSuggestedPoNumber() {
+  const date = new Date();
+  const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
+  const random = Math.random().toString(36).substring(2, 6).toUpperCase();
+  return `SPO-${dateStr}-${random}`;
+}
+
+// Demand Forecasts
+export async function getDemandForecasts(filters?: { status?: string; productId?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  
+  const conditions = [];
+  if (filters?.status) conditions.push(eq(demandForecasts.status, filters.status as any));
+  if (filters?.productId) conditions.push(eq(demandForecasts.productId, filters.productId));
+  
+  return db.select().from(demandForecasts)
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(demandForecasts.createdAt));
+}
+
+export async function getDemandForecastById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(demandForecasts).where(eq(demandForecasts.id, id)).limit(1);
+  return result[0];
+}
+
+export async function createDemandForecast(data: Omit<InsertDemandForecast, 'forecastNumber'>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const forecastNumber = generateForecastNumber();
+  const result = await db.insert(demandForecasts).values({ ...data, forecastNumber }).$returningId();
+  return { id: result[0].id, forecastNumber };
+}
+
+export async function updateDemandForecast(id: number, data: Partial<InsertDemandForecast>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(demandForecasts).set(data).where(eq(demandForecasts.id, id));
+}
+
+// Production Plans
+export async function getProductionPlans(filters?: { status?: string; productId?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  
+  const conditions = [];
+  if (filters?.status) conditions.push(eq(productionPlans.status, filters.status as any));
+  if (filters?.productId) conditions.push(eq(productionPlans.productId, filters.productId));
+  
+  return db.select().from(productionPlans)
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(productionPlans.createdAt));
+}
+
+export async function getProductionPlanById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(productionPlans).where(eq(productionPlans.id, id)).limit(1);
+  return result[0];
+}
+
+export async function createProductionPlan(data: Omit<InsertProductionPlan, 'planNumber'>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const planNumber = generatePlanNumber();
+  const result = await db.insert(productionPlans).values({ ...data, planNumber }).$returningId();
+  return { id: result[0].id, planNumber };
+}
+
+export async function updateProductionPlan(id: number, data: Partial<InsertProductionPlan>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(productionPlans).set(data).where(eq(productionPlans.id, id));
+}
+
+// Material Requirements
+export async function getMaterialRequirements(productionPlanId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(materialRequirements)
+    .where(eq(materialRequirements.productionPlanId, productionPlanId));
+}
+
+export async function createMaterialRequirement(data: InsertMaterialRequirement) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(materialRequirements).values(data).$returningId();
+  return { id: result[0].id };
+}
+
+export async function updateMaterialRequirement(id: number, data: Partial<InsertMaterialRequirement>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(materialRequirements).set(data).where(eq(materialRequirements.id, id));
+}
+
+// Suggested Purchase Orders
+export async function getSuggestedPurchaseOrders(filters?: { status?: string; vendorId?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  
+  const conditions = [];
+  if (filters?.status) conditions.push(eq(suggestedPurchaseOrders.status, filters.status as any));
+  if (filters?.vendorId) conditions.push(eq(suggestedPurchaseOrders.vendorId, filters.vendorId));
+  
+  return db.select().from(suggestedPurchaseOrders)
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(suggestedPurchaseOrders.priorityScore), desc(suggestedPurchaseOrders.createdAt));
+}
+
+export async function getSuggestedPurchaseOrderById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(suggestedPurchaseOrders).where(eq(suggestedPurchaseOrders.id, id)).limit(1);
+  return result[0];
+}
+
+export async function createSuggestedPurchaseOrder(data: Omit<InsertSuggestedPurchaseOrder, 'suggestedPoNumber'>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const suggestedPoNumber = generateSuggestedPoNumber();
+  const result = await db.insert(suggestedPurchaseOrders).values({ ...data, suggestedPoNumber }).$returningId();
+  return { id: result[0].id, suggestedPoNumber };
+}
+
+export async function updateSuggestedPurchaseOrder(id: number, data: Partial<InsertSuggestedPurchaseOrder>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(suggestedPurchaseOrders).set(data).where(eq(suggestedPurchaseOrders.id, id));
+}
+
+// Suggested PO Items
+export async function getSuggestedPoItems(suggestedPoId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(suggestedPoItems).where(eq(suggestedPoItems.suggestedPoId, suggestedPoId));
+}
+
+export async function createSuggestedPoItem(data: InsertSuggestedPoItem) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(suggestedPoItems).values(data).$returningId();
+  return { id: result[0].id };
+}
+
+// Forecast Accuracy
+export async function getForecastAccuracyHistory(productId?: number, limit?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  
+  const query = db.select().from(forecastAccuracy)
+    .orderBy(desc(forecastAccuracy.calculatedAt));
+  
+  if (productId) {
+    return query.where(eq(forecastAccuracy.productId, productId)).limit(limit || 50);
+  }
+  return query.limit(limit || 50);
+}
+
+export async function createForecastAccuracyRecord(data: InsertForecastAccuracy) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(forecastAccuracy).values(data).$returningId();
+  return { id: result[0].id };
+}
+
+// Get historical sales data for forecasting
+export async function getHistoricalSalesData(productId?: number, months?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  
+  const monthsBack = months || 12;
+  const startDate = new Date();
+  startDate.setMonth(startDate.getMonth() - monthsBack);
+  
+  const conditions = [gte(orders.orderDate, startDate)];
+  if (productId) {
+    conditions.push(eq(orderItems.productId, productId));
+  }
+  
+  // Get order items with dates
+  const result = await db.select({
+    productId: orderItems.productId,
+    quantity: orderItems.quantity,
+    orderDate: orders.orderDate,
+    totalAmount: orderItems.totalAmount,
+  })
+  .from(orderItems)
+  .innerJoin(orders, eq(orderItems.orderId, orders.id))
+  .where(and(...conditions))
+  .orderBy(orders.orderDate);
+  
+  return result;
+}
+
+// Get pending POs for a raw material (on order but not received)
+export async function getPendingOrdersForMaterial(rawMaterialId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  
+  // Get PO items that reference products linked to this raw material
+  const pendingPOs = await db.select({
+    poId: purchaseOrders.id,
+    poNumber: purchaseOrders.poNumber,
+    quantity: purchaseOrderItems.quantity,
+    receivedQuantity: purchaseOrderItems.receivedQuantity,
+    expectedDate: purchaseOrders.expectedDate,
+  })
+  .from(purchaseOrderItems)
+  .innerJoin(purchaseOrders, eq(purchaseOrderItems.purchaseOrderId, purchaseOrders.id))
+  .where(and(
+    or(
+      eq(purchaseOrders.status, 'sent'),
+      eq(purchaseOrders.status, 'confirmed'),
+      eq(purchaseOrders.status, 'partial')
+    )
+  ));
+  
+  return pendingPOs;
+}
+
+// Convert suggested PO to actual PO
+export async function convertSuggestedPoToActualPo(suggestedPoId: number, approvedBy: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  const suggestedPo = await getSuggestedPurchaseOrderById(suggestedPoId);
+  if (!suggestedPo) throw new Error("Suggested PO not found");
+  
+  const items = await getSuggestedPoItems(suggestedPoId);
+  
+  // Calculate totals
+  let subtotal = 0;
+  for (const item of items) {
+    subtotal += parseFloat(item.totalAmount?.toString() || '0');
+  }
+  
+  // Create actual PO
+  const poNumber = `PO-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+  const poResult = await db.insert(purchaseOrders).values({
+    poNumber,
+    vendorId: suggestedPo.vendorId,
+    orderDate: new Date(),
+    expectedDate: suggestedPo.requiredByDate || undefined,
+    subtotal: subtotal.toFixed(2),
+    totalAmount: subtotal.toFixed(2),
+    currency: suggestedPo.currency || 'USD',
+    status: 'draft',
+    createdBy: approvedBy,
+    approvedBy,
+    approvedAt: new Date(),
+  }).$returningId();
+  
+  const poId = poResult[0].id;
+  
+  // Create PO items
+  for (const item of items) {
+    await db.insert(purchaseOrderItems).values({
+      purchaseOrderId: poId,
+      productId: item.productId || undefined,
+      description: item.description || '',
+      quantity: item.quantity?.toString() || '0',
+      unitPrice: item.unitPrice?.toString() || '0',
+      totalAmount: item.totalAmount?.toString() || '0',
+    });
+  }
+  
+  // Update suggested PO status
+  await updateSuggestedPurchaseOrder(suggestedPoId, {
+    status: 'converted',
+    convertedPoId: poId,
+    approvedBy,
+    approvedAt: new Date(),
+  });
+  
+  // Update material requirements
+  for (const item of items) {
+    if (item.materialRequirementId) {
+      await updateMaterialRequirement(item.materialRequirementId, {
+        status: 'po_generated',
+        generatedPoId: poId,
+      });
+    }
+  }
+  
+  return { poId, poNumber };
+}
+
+// Get all products with their BOMs for forecasting
+export async function getProductsWithBoms() {
+  const db = await getDb();
+  if (!db) return [];
+  
+  const result = await db.select({
+    product: products,
+    bom: billOfMaterials,
+  })
+  .from(products)
+  .leftJoin(billOfMaterials, eq(billOfMaterials.productId, products.id));
+  
+  return result;
+}
+
+// Get vendor for a raw material (preferred or first available)
+export async function getPreferredVendorForMaterial(rawMaterialId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  
+  // Get the raw material
+  const rm = await db.select().from(rawMaterials).where(eq(rawMaterials.id, rawMaterialId)).limit(1);
+  if (!rm[0]) return undefined;
+  
+  // Get vendor from description field (may contain supplier info) or find one that has supplied this before
+  if (rm[0].description) {
+    const vendor = await db.select().from(vendors)
+      .where(like(vendors.name, `%${rm[0].description.split(' ')[0]}%`))
+      .limit(1);
+    if (vendor[0]) return vendor[0];
+  }
+  
+  // Return first active vendor as fallback
+  const anyVendor = await db.select().from(vendors)
+    .where(eq(vendors.status, 'active'))
+    .limit(1);
+  return anyVendor[0];
 }

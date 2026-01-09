@@ -1,0 +1,120 @@
+CREATE TABLE `demandForecasts` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`forecastNumber` varchar(32) NOT NULL,
+	`productId` int,
+	`forecastDate` timestamp NOT NULL,
+	`forecastPeriodStart` timestamp NOT NULL,
+	`forecastPeriodEnd` timestamp NOT NULL,
+	`forecastedQuantity` decimal(12,4) NOT NULL,
+	`unit` varchar(16) DEFAULT 'EA',
+	`confidenceLevel` decimal(5,2),
+	`forecastMethod` varchar(64),
+	`dataPointsUsed` int,
+	`aiAnalysis` text,
+	`seasonalFactors` text,
+	`trendDirection` enum('up','down','stable'),
+	`status` enum('draft','active','superseded','expired') NOT NULL DEFAULT 'draft',
+	`createdBy` int,
+	`approvedBy` int,
+	`approvedAt` timestamp,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `demandForecasts_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `forecastAccuracy` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`demandForecastId` int NOT NULL,
+	`productId` int,
+	`forecastedQuantity` decimal(12,4) NOT NULL,
+	`actualQuantity` decimal(12,4),
+	`varianceQuantity` decimal(12,4),
+	`variancePercent` decimal(8,2),
+	`mape` decimal(8,2),
+	`periodStart` timestamp NOT NULL,
+	`periodEnd` timestamp NOT NULL,
+	`calculatedAt` timestamp NOT NULL DEFAULT (now()),
+	CONSTRAINT `forecastAccuracy_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `materialRequirements` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`productionPlanId` int NOT NULL,
+	`rawMaterialId` int NOT NULL,
+	`requiredQuantity` decimal(12,4) NOT NULL,
+	`unit` varchar(16) DEFAULT 'KG',
+	`currentInventory` decimal(12,4),
+	`onOrderQuantity` decimal(12,4),
+	`shortageQuantity` decimal(12,4),
+	`suggestedOrderQuantity` decimal(12,4),
+	`preferredVendorId` int,
+	`estimatedUnitCost` decimal(12,4),
+	`estimatedTotalCost` decimal(12,4),
+	`leadTimeDays` int,
+	`status` enum('pending','po_generated','ordered','received') NOT NULL DEFAULT 'pending',
+	`generatedPoId` int,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `materialRequirements_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `productionPlans` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`planNumber` varchar(32) NOT NULL,
+	`demandForecastId` int,
+	`productId` int NOT NULL,
+	`bomId` int,
+	`plannedQuantity` decimal(12,4) NOT NULL,
+	`unit` varchar(16) DEFAULT 'EA',
+	`plannedStartDate` timestamp,
+	`plannedEndDate` timestamp,
+	`currentInventory` decimal(12,4),
+	`safetyStock` decimal(12,4),
+	`reorderPoint` decimal(12,4),
+	`status` enum('draft','approved','in_progress','completed','cancelled') NOT NULL DEFAULT 'draft',
+	`notes` text,
+	`createdBy` int,
+	`approvedBy` int,
+	`approvedAt` timestamp,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `productionPlans_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `suggestedPoItems` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`suggestedPoId` int NOT NULL,
+	`materialRequirementId` int,
+	`rawMaterialId` int NOT NULL,
+	`productId` int,
+	`description` varchar(512),
+	`quantity` decimal(12,4) NOT NULL,
+	`unit` varchar(16) DEFAULT 'KG',
+	`unitPrice` decimal(12,4),
+	`totalAmount` decimal(14,2),
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	CONSTRAINT `suggestedPoItems_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `suggestedPurchaseOrders` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`suggestedPoNumber` varchar(32) NOT NULL,
+	`vendorId` int NOT NULL,
+	`productionPlanId` int,
+	`totalAmount` decimal(14,2),
+	`currency` varchar(8) DEFAULT 'USD',
+	`suggestedOrderDate` timestamp,
+	`requiredByDate` timestamp,
+	`aiRationale` text,
+	`priorityScore` int,
+	`status` enum('pending','approved','rejected','converted') NOT NULL DEFAULT 'pending',
+	`convertedPoId` int,
+	`approvedBy` int,
+	`approvedAt` timestamp,
+	`rejectedBy` int,
+	`rejectedAt` timestamp,
+	`rejectionReason` text,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `suggestedPurchaseOrders_id` PRIMARY KEY(`id`)
+);

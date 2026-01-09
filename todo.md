@@ -189,3 +189,16 @@
 - [x] Work Orders UI page with list and detail views
 - [x] PO Receiving UI page with receiving workflow
 - [x] Unit tests for production workflow (21 tests passing)
+
+## AI Production Forecasting & Auto-PO Generation
+- [x] Database schema for demand forecasts and forecast history
+- [x] AI forecasting engine using LLM to analyze sales trends and predict demand
+- [x] Production requirements calculation based on forecasts and BOMs
+- [x] Raw material requirements aggregation from production forecasts
+- [x] Inventory gap analysis (required vs available raw materials)
+- [x] Auto-generate draft purchase orders for material shortages
+- [x] One-click approval for generated POs
+- [x] Forecasting dashboard with demand predictions and charts
+- [x] Suggested PO list with approve/reject actions
+- [x] Forecast accuracy tracking over time (schema ready)
+- [x] Unit tests for forecasting functionality (23 tests passing)

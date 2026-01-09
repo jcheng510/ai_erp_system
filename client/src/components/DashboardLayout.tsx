@@ -58,6 +58,7 @@ import {
   ArrowRightLeft,
   ClipboardList,
   PackageCheck,
+  Brain,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -108,6 +109,7 @@ const menuGroups = [
       { icon: Package, label: "Raw Materials", path: "/operations/raw-materials" },
       { icon: ClipboardList, label: "Work Orders", path: "/operations/work-orders" },
       { icon: PackageCheck, label: "Receiving", path: "/operations/receiving" },
+      { icon: Brain, label: "AI Forecasting", path: "/operations/forecasting" },
     ],
   },
   {
