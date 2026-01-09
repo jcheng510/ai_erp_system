@@ -211,3 +211,11 @@
 - [x] Display lead time and estimated delivery date in suggested PO UI
 - [x] Add urgency indicators when lead time exceeds available time
 - [x] Unit tests for lead time calculations (13 new tests, 148 total passing)
+
+## Foodservice Wholesale Pricelist Import
+- [x] Access Google Sheet with foodservice pricelist
+- [x] Extract product data (SKU, name, price, etc.)
+- [x] Match existing products by SKU
+- [x] Update existing products with new data (override)
+- [x] Create new products for new SKUs (8 products created)
+- [x] Verify import results
