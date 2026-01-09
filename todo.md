@@ -162,3 +162,15 @@
 - [x] Create copacker-restricted shipment document upload view
 - [x] Add vendor portal with limited PO and shipment access
 - [x] Link users to specific warehouses or vendors
+
+## Bill of Materials (BOM) Module
+
+- [x] BOM database schema (parent product, components, quantities)
+- [x] BOM versions and revision tracking
+- [x] Component cost rollup calculations
+- [x] BOM list and detail UI pages
+- [x] Add/edit BOM components interface
+- [x] Import existing BOM data from Google Sheets (13 raw materials created)
+- [x] BOM cost analysis view
+- [x] Raw materials management page
+- [x] Production requirements calculation

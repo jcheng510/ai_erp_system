@@ -32,6 +32,9 @@ import Shipments from "./pages/operations/Shipments";
 import Locations from "./pages/operations/Locations";
 import Transfers from "./pages/operations/Transfers";
 import TransferDetail from "./pages/operations/TransferDetail";
+import BOM from "./pages/operations/BOM";
+import BOMDetail from "./pages/operations/BOMDetail";
+import RawMaterials from "./pages/operations/RawMaterials";
 
 // Freight
 import FreightDashboard from "./pages/freight/FreightDashboard";
@@ -93,6 +96,9 @@ function Router() {
         <Route path="/operations/locations" component={Locations} />
         <Route path="/operations/transfers" component={Transfers} />
         <Route path="/operations/transfers/:id" component={TransferDetail} />
+        <Route path="/operations/bom" component={BOM} />
+        <Route path="/operations/bom/:id" component={BOMDetail} />
+        <Route path="/operations/raw-materials" component={RawMaterials} />
 
         {/* Freight */}
         <Route path="/freight" component={FreightDashboard} />

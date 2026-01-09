@@ -1101,3 +1101,94 @@ export type InsertCustomsDocument = typeof customsDocuments.$inferInsert;
 
 export type FreightBooking = typeof freightBookings.$inferSelect;
 export type InsertFreightBooking = typeof freightBookings.$inferInsert;
+
+
+// ============================================
+// BILL OF MATERIALS (BOM) MODULE
+// ============================================
+
+// BOM header - defines a product's bill of materials
+export const billOfMaterials = mysqlTable("billOfMaterials", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  productId: int("productId").notNull(), // The finished product
+  name: varchar("name", { length: 255 }).notNull(),
+  version: varchar("version", { length: 32 }).default("1.0").notNull(),
+  status: mysqlEnum("status", ["draft", "active", "obsolete"]).default("draft").notNull(),
+  effectiveDate: timestamp("effectiveDate"),
+  obsoleteDate: timestamp("obsoleteDate"),
+  batchSize: decimal("batchSize", { precision: 15, scale: 4 }).default("1"), // Standard batch quantity
+  batchUnit: varchar("batchUnit", { length: 32 }).default("EA"), // Unit of measure for batch
+  laborCost: decimal("laborCost", { precision: 15, scale: 2 }).default("0"),
+  overheadCost: decimal("overheadCost", { precision: 15, scale: 2 }).default("0"),
+  totalMaterialCost: decimal("totalMaterialCost", { precision: 15, scale: 2 }), // Calculated from components
+  totalCost: decimal("totalCost", { precision: 15, scale: 2 }), // Material + Labor + Overhead
+  notes: text("notes"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+// BOM components - individual items that make up a product
+export const bomComponents = mysqlTable("bomComponents", {
+  id: int("id").autoincrement().primaryKey(),
+  bomId: int("bomId").notNull(), // Reference to billOfMaterials
+  componentType: mysqlEnum("componentType", ["product", "raw_material", "packaging", "labor"]).default("raw_material").notNull(),
+  productId: int("productId"), // If component is another product (sub-assembly)
+  rawMaterialId: int("rawMaterialId"), // If component is a raw material
+  name: varchar("name", { length: 255 }).notNull(), // Component name (for display)
+  sku: varchar("sku", { length: 64 }),
+  quantity: decimal("quantity", { precision: 15, scale: 4 }).notNull(),
+  unit: varchar("unit", { length: 32 }).default("EA").notNull(),
+  wastagePercent: decimal("wastagePercent", { precision: 5, scale: 2 }).default("0"), // Expected waste/scrap %
+  unitCost: decimal("unitCost", { precision: 15, scale: 4 }),
+  totalCost: decimal("totalCost", { precision: 15, scale: 2 }), // quantity * unitCost * (1 + wastage)
+  leadTimeDays: int("leadTimeDays").default(0),
+  isOptional: boolean("isOptional").default(false),
+  notes: text("notes"),
+  sortOrder: int("sortOrder").default(0),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+// Raw materials - ingredients and materials not tracked as products
+export const rawMaterials = mysqlTable("rawMaterials", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  sku: varchar("sku", { length: 64 }),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  category: varchar("category", { length: 128 }),
+  unit: varchar("unit", { length: 32 }).default("EA").notNull(),
+  unitCost: decimal("unitCost", { precision: 15, scale: 4 }),
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  minOrderQty: decimal("minOrderQty", { precision: 15, scale: 4 }),
+  leadTimeDays: int("leadTimeDays").default(0),
+  preferredVendorId: int("preferredVendorId"),
+  status: mysqlEnum("status", ["active", "inactive", "discontinued"]).default("active").notNull(),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+// BOM version history for tracking changes
+export const bomVersionHistory = mysqlTable("bomVersionHistory", {
+  id: int("id").autoincrement().primaryKey(),
+  bomId: int("bomId").notNull(),
+  version: varchar("version", { length: 32 }).notNull(),
+  changeType: mysqlEnum("changeType", ["created", "updated", "activated", "obsoleted"]).notNull(),
+  changeDescription: text("changeDescription"),
+  changedBy: int("changedBy"),
+  snapshotData: text("snapshotData"), // JSON snapshot of BOM at this version
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+// Type exports for BOM tables
+export type BillOfMaterials = typeof billOfMaterials.$inferSelect;
+export type InsertBillOfMaterials = typeof billOfMaterials.$inferInsert;
+export type BomComponent = typeof bomComponents.$inferSelect;
+export type InsertBomComponent = typeof bomComponents.$inferInsert;
+export type RawMaterial = typeof rawMaterials.$inferSelect;
+export type InsertRawMaterial = typeof rawMaterials.$inferInsert;
+export type BomVersionHistory = typeof bomVersionHistory.$inferSelect;
+export type InsertBomVersionHistory = typeof bomVersionHistory.$inferInsert;

@@ -14,6 +14,7 @@ import {
   customsClearances, customsDocuments, freightBookings,
   inventoryTransfers, inventoryTransferItems,
   teamInvitations, userPermissions,
+  billOfMaterials, bomComponents, rawMaterials, bomVersionHistory,
   InsertCompany, InsertCustomer, InsertVendor, InsertProduct,
   InsertAccount, InsertInvoice, InsertPayment, InsertTransaction,
   InsertOrder, InsertInventory, InsertPurchaseOrder, InsertWarehouse,
@@ -22,7 +23,8 @@ import {
   InsertFreightCarrier, InsertFreightRfq, InsertFreightQuote, InsertFreightEmail,
   InsertCustomsClearance, InsertCustomsDocument, InsertFreightBooking,
   InsertInventoryTransfer, InsertInventoryTransferItem,
-  InsertTeamInvitation, InsertUserPermission
+  InsertTeamInvitation, InsertUserPermission,
+  InsertBillOfMaterials, InsertBomComponent, InsertRawMaterial, InsertBomVersionHistory
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -2177,4 +2179,199 @@ export async function updateInventoryQuantityById(
     oldValues: { quantity: oldQuantity },
     newValues: { quantity, notes },
   });
+}
+
+
+// ============================================
+// BILL OF MATERIALS (BOM) FUNCTIONS
+// ============================================
+
+export async function getBillOfMaterials(filters?: { productId?: number; status?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  
+  let query = db.select().from(billOfMaterials).orderBy(desc(billOfMaterials.updatedAt));
+  
+  if (filters?.productId) {
+    query = query.where(eq(billOfMaterials.productId, filters.productId)) as typeof query;
+  }
+  if (filters?.status) {
+    query = query.where(eq(billOfMaterials.status, filters.status as any)) as typeof query;
+  }
+  
+  return query;
+}
+
+export async function getBomById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  
+  const result = await db.select().from(billOfMaterials).where(eq(billOfMaterials.id, id)).limit(1);
+  return result[0];
+}
+
+export async function createBom(data: Omit<InsertBillOfMaterials, 'id' | 'createdAt' | 'updatedAt'>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  const result = await db.insert(billOfMaterials).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateBom(id: number, data: Partial<InsertBillOfMaterials>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  await db.update(billOfMaterials).set({
+    ...data,
+    updatedAt: new Date(),
+  }).where(eq(billOfMaterials.id, id));
+}
+
+export async function deleteBom(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  // Delete components first
+  await db.delete(bomComponents).where(eq(bomComponents.bomId, id));
+  // Delete version history
+  await db.delete(bomVersionHistory).where(eq(bomVersionHistory.bomId, id));
+  // Delete BOM
+  await db.delete(billOfMaterials).where(eq(billOfMaterials.id, id));
+}
+
+// BOM Components
+export async function getBomComponents(bomId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  
+  return db.select().from(bomComponents)
+    .where(eq(bomComponents.bomId, bomId))
+    .orderBy(bomComponents.sortOrder);
+}
+
+export async function createBomComponent(data: Omit<InsertBomComponent, 'id' | 'createdAt' | 'updatedAt'>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  const result = await db.insert(bomComponents).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateBomComponent(id: number, data: Partial<InsertBomComponent>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  await db.update(bomComponents).set({
+    ...data,
+    updatedAt: new Date(),
+  }).where(eq(bomComponents.id, id));
+}
+
+export async function deleteBomComponent(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  await db.delete(bomComponents).where(eq(bomComponents.id, id));
+}
+
+// Raw Materials
+export async function getRawMaterials(filters?: { status?: string; category?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  
+  let query = db.select().from(rawMaterials).orderBy(rawMaterials.name);
+  
+  if (filters?.status) {
+    query = query.where(eq(rawMaterials.status, filters.status as any)) as typeof query;
+  }
+  if (filters?.category) {
+    query = query.where(eq(rawMaterials.category, filters.category)) as typeof query;
+  }
+  
+  return query;
+}
+
+export async function getRawMaterialById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  
+  const result = await db.select().from(rawMaterials).where(eq(rawMaterials.id, id)).limit(1);
+  return result[0];
+}
+
+export async function createRawMaterial(data: Omit<InsertRawMaterial, 'id' | 'createdAt' | 'updatedAt'>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  const result = await db.insert(rawMaterials).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateRawMaterial(id: number, data: Partial<InsertRawMaterial>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  await db.update(rawMaterials).set({
+    ...data,
+    updatedAt: new Date(),
+  }).where(eq(rawMaterials.id, id));
+}
+
+export async function deleteRawMaterial(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  await db.delete(rawMaterials).where(eq(rawMaterials.id, id));
+}
+
+// BOM Version History
+export async function getBomVersionHistory(bomId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  
+  return db.select().from(bomVersionHistory)
+    .where(eq(bomVersionHistory.bomId, bomId))
+    .orderBy(desc(bomVersionHistory.createdAt));
+}
+
+export async function createBomVersionHistory(data: Omit<InsertBomVersionHistory, 'id' | 'createdAt'>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  const result = await db.insert(bomVersionHistory).values(data);
+  return { id: result[0].insertId };
+}
+
+// Calculate BOM costs
+export async function calculateBomCosts(bomId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  
+  const components = await getBomComponents(bomId);
+  const bom = await getBomById(bomId);
+  if (!bom) return null;
+  
+  let totalMaterialCost = 0;
+  for (const comp of components) {
+    const qty = parseFloat(comp.quantity?.toString() || '0');
+    const unitCost = parseFloat(comp.unitCost?.toString() || '0');
+    const wastage = parseFloat(comp.wastagePercent?.toString() || '0') / 100;
+    const compCost = qty * unitCost * (1 + wastage);
+    totalMaterialCost += compCost;
+    
+    // Update component total cost
+    await updateBomComponent(comp.id, { totalCost: compCost.toFixed(2) });
+  }
+  
+  const laborCost = parseFloat(bom.laborCost?.toString() || '0');
+  const overheadCost = parseFloat(bom.overheadCost?.toString() || '0');
+  const totalCost = totalMaterialCost + laborCost + overheadCost;
+  
+  await updateBom(bomId, {
+    totalMaterialCost: totalMaterialCost.toFixed(2),
+    totalCost: totalCost.toFixed(2),
+  });
+  
+  return { totalMaterialCost, laborCost, overheadCost, totalCost };
 }

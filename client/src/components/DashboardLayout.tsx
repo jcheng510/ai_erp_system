@@ -102,6 +102,8 @@ const menuGroups = [
       { icon: Building2, label: "Vendors", path: "/operations/vendors" },
       { icon: FileText, label: "POs", path: "/operations/purchase-orders" },
       { icon: Truck, label: "Shipments", path: "/operations/shipments" },
+      { icon: FileText, label: "Bill of Materials", path: "/operations/bom" },
+      { icon: Package, label: "Raw Materials", path: "/operations/raw-materials" },
     ],
   },
   {

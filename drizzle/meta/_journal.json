@@ -50,6 +50,13 @@
       "when": 1767912433773,
       "tag": "0006_wealthy_infant_terrible",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "5",
+      "when": 1767921650285,
+      "tag": "0007_loud_onslaught",
+      "breakpoints": true
     }
   ]
 }
