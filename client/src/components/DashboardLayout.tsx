@@ -98,6 +98,7 @@ const menuGroups = [
   {
     label: "Operations",
     items: [
+      { icon: LayoutDashboard, label: "Core Operations", path: "/operations/core" },
       { icon: Package, label: "Products", path: "/operations/products" },
       { icon: Warehouse, label: "Inventory", path: "/operations/inventory" },
       { icon: MapPin, label: "Locations", path: "/operations/locations" },

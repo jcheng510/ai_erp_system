@@ -238,3 +238,78 @@
 - [x] Add error handling for failed email delivery
 - [x] Configure sender email address (from address via SENDGRID_FROM_EMAIL)
 - [x] Write unit tests for email sending (12 tests, 160 total passing)
+
+## Specification Gap Completion
+
+### Lot/Batch Tracking System
+- [x] Create InventoryLot table (lot_code, product_id, expiry, attributes JSON)
+- [x] Create InventoryBalance table (lot_id, location_id, status, qty)
+- [x] Add inventory status enum (available, hold, reserved)
+- [x] Create InventoryTransaction ledger for all movements
+- [x] Add transaction types: receive, consume, adjust, transfer, reserve, release, ship
+- [x] Update inventory functions to use lot-level tracking
+- [x] Add lot selection UI for inventory operations (via Core Operations)
+
+### Work Order Output Completion
+- [x] Add WorkOrderOutput table (wo_id, lot_id, qty, yield%)
+- [x] Create finished goods lot on work order completion
+- [x] Track yield percentage vs target
+- [x] Update finished goods inventory on completion
+- [x] Add output lot UI to work order detail page (via Core Operations)
+### Alert System
+- [x] Create Alert table (type, entity_ref, severity, status, assigned_to)
+- [x] Alert types: low_stock, shortage, late_shipment, yield_variance, expiring_lot
+- [x] Automatic alert generation for low stock conditions
+- [x] Automatic alert generation for late shipments
+- [x] Automatic alert generation for yield variance
+- [x] Create Recommendation table with approval workflow
+- [x] Alert dashboard with filtering and assignment (Core Operations right pane)
+- [x] Alert notifications in header
+
+### Shopify Integration Foundation
+- [x] Create ShopifyStore table (domain, token, enabled)
+- [x] Create WebhookEvent table (topic, payload, idempotency_key, status)
+- [x] Create ShopifySkuMapping table (shopify_sku, product_id)
+- [x] Create ShopifyLocationMapping table (shopify_location_id, warehouse_id)
+- [x] Implement orders/create webhook endpoint
+- [x] Implement orders/cancelled webhook endpoint
+- [x] Implement orders/fulfilled webhook endpoint
+- [x] Implement inventory_levels/update webhook endpoint
+- [ ] Add Shopify settings page for store configuration (UI pending)
+
+### Reservation System
+- [x] Create SalesOrder table with lines
+- [x] Create Reservation table (sales_order_id, lot_id, qty)
+- [x] Implement reserve transaction (available → reserved)
+- [x] Implement release transaction (reserved → available)
+- [x] Implement ship transaction (reserved → 0, on_hand decreases)
+- [x] Track available vs on_hand quantities separately
+
+### Inventory Allocation by Channel
+- [x] Create InventoryAllocation table (channel, product_id, allocated_qty, remaining_qty)
+- [x] Create SalesEvent table for Shopify fulfillment tracking
+- [x] Implement allocation workflow (ERP → Shopify)
+- [x] Track allocation remaining vs Shopify inventory
+
+### Inventory Reconciliation
+- [x] Create ReconciliationRun table (scheduled/manual, status)
+- [x] Create ReconciliationLine table (sku, erp_qty, shopify_qty, delta, variance%)
+- [x] Implement reconciliation job
+- [x] Add manual reconciliation trigger
+- [x] Variance thresholds: pass ≤1 unit or ≤0.5%, warning, critical >3%
+- [ ] Reconciliation report UI (pending)
+
+### 3-Pane Core Operations Workspace
+- [x] Create CoreOperations page with 3-pane layout
+- [x] Left pane: Object tree (Sales Orders, POs, Work Orders, Inventory Lots)
+- [x] Center pane: Selected object details + actions
+- [x] Right pane: Alerts and recommendations
+- [x] Tree navigation for drilling into objects
+- [x] Context-aware action buttons
+- [x] Real-time alert updates
+
+### RBAC Refinement
+- [x] All roles exist (admin, finance, ops, legal, exec, copacker, vendor, contractor)
+- [x] Role-based procedure guards implemented
+- [ ] Add Plant User role (Work Orders/Receiving/Inventory/Transfers only)
+- [ ] Split Finance/Procurement permissions

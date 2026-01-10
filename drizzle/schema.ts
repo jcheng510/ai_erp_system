@@ -1487,3 +1487,394 @@ export const forecastAccuracy = mysqlTable("forecastAccuracy", {
 
 export type ForecastAccuracy = typeof forecastAccuracy.$inferSelect;
 export type InsertForecastAccuracy = typeof forecastAccuracy.$inferInsert;
+
+
+// ============================================
+// LOT/BATCH TRACKING SYSTEM
+// ============================================
+
+// Inventory lots for batch/lot tracking
+export const inventoryLots = mysqlTable("inventoryLots", {
+  id: int("id").autoincrement().primaryKey(),
+  lotCode: varchar("lotCode", { length: 64 }).notNull(),
+  productId: int("productId").notNull(),
+  productType: mysqlEnum("productType", ["finished", "wip", "material", "packaging", "subassembly"]).default("finished").notNull(),
+  expiryDate: timestamp("expiryDate"),
+  manufactureDate: timestamp("manufactureDate"),
+  attributes: json("attributes"), // Custom attributes JSON
+  sourceType: mysqlEnum("sourceType", ["production", "purchase", "transfer", "adjustment", "opening"]).default("purchase").notNull(),
+  sourceReferenceId: int("sourceReferenceId"), // work_order_id, po_id, etc.
+  status: mysqlEnum("status", ["active", "expired", "consumed", "quarantine"]).default("active").notNull(),
+  notes: text("notes"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type InventoryLot = typeof inventoryLots.$inferSelect;
+export type InsertInventoryLot = typeof inventoryLots.$inferInsert;
+
+// Inventory balance by lot and location with status
+export const inventoryBalances = mysqlTable("inventoryBalances", {
+  id: int("id").autoincrement().primaryKey(),
+  lotId: int("lotId").notNull(),
+  productId: int("productId").notNull(),
+  warehouseId: int("warehouseId").notNull(),
+  zoneId: varchar("zoneId", { length: 64 }), // Zone within warehouse
+  binId: varchar("binId", { length: 64 }), // Bin within zone
+  status: mysqlEnum("status", ["available", "hold", "reserved", "quarantine", "damaged"]).default("available").notNull(),
+  quantity: decimal("quantity", { precision: 15, scale: 4 }).default("0").notNull(),
+  unit: varchar("unit", { length: 32 }).default("EA").notNull(),
+  lastCountDate: timestamp("lastCountDate"),
+  lastCountQuantity: decimal("lastCountQuantity", { precision: 15, scale: 4 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type InventoryBalance = typeof inventoryBalances.$inferSelect;
+export type InsertInventoryBalance = typeof inventoryBalances.$inferInsert;
+
+// Inventory transaction ledger for all movements
+export const inventoryTransactions = mysqlTable("inventoryTransactions", {
+  id: int("id").autoincrement().primaryKey(),
+  transactionNumber: varchar("transactionNumber", { length: 64 }).notNull(),
+  transactionType: mysqlEnum("transactionType", [
+    "receive", "consume", "adjust", "transfer_in", "transfer_out", 
+    "reserve", "release", "ship", "return", "scrap", "count_adjust"
+  ]).notNull(),
+  lotId: int("lotId"),
+  productId: int("productId").notNull(),
+  fromWarehouseId: int("fromWarehouseId"),
+  toWarehouseId: int("toWarehouseId"),
+  fromStatus: mysqlEnum("fromStatus", ["available", "hold", "reserved", "quarantine", "damaged"]),
+  toStatus: mysqlEnum("toStatus", ["available", "hold", "reserved", "quarantine", "damaged"]),
+  quantity: decimal("quantity", { precision: 15, scale: 4 }).notNull(),
+  unit: varchar("unit", { length: 32 }).default("EA").notNull(),
+  previousBalance: decimal("previousBalance", { precision: 15, scale: 4 }),
+  newBalance: decimal("newBalance", { precision: 15, scale: 4 }),
+  referenceType: varchar("referenceType", { length: 64 }), // 'work_order', 'purchase_order', 'sales_order', 'transfer', 'adjustment'
+  referenceId: int("referenceId"),
+  reason: text("reason"),
+  performedBy: int("performedBy"),
+  performedAt: timestamp("performedAt").defaultNow().notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type InventoryTransaction = typeof inventoryTransactions.$inferSelect;
+export type InsertInventoryTransaction = typeof inventoryTransactions.$inferInsert;
+
+// Work order output lots
+export const workOrderOutputs = mysqlTable("workOrderOutputs", {
+  id: int("id").autoincrement().primaryKey(),
+  workOrderId: int("workOrderId").notNull(),
+  lotId: int("lotId").notNull(),
+  productId: int("productId").notNull(),
+  quantity: decimal("quantity", { precision: 15, scale: 4 }).notNull(),
+  unit: varchar("unit", { length: 32 }).default("EA").notNull(),
+  yieldPercent: decimal("yieldPercent", { precision: 8, scale: 2 }), // Actual vs target
+  qualityGrade: mysqlEnum("qualityGrade", ["A", "B", "C", "reject"]).default("A"),
+  warehouseId: int("warehouseId"),
+  notes: text("notes"),
+  producedAt: timestamp("producedAt").defaultNow().notNull(),
+  producedBy: int("producedBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type WorkOrderOutput = typeof workOrderOutputs.$inferSelect;
+export type InsertWorkOrderOutput = typeof workOrderOutputs.$inferInsert;
+
+// ============================================
+// ALERT SYSTEM
+// ============================================
+
+export const alerts = mysqlTable("alerts", {
+  id: int("id").autoincrement().primaryKey(),
+  alertNumber: varchar("alertNumber", { length: 32 }).notNull(),
+  type: mysqlEnum("type", [
+    "low_stock", "shortage", "late_shipment", "yield_variance", 
+    "expiring_lot", "quality_issue", "po_overdue", "reconciliation_variance"
+  ]).notNull(),
+  severity: mysqlEnum("severity", ["info", "warning", "critical"]).default("warning").notNull(),
+  status: mysqlEnum("status", ["open", "acknowledged", "in_progress", "resolved", "dismissed"]).default("open").notNull(),
+  title: varchar("title", { length: 255 }).notNull(),
+  description: text("description"),
+  entityType: varchar("entityType", { length: 64 }), // 'product', 'lot', 'shipment', 'work_order', etc.
+  entityId: int("entityId"),
+  thresholdValue: decimal("thresholdValue", { precision: 15, scale: 4 }),
+  actualValue: decimal("actualValue", { precision: 15, scale: 4 }),
+  assignedTo: int("assignedTo"),
+  acknowledgedBy: int("acknowledgedBy"),
+  acknowledgedAt: timestamp("acknowledgedAt"),
+  resolvedBy: int("resolvedBy"),
+  resolvedAt: timestamp("resolvedAt"),
+  resolutionNotes: text("resolutionNotes"),
+  autoGenerated: boolean("autoGenerated").default(true),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type Alert = typeof alerts.$inferSelect;
+export type InsertAlert = typeof alerts.$inferInsert;
+
+// Recommendations with approval workflow
+export const recommendations = mysqlTable("recommendations", {
+  id: int("id").autoincrement().primaryKey(),
+  alertId: int("alertId"), // Optional link to alert
+  type: mysqlEnum("type", ["create_po", "create_work_order", "transfer_inventory", "adjust_forecast", "other"]).notNull(),
+  title: varchar("title", { length: 255 }).notNull(),
+  description: text("description"),
+  actionPayload: json("actionPayload"), // Structured action data
+  status: mysqlEnum("status", ["pending", "approved", "rejected", "executed"]).default("pending").notNull(),
+  priority: mysqlEnum("priority", ["low", "normal", "high", "urgent"]).default("normal").notNull(),
+  aiGenerated: boolean("aiGenerated").default(true),
+  aiRationale: text("aiRationale"),
+  approvedBy: int("approvedBy"),
+  approvedAt: timestamp("approvedAt"),
+  rejectedBy: int("rejectedBy"),
+  rejectedAt: timestamp("rejectedAt"),
+  rejectionReason: text("rejectionReason"),
+  executedAt: timestamp("executedAt"),
+  executionResult: text("executionResult"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type Recommendation = typeof recommendations.$inferSelect;
+export type InsertRecommendation = typeof recommendations.$inferInsert;
+
+// ============================================
+// SHOPIFY INTEGRATION
+// ============================================
+
+// Shopify store configuration
+export const shopifyStores = mysqlTable("shopifyStores", {
+  id: int("id").autoincrement().primaryKey(),
+  storeDomain: varchar("storeDomain", { length: 255 }).notNull().unique(), // mystore.myshopify.com
+  storeName: varchar("storeName", { length: 255 }),
+  accessToken: text("accessToken"), // Encrypted in production
+  apiVersion: varchar("apiVersion", { length: 16 }).default("2024-01"),
+  isEnabled: boolean("isEnabled").default(true),
+  syncInventory: boolean("syncInventory").default(true),
+  syncOrders: boolean("syncOrders").default(true),
+  inventoryAuthority: mysqlEnum("inventoryAuthority", ["erp", "shopify", "hybrid"]).default("hybrid"),
+  lastSyncAt: timestamp("lastSyncAt"),
+  webhookSecret: varchar("webhookSecret", { length: 255 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ShopifyStore = typeof shopifyStores.$inferSelect;
+export type InsertShopifyStore = typeof shopifyStores.$inferInsert;
+
+// Webhook event log for idempotency
+export const webhookEvents = mysqlTable("webhookEvents", {
+  id: int("id").autoincrement().primaryKey(),
+  source: mysqlEnum("source", ["shopify", "quickbooks", "hubspot", "stripe", "other"]).default("shopify").notNull(),
+  topic: varchar("topic", { length: 128 }).notNull(), // orders/create, inventory_levels/update, etc.
+  idempotencyKey: varchar("idempotencyKey", { length: 255 }).notNull(),
+  payload: json("payload"),
+  status: mysqlEnum("status", ["received", "processing", "processed", "failed", "ignored"]).default("received").notNull(),
+  errorMessage: text("errorMessage"),
+  retryCount: int("retryCount").default(0),
+  processedAt: timestamp("processedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type WebhookEvent = typeof webhookEvents.$inferSelect;
+export type InsertWebhookEvent = typeof webhookEvents.$inferInsert;
+
+// SKU mapping between Shopify and ERP
+export const shopifySkuMappings = mysqlTable("shopifySkuMappings", {
+  id: int("id").autoincrement().primaryKey(),
+  storeId: int("storeId").notNull(),
+  shopifyProductId: varchar("shopifyProductId", { length: 64 }).notNull(),
+  shopifyVariantId: varchar("shopifyVariantId", { length: 64 }).notNull(),
+  shopifySku: varchar("shopifySku", { length: 128 }),
+  productId: int("productId").notNull(),
+  isActive: boolean("isActive").default(true),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ShopifySkuMapping = typeof shopifySkuMappings.$inferSelect;
+export type InsertShopifySkuMapping = typeof shopifySkuMappings.$inferInsert;
+
+// Location mapping between Shopify and ERP
+export const shopifyLocationMappings = mysqlTable("shopifyLocationMappings", {
+  id: int("id").autoincrement().primaryKey(),
+  storeId: int("storeId").notNull(),
+  shopifyLocationId: varchar("shopifyLocationId", { length: 64 }).notNull(),
+  shopifyLocationName: varchar("shopifyLocationName", { length: 255 }),
+  warehouseId: int("warehouseId").notNull(),
+  isActive: boolean("isActive").default(true),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ShopifyLocationMapping = typeof shopifyLocationMappings.$inferSelect;
+export type InsertShopifyLocationMapping = typeof shopifyLocationMappings.$inferInsert;
+
+// ============================================
+// SALES ORDERS & RESERVATIONS
+// ============================================
+
+// Sales orders (from Shopify or manual)
+export const salesOrders = mysqlTable("salesOrders", {
+  id: int("id").autoincrement().primaryKey(),
+  orderNumber: varchar("orderNumber", { length: 64 }).notNull(),
+  source: mysqlEnum("source", ["shopify", "manual", "api", "other"]).default("manual").notNull(),
+  shopifyOrderId: varchar("shopifyOrderId", { length: 64 }),
+  shopifyOrderNumber: varchar("shopifyOrderNumber", { length: 64 }),
+  customerId: int("customerId"),
+  status: mysqlEnum("status", ["pending", "confirmed", "processing", "shipped", "delivered", "cancelled", "refunded"]).default("pending").notNull(),
+  fulfillmentStatus: mysqlEnum("fulfillmentStatus", ["unfulfilled", "partial", "fulfilled"]).default("unfulfilled").notNull(),
+  paymentStatus: mysqlEnum("paymentStatus", ["pending", "paid", "partial", "refunded"]).default("pending").notNull(),
+  subtotal: decimal("subtotal", { precision: 15, scale: 2 }).default("0"),
+  taxAmount: decimal("taxAmount", { precision: 15, scale: 2 }).default("0"),
+  shippingAmount: decimal("shippingAmount", { precision: 15, scale: 2 }).default("0"),
+  discountAmount: decimal("discountAmount", { precision: 15, scale: 2 }).default("0"),
+  totalAmount: decimal("totalAmount", { precision: 15, scale: 2 }).default("0"),
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  shippingAddress: json("shippingAddress"),
+  billingAddress: json("billingAddress"),
+  notes: text("notes"),
+  orderDate: timestamp("orderDate").defaultNow().notNull(),
+  shippedAt: timestamp("shippedAt"),
+  deliveredAt: timestamp("deliveredAt"),
+  cancelledAt: timestamp("cancelledAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type SalesOrder = typeof salesOrders.$inferSelect;
+export type InsertSalesOrder = typeof salesOrders.$inferInsert;
+
+// Sales order line items
+export const salesOrderLines = mysqlTable("salesOrderLines", {
+  id: int("id").autoincrement().primaryKey(),
+  salesOrderId: int("salesOrderId").notNull(),
+  productId: int("productId").notNull(),
+  shopifyLineItemId: varchar("shopifyLineItemId", { length: 64 }),
+  sku: varchar("sku", { length: 64 }),
+  name: varchar("name", { length: 255 }),
+  quantity: decimal("quantity", { precision: 15, scale: 4 }).notNull(),
+  fulfilledQuantity: decimal("fulfilledQuantity", { precision: 15, scale: 4 }).default("0"),
+  unitPrice: decimal("unitPrice", { precision: 15, scale: 2 }).notNull(),
+  totalPrice: decimal("totalPrice", { precision: 15, scale: 2 }).notNull(),
+  unit: varchar("unit", { length: 32 }).default("EA"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type SalesOrderLine = typeof salesOrderLines.$inferSelect;
+export type InsertSalesOrderLine = typeof salesOrderLines.$inferInsert;
+
+// Inventory reservations for sales orders
+export const inventoryReservations = mysqlTable("inventoryReservations", {
+  id: int("id").autoincrement().primaryKey(),
+  salesOrderId: int("salesOrderId").notNull(),
+  salesOrderLineId: int("salesOrderLineId").notNull(),
+  lotId: int("lotId"),
+  productId: int("productId").notNull(),
+  warehouseId: int("warehouseId").notNull(),
+  reservedQuantity: decimal("reservedQuantity", { precision: 15, scale: 4 }).notNull(),
+  fulfilledQuantity: decimal("fulfilledQuantity", { precision: 15, scale: 4 }).default("0"),
+  releasedQuantity: decimal("releasedQuantity", { precision: 15, scale: 4 }).default("0"),
+  unit: varchar("unit", { length: 32 }).default("EA"),
+  status: mysqlEnum("status", ["reserved", "partial_fulfilled", "fulfilled", "released", "cancelled"]).default("reserved").notNull(),
+  reservedAt: timestamp("reservedAt").defaultNow().notNull(),
+  fulfilledAt: timestamp("fulfilledAt"),
+  releasedAt: timestamp("releasedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type InventoryReservation = typeof inventoryReservations.$inferSelect;
+export type InsertInventoryReservation = typeof inventoryReservations.$inferInsert;
+
+// ============================================
+// INVENTORY ALLOCATION BY CHANNEL
+// ============================================
+
+// Inventory allocation pools by channel
+export const inventoryAllocations = mysqlTable("inventoryAllocations", {
+  id: int("id").autoincrement().primaryKey(),
+  channel: mysqlEnum("channel", ["shopify", "amazon", "wholesale", "retail", "other"]).default("shopify").notNull(),
+  storeId: int("storeId"), // For Shopify, link to shopifyStores
+  productId: int("productId").notNull(),
+  warehouseId: int("warehouseId").notNull(),
+  allocatedQuantity: decimal("allocatedQuantity", { precision: 15, scale: 4 }).notNull(),
+  remainingQuantity: decimal("remainingQuantity", { precision: 15, scale: 4 }).notNull(),
+  unit: varchar("unit", { length: 32 }).default("EA"),
+  lastSyncedToChannel: timestamp("lastSyncedToChannel"),
+  channelReportedQuantity: decimal("channelReportedQuantity", { precision: 15, scale: 4 }),
+  isActive: boolean("isActive").default(true),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type InventoryAllocation = typeof inventoryAllocations.$inferSelect;
+export type InsertInventoryAllocation = typeof inventoryAllocations.$inferInsert;
+
+// Sales events from channel fulfillments
+export const salesEvents = mysqlTable("salesEvents", {
+  id: int("id").autoincrement().primaryKey(),
+  source: mysqlEnum("source", ["shopify", "amazon", "manual", "other"]).default("shopify").notNull(),
+  eventType: mysqlEnum("eventType", ["order_created", "order_fulfilled", "order_cancelled", "order_refunded"]).notNull(),
+  shopifyOrderId: varchar("shopifyOrderId", { length: 64 }),
+  shopifyFulfillmentId: varchar("shopifyFulfillmentId", { length: 64 }),
+  salesOrderId: int("salesOrderId"),
+  allocationId: int("allocationId"),
+  productId: int("productId"),
+  quantity: decimal("quantity", { precision: 15, scale: 4 }),
+  eventData: json("eventData"),
+  processedAt: timestamp("processedAt").defaultNow().notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type SalesEvent = typeof salesEvents.$inferSelect;
+export type InsertSalesEvent = typeof salesEvents.$inferInsert;
+
+// ============================================
+// INVENTORY RECONCILIATION
+// ============================================
+
+// Reconciliation runs
+export const reconciliationRuns = mysqlTable("reconciliationRuns", {
+  id: int("id").autoincrement().primaryKey(),
+  runNumber: varchar("runNumber", { length: 32 }).notNull(),
+  type: mysqlEnum("type", ["scheduled", "manual"]).default("scheduled").notNull(),
+  channel: mysqlEnum("channel", ["shopify", "amazon", "all"]).default("shopify").notNull(),
+  storeId: int("storeId"),
+  status: mysqlEnum("status", ["running", "completed", "failed"]).default("running").notNull(),
+  totalSkus: int("totalSkus").default(0),
+  passedSkus: int("passedSkus").default(0),
+  warningSkus: int("warningSkus").default(0),
+  criticalSkus: int("criticalSkus").default(0),
+  startedAt: timestamp("startedAt").defaultNow().notNull(),
+  completedAt: timestamp("completedAt"),
+  initiatedBy: int("initiatedBy"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type ReconciliationRun = typeof reconciliationRuns.$inferSelect;
+export type InsertReconciliationRun = typeof reconciliationRuns.$inferInsert;
+
+// Reconciliation line items
+export const reconciliationLines = mysqlTable("reconciliationLines", {
+  id: int("id").autoincrement().primaryKey(),
+  runId: int("runId").notNull(),
+  productId: int("productId").notNull(),
+  sku: varchar("sku", { length: 64 }),
+  warehouseId: int("warehouseId"),
+  erpQuantity: decimal("erpQuantity", { precision: 15, scale: 4 }).notNull(),
+  channelQuantity: decimal("channelQuantity", { precision: 15, scale: 4 }).notNull(),
+  deltaQuantity: decimal("deltaQuantity", { precision: 15, scale: 4 }).notNull(),
+  variancePercent: decimal("variancePercent", { precision: 8, scale: 2 }),
+  status: mysqlEnum("status", ["pass", "warning", "critical"]).default("pass").notNull(),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type ReconciliationLine = typeof reconciliationLines.$inferSelect;
+export type InsertReconciliationLine = typeof reconciliationLines.$inferInsert;

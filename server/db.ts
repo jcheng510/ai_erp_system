@@ -18,6 +18,18 @@ import {
   workOrders, workOrderMaterials, rawMaterialInventory, rawMaterialTransactions,
   purchaseOrderRawMaterials, poReceivingRecords, poReceivingItems,
   demandForecasts, productionPlans, materialRequirements, suggestedPurchaseOrders, suggestedPoItems, forecastAccuracy,
+  // New lot/batch tracking tables
+  inventoryLots, inventoryBalances, inventoryTransactions, workOrderOutputs,
+  // Alert system
+  alerts, recommendations,
+  // Shopify integration
+  shopifyStores, webhookEvents, shopifySkuMappings, shopifyLocationMappings,
+  // Sales orders and reservations
+  salesOrders, salesOrderLines, inventoryReservations,
+  // Inventory allocation
+  inventoryAllocations, salesEvents,
+  // Reconciliation
+  reconciliationRuns, reconciliationLines,
   InsertCompany, InsertCustomer, InsertVendor, InsertProduct,
   InsertAccount, InsertInvoice, InsertPayment, InsertTransaction,
   InsertOrder, InsertInventory, InsertPurchaseOrder, InsertWarehouse,
@@ -30,7 +42,14 @@ import {
   InsertBillOfMaterials, InsertBomComponent, InsertRawMaterial, InsertBomVersionHistory,
   InsertWorkOrder, InsertWorkOrderMaterial, InsertRawMaterialInventory, InsertRawMaterialTransaction,
   InsertPurchaseOrderRawMaterial, InsertPoReceivingRecord, InsertPoReceivingItem,
-  InsertDemandForecast, InsertProductionPlan, InsertMaterialRequirement, InsertSuggestedPurchaseOrder, InsertSuggestedPoItem, InsertForecastAccuracy
+  InsertDemandForecast, InsertProductionPlan, InsertMaterialRequirement, InsertSuggestedPurchaseOrder, InsertSuggestedPoItem, InsertForecastAccuracy,
+  // New type imports
+  InsertInventoryLot, InsertInventoryBalance, InsertInventoryTransaction, InsertWorkOrderOutput,
+  InsertAlert, InsertRecommendation,
+  InsertShopifyStore, InsertWebhookEvent, InsertShopifySkuMapping, InsertShopifyLocationMapping,
+  InsertSalesOrder, InsertSalesOrderLine, InsertInventoryReservation,
+  InsertInventoryAllocation, InsertSalesEvent,
+  InsertReconciliationRun, InsertReconciliationLine
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -3087,4 +3106,901 @@ export async function getPreferredVendorForMaterial(rawMaterialId: number) {
     .where(eq(vendors.status, 'active'))
     .limit(1);
   return anyVendor[0];
+}
+
+
+// ============================================
+// LOT/BATCH TRACKING
+// ============================================
+
+export async function createInventoryLot(data: Omit<InsertInventoryLot, 'lotCode'>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const lotCode = `LOT-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+  const result = await db.insert(inventoryLots).values({ ...data, lotCode });
+  return { id: result[0].insertId, lotCode };
+}
+
+export async function getInventoryLots(filters?: { productId?: number; status?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions: any[] = [];
+  if (filters?.productId) conditions.push(eq(inventoryLots.productId, filters.productId));
+  if (filters?.status) conditions.push(eq(inventoryLots.status, filters.status as any));
+  return db.select().from(inventoryLots)
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(inventoryLots.createdAt));
+}
+
+export async function getInventoryLotById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(inventoryLots).where(eq(inventoryLots.id, id)).limit(1);
+  return result[0];
+}
+
+export async function updateInventoryLot(id: number, data: Partial<InsertInventoryLot>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(inventoryLots).set(data).where(eq(inventoryLots.id, id));
+}
+
+// Inventory Balances (lot-level)
+export async function getInventoryBalances(filters?: { lotId?: number; productId?: number; warehouseId?: number; status?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions: any[] = [];
+  if (filters?.lotId) conditions.push(eq(inventoryBalances.lotId, filters.lotId));
+  if (filters?.productId) conditions.push(eq(inventoryBalances.productId, filters.productId));
+  if (filters?.warehouseId) conditions.push(eq(inventoryBalances.warehouseId, filters.warehouseId));
+  if (filters?.status) conditions.push(eq(inventoryBalances.status, filters.status as any));
+  return db.select().from(inventoryBalances)
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(inventoryBalances.updatedAt));
+}
+
+export async function upsertInventoryBalance(lotId: number, productId: number, warehouseId: number, status: string, quantity: number, unit: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  const existing = await db.select().from(inventoryBalances)
+    .where(and(
+      eq(inventoryBalances.lotId, lotId),
+      eq(inventoryBalances.warehouseId, warehouseId),
+      eq(inventoryBalances.status, status as any)
+    ))
+    .limit(1);
+  
+  if (existing[0]) {
+    await db.update(inventoryBalances)
+      .set({ quantity: quantity.toString(), updatedAt: new Date() })
+      .where(eq(inventoryBalances.id, existing[0].id));
+    return { id: existing[0].id };
+  } else {
+    const result = await db.insert(inventoryBalances).values({
+      lotId,
+      productId,
+      warehouseId,
+      status: status as any,
+      quantity: quantity.toString(),
+      unit
+    });
+    return { id: result[0].insertId };
+  }
+}
+
+export async function updateInventoryBalanceQuantity(id: number, quantityChange: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  const balance = await db.select().from(inventoryBalances).where(eq(inventoryBalances.id, id)).limit(1);
+  if (!balance[0]) throw new Error("Balance not found");
+  
+  const newQty = parseFloat(balance[0].quantity) + quantityChange;
+  await db.update(inventoryBalances)
+    .set({ quantity: newQty.toString(), updatedAt: new Date() })
+    .where(eq(inventoryBalances.id, id));
+  return { newQuantity: newQty };
+}
+
+// Inventory Transactions (ledger)
+export async function createInventoryTransaction(data: Omit<InsertInventoryTransaction, 'transactionNumber'>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const transactionNumber = `TXN-${Date.now().toString(36).toUpperCase()}`;
+  const result = await db.insert(inventoryTransactions).values({ ...data, transactionNumber });
+  return { id: result[0].insertId, transactionNumber };
+}
+
+export async function getInventoryTransactionHistory(filters?: { productId?: number; lotId?: number; warehouseId?: number; type?: string }, limit = 100) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions: any[] = [];
+  if (filters?.productId) conditions.push(eq(inventoryTransactions.productId, filters.productId));
+  if (filters?.lotId) conditions.push(eq(inventoryTransactions.lotId, filters.lotId));
+  if (filters?.warehouseId) conditions.push(or(
+    eq(inventoryTransactions.fromWarehouseId, filters.warehouseId),
+    eq(inventoryTransactions.toWarehouseId, filters.warehouseId)
+  ));
+  if (filters?.type) conditions.push(eq(inventoryTransactions.transactionType, filters.type as any));
+  
+  return db.select().from(inventoryTransactions)
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(inventoryTransactions.performedAt))
+    .limit(limit);
+}
+
+// Reserve inventory (available -> reserved)
+export async function reserveInventory(lotId: number, productId: number, warehouseId: number, quantity: number, referenceType: string, referenceId: number, performedBy?: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  // Get available balance
+  const available = await db.select().from(inventoryBalances)
+    .where(and(
+      eq(inventoryBalances.lotId, lotId),
+      eq(inventoryBalances.warehouseId, warehouseId),
+      eq(inventoryBalances.status, 'available')
+    ))
+    .limit(1);
+  
+  if (!available[0] || parseFloat(available[0].quantity) < quantity) {
+    throw new Error("Insufficient available inventory");
+  }
+  
+  const previousBalance = parseFloat(available[0].quantity);
+  const newAvailable = previousBalance - quantity;
+  
+  // Decrease available
+  await db.update(inventoryBalances)
+    .set({ quantity: newAvailable.toString(), updatedAt: new Date() })
+    .where(eq(inventoryBalances.id, available[0].id));
+  
+  // Increase reserved
+  await upsertInventoryBalance(lotId, productId, warehouseId, 'reserved', quantity, available[0].unit);
+  
+  // Create transaction
+  await createInventoryTransaction({
+    transactionType: 'reserve',
+    lotId,
+    productId,
+    fromWarehouseId: warehouseId,
+    toWarehouseId: warehouseId,
+    fromStatus: 'available',
+    toStatus: 'reserved',
+    quantity: quantity.toString(),
+    unit: available[0].unit,
+    previousBalance: previousBalance.toString(),
+    newBalance: newAvailable.toString(),
+    referenceType,
+    referenceId,
+    performedBy
+  });
+  
+  return { success: true };
+}
+
+// Release reservation (reserved -> available)
+export async function releaseReservation(lotId: number, productId: number, warehouseId: number, quantity: number, referenceType: string, referenceId: number, performedBy?: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  // Get reserved balance
+  const reserved = await db.select().from(inventoryBalances)
+    .where(and(
+      eq(inventoryBalances.lotId, lotId),
+      eq(inventoryBalances.warehouseId, warehouseId),
+      eq(inventoryBalances.status, 'reserved')
+    ))
+    .limit(1);
+  
+  if (!reserved[0] || parseFloat(reserved[0].quantity) < quantity) {
+    throw new Error("Insufficient reserved inventory");
+  }
+  
+  const previousReserved = parseFloat(reserved[0].quantity);
+  const newReserved = previousReserved - quantity;
+  
+  // Decrease reserved
+  await db.update(inventoryBalances)
+    .set({ quantity: newReserved.toString(), updatedAt: new Date() })
+    .where(eq(inventoryBalances.id, reserved[0].id));
+  
+  // Get or create available balance
+  const available = await db.select().from(inventoryBalances)
+    .where(and(
+      eq(inventoryBalances.lotId, lotId),
+      eq(inventoryBalances.warehouseId, warehouseId),
+      eq(inventoryBalances.status, 'available')
+    ))
+    .limit(1);
+  
+  const previousAvailable = available[0] ? parseFloat(available[0].quantity) : 0;
+  const newAvailable = previousAvailable + quantity;
+  
+  await upsertInventoryBalance(lotId, productId, warehouseId, 'available', newAvailable, reserved[0].unit);
+  
+  // Create transaction
+  await createInventoryTransaction({
+    transactionType: 'release',
+    lotId,
+    productId,
+    fromWarehouseId: warehouseId,
+    toWarehouseId: warehouseId,
+    fromStatus: 'reserved',
+    toStatus: 'available',
+    quantity: quantity.toString(),
+    unit: reserved[0].unit,
+    previousBalance: previousReserved.toString(),
+    newBalance: newReserved.toString(),
+    referenceType,
+    referenceId,
+    performedBy
+  });
+  
+  return { success: true };
+}
+
+// Ship inventory (reserved -> 0, decreases on_hand)
+export async function shipInventory(lotId: number, productId: number, warehouseId: number, quantity: number, referenceType: string, referenceId: number, performedBy?: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  // Get reserved balance
+  const reserved = await db.select().from(inventoryBalances)
+    .where(and(
+      eq(inventoryBalances.lotId, lotId),
+      eq(inventoryBalances.warehouseId, warehouseId),
+      eq(inventoryBalances.status, 'reserved')
+    ))
+    .limit(1);
+  
+  if (!reserved[0] || parseFloat(reserved[0].quantity) < quantity) {
+    throw new Error("Insufficient reserved inventory to ship");
+  }
+  
+  const previousReserved = parseFloat(reserved[0].quantity);
+  const newReserved = previousReserved - quantity;
+  
+  // Decrease reserved
+  await db.update(inventoryBalances)
+    .set({ quantity: newReserved.toString(), updatedAt: new Date() })
+    .where(eq(inventoryBalances.id, reserved[0].id));
+  
+  // Create transaction
+  await createInventoryTransaction({
+    transactionType: 'ship',
+    lotId,
+    productId,
+    fromWarehouseId: warehouseId,
+    fromStatus: 'reserved',
+    quantity: quantity.toString(),
+    unit: reserved[0].unit,
+    previousBalance: previousReserved.toString(),
+    newBalance: newReserved.toString(),
+    referenceType,
+    referenceId,
+    performedBy
+  });
+  
+  return { success: true };
+}
+
+// ============================================
+// WORK ORDER OUTPUTS
+// ============================================
+
+export async function createWorkOrderOutput(workOrderId: number, productId: number, quantity: number, warehouseId: number, yieldPercent?: number, performedBy?: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  // Create a new lot for the output
+  const { id: lotId, lotCode } = await createInventoryLot({
+    productId,
+    productType: 'finished',
+    sourceType: 'production',
+    sourceReferenceId: workOrderId,
+    status: 'active',
+    manufactureDate: new Date()
+  });
+  
+  // Create the work order output record
+  const result = await db.insert(workOrderOutputs).values({
+    workOrderId,
+    lotId,
+    productId,
+    quantity: quantity.toString(),
+    yieldPercent: yieldPercent?.toString(),
+    warehouseId,
+    producedBy: performedBy
+  });
+  
+  // Create inventory balance for the new lot
+  await upsertInventoryBalance(lotId, productId, warehouseId, 'available', quantity, 'EA');
+  
+  // Create inventory transaction
+  await createInventoryTransaction({
+    transactionType: 'receive',
+    lotId,
+    productId,
+    toWarehouseId: warehouseId,
+    toStatus: 'available',
+    quantity: quantity.toString(),
+    unit: 'EA',
+    newBalance: quantity.toString(),
+    referenceType: 'work_order',
+    referenceId: workOrderId,
+    performedBy,
+    reason: 'Production output'
+  });
+  
+  return { id: result[0].insertId, lotId, lotCode };
+}
+
+export async function getWorkOrderOutputs(workOrderId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(workOrderOutputs)
+    .where(eq(workOrderOutputs.workOrderId, workOrderId))
+    .orderBy(desc(workOrderOutputs.producedAt));
+}
+
+// ============================================
+// ALERT SYSTEM
+// ============================================
+
+export async function createAlert(data: Omit<InsertAlert, 'alertNumber'>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const alertNumber = `ALT-${Date.now().toString(36).toUpperCase()}`;
+  const result = await db.insert(alerts).values({ ...data, alertNumber });
+  return { id: result[0].insertId, alertNumber };
+}
+
+export async function getAlerts(filters?: { type?: string; status?: string; severity?: string; assignedTo?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions: any[] = [];
+  if (filters?.type) conditions.push(eq(alerts.type, filters.type as any));
+  if (filters?.status) conditions.push(eq(alerts.status, filters.status as any));
+  if (filters?.severity) conditions.push(eq(alerts.severity, filters.severity as any));
+  if (filters?.assignedTo) conditions.push(eq(alerts.assignedTo, filters.assignedTo));
+  
+  return db.select().from(alerts)
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(alerts.createdAt));
+}
+
+export async function getAlertById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(alerts).where(eq(alerts.id, id)).limit(1);
+  return result[0];
+}
+
+export async function updateAlert(id: number, data: Partial<InsertAlert>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(alerts).set(data).where(eq(alerts.id, id));
+}
+
+export async function acknowledgeAlert(id: number, userId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(alerts).set({
+    status: 'acknowledged',
+    acknowledgedBy: userId,
+    acknowledgedAt: new Date()
+  }).where(eq(alerts.id, id));
+}
+
+export async function resolveAlert(id: number, userId: number, notes?: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(alerts).set({
+    status: 'resolved',
+    resolvedBy: userId,
+    resolvedAt: new Date(),
+    resolutionNotes: notes
+  }).where(eq(alerts.id, id));
+}
+
+// Generate low stock alerts
+export async function generateLowStockAlerts() {
+  const db = await getDb();
+  if (!db) return [];
+  
+  // Check raw materials below reorder point
+  const lowStockMaterials = await db.select().from(rawMaterialInventory)
+    .where(sql`${rawMaterialInventory.quantity} <= ${rawMaterialInventory.reorderPoint}`);
+  
+  const createdAlerts: number[] = [];
+  
+  for (const material of lowStockMaterials) {
+    // Check if alert already exists
+    const existing = await db.select().from(alerts)
+      .where(and(
+        eq(alerts.type, 'low_stock'),
+        eq(alerts.entityType, 'raw_material'),
+        eq(alerts.entityId, material.rawMaterialId),
+        eq(alerts.status, 'open')
+      ))
+      .limit(1);
+    
+    if (!existing[0]) {
+      const rawMat = await getRawMaterialById(material.rawMaterialId);
+      const { id } = await createAlert({
+        type: 'low_stock',
+        severity: parseFloat(material.quantity) === 0 ? 'critical' : 'warning',
+        title: `Low stock: ${rawMat?.name || 'Unknown material'}`,
+        description: `Current quantity (${material.quantity}) is at or below reorder point (${material.reorderPoint})`,
+        entityType: 'raw_material',
+        entityId: material.rawMaterialId,
+        thresholdValue: material.reorderPoint || '0',
+        actualValue: material.quantity,
+        autoGenerated: true
+      });
+      createdAlerts.push(id);
+    }
+  }
+  
+  return createdAlerts;
+}
+
+// Recommendations
+export async function createRecommendation(data: InsertRecommendation) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(recommendations).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getRecommendations(filters?: { status?: string; type?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions: any[] = [];
+  if (filters?.status) conditions.push(eq(recommendations.status, filters.status as any));
+  if (filters?.type) conditions.push(eq(recommendations.type, filters.type as any));
+  
+  return db.select().from(recommendations)
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(recommendations.createdAt));
+}
+
+export async function approveRecommendation(id: number, userId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(recommendations).set({
+    status: 'approved',
+    approvedBy: userId,
+    approvedAt: new Date()
+  }).where(eq(recommendations.id, id));
+}
+
+export async function rejectRecommendation(id: number, userId: number, reason?: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(recommendations).set({
+    status: 'rejected',
+    rejectedBy: userId,
+    rejectedAt: new Date(),
+    rejectionReason: reason
+  }).where(eq(recommendations.id, id));
+}
+
+// ============================================
+// SHOPIFY INTEGRATION
+// ============================================
+
+export async function getShopifyStores() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(shopifyStores).orderBy(shopifyStores.storeName);
+}
+
+export async function getShopifyStoreById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(shopifyStores).where(eq(shopifyStores.id, id)).limit(1);
+  return result[0];
+}
+
+export async function getShopifyStoreByDomain(domain: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(shopifyStores).where(eq(shopifyStores.storeDomain, domain)).limit(1);
+  return result[0];
+}
+
+export async function createShopifyStore(data: InsertShopifyStore) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(shopifyStores).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateShopifyStore(id: number, data: Partial<InsertShopifyStore>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(shopifyStores).set(data).where(eq(shopifyStores.id, id));
+}
+
+// Webhook Events
+export async function createWebhookEvent(data: InsertWebhookEvent) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(webhookEvents).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getWebhookEventByIdempotencyKey(key: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(webhookEvents).where(eq(webhookEvents.idempotencyKey, key)).limit(1);
+  return result[0];
+}
+
+export async function updateWebhookEvent(id: number, data: Partial<InsertWebhookEvent>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(webhookEvents).set(data).where(eq(webhookEvents.id, id));
+}
+
+// SKU Mappings
+export async function getShopifySkuMappings(storeId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(shopifySkuMappings).where(eq(shopifySkuMappings.storeId, storeId));
+}
+
+export async function createShopifySkuMapping(data: InsertShopifySkuMapping) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(shopifySkuMappings).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getProductByShopifySku(storeId: number, shopifyVariantId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const mapping = await db.select().from(shopifySkuMappings)
+    .where(and(
+      eq(shopifySkuMappings.storeId, storeId),
+      eq(shopifySkuMappings.shopifyVariantId, shopifyVariantId),
+      eq(shopifySkuMappings.isActive, true)
+    ))
+    .limit(1);
+  
+  if (!mapping[0]) return undefined;
+  return getProductById(mapping[0].productId);
+}
+
+// Location Mappings
+export async function getShopifyLocationMappings(storeId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(shopifyLocationMappings).where(eq(shopifyLocationMappings.storeId, storeId));
+}
+
+export async function createShopifyLocationMapping(data: InsertShopifyLocationMapping) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(shopifyLocationMappings).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getWarehouseByShopifyLocation(storeId: number, shopifyLocationId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const mapping = await db.select().from(shopifyLocationMappings)
+    .where(and(
+      eq(shopifyLocationMappings.storeId, storeId),
+      eq(shopifyLocationMappings.shopifyLocationId, shopifyLocationId),
+      eq(shopifyLocationMappings.isActive, true)
+    ))
+    .limit(1);
+  
+  if (!mapping[0]) return undefined;
+  return getWarehouseById(mapping[0].warehouseId);
+}
+
+// ============================================
+// SALES ORDERS & RESERVATIONS
+// ============================================
+
+export async function createSalesOrder(data: Omit<InsertSalesOrder, 'orderNumber'>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const orderNumber = `SO-${Date.now().toString(36).toUpperCase()}`;
+  const result = await db.insert(salesOrders).values({ ...data, orderNumber });
+  return { id: result[0].insertId, orderNumber };
+}
+
+export async function getSalesOrders(filters?: { status?: string; source?: string; customerId?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions: any[] = [];
+  if (filters?.status) conditions.push(eq(salesOrders.status, filters.status as any));
+  if (filters?.source) conditions.push(eq(salesOrders.source, filters.source as any));
+  if (filters?.customerId) conditions.push(eq(salesOrders.customerId, filters.customerId));
+  
+  return db.select().from(salesOrders)
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(salesOrders.orderDate));
+}
+
+export async function getSalesOrderById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(salesOrders).where(eq(salesOrders.id, id)).limit(1);
+  return result[0];
+}
+
+export async function getSalesOrderByShopifyId(shopifyOrderId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(salesOrders).where(eq(salesOrders.shopifyOrderId, shopifyOrderId)).limit(1);
+  return result[0];
+}
+
+export async function updateSalesOrder(id: number, data: Partial<InsertSalesOrder>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(salesOrders).set(data).where(eq(salesOrders.id, id));
+}
+
+export async function createSalesOrderLine(data: InsertSalesOrderLine) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(salesOrderLines).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getSalesOrderLines(salesOrderId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(salesOrderLines).where(eq(salesOrderLines.salesOrderId, salesOrderId));
+}
+
+// Inventory Reservations
+export async function createInventoryReservation(data: InsertInventoryReservation) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(inventoryReservations).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getInventoryReservations(salesOrderId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(inventoryReservations).where(eq(inventoryReservations.salesOrderId, salesOrderId));
+}
+
+export async function updateInventoryReservation(id: number, data: Partial<InsertInventoryReservation>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(inventoryReservations).set(data).where(eq(inventoryReservations.id, id));
+}
+
+// ============================================
+// INVENTORY ALLOCATION
+// ============================================
+
+export async function createInventoryAllocation(data: InsertInventoryAllocation) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(inventoryAllocations).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getInventoryAllocations(filters?: { channel?: string; productId?: number; storeId?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions: any[] = [];
+  if (filters?.channel) conditions.push(eq(inventoryAllocations.channel, filters.channel as any));
+  if (filters?.productId) conditions.push(eq(inventoryAllocations.productId, filters.productId));
+  if (filters?.storeId) conditions.push(eq(inventoryAllocations.storeId, filters.storeId));
+  
+  return db.select().from(inventoryAllocations)
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(inventoryAllocations.updatedAt));
+}
+
+export async function updateInventoryAllocation(id: number, data: Partial<InsertInventoryAllocation>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(inventoryAllocations).set(data).where(eq(inventoryAllocations.id, id));
+}
+
+// Sales Events
+export async function createSalesEvent(data: InsertSalesEvent) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(salesEvents).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getSalesEvents(filters?: { source?: string; salesOrderId?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions: any[] = [];
+  if (filters?.source) conditions.push(eq(salesEvents.source, filters.source as any));
+  if (filters?.salesOrderId) conditions.push(eq(salesEvents.salesOrderId, filters.salesOrderId));
+  
+  return db.select().from(salesEvents)
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(salesEvents.processedAt));
+}
+
+// ============================================
+// INVENTORY RECONCILIATION
+// ============================================
+
+export async function createReconciliationRun(data: Omit<InsertReconciliationRun, 'runNumber'>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const runNumber = `REC-${Date.now().toString(36).toUpperCase()}`;
+  const result = await db.insert(reconciliationRuns).values({ ...data, runNumber });
+  return { id: result[0].insertId, runNumber };
+}
+
+export async function getReconciliationRuns(filters?: { status?: string; channel?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions: any[] = [];
+  if (filters?.status) conditions.push(eq(reconciliationRuns.status, filters.status as any));
+  if (filters?.channel) conditions.push(eq(reconciliationRuns.channel, filters.channel as any));
+  
+  return db.select().from(reconciliationRuns)
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(reconciliationRuns.startedAt));
+}
+
+export async function getReconciliationRunById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(reconciliationRuns).where(eq(reconciliationRuns.id, id)).limit(1);
+  return result[0];
+}
+
+export async function updateReconciliationRun(id: number, data: Partial<InsertReconciliationRun>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(reconciliationRuns).set(data).where(eq(reconciliationRuns.id, id));
+}
+
+export async function createReconciliationLine(data: InsertReconciliationLine) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(reconciliationLines).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getReconciliationLines(runId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(reconciliationLines)
+    .where(eq(reconciliationLines.runId, runId))
+    .orderBy(reconciliationLines.status);
+}
+
+// Run reconciliation for a channel
+export async function runInventoryReconciliation(channel: 'shopify' | 'amazon' | 'all', storeId?: number, initiatedBy?: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  // Create reconciliation run
+  const { id: runId, runNumber } = await createReconciliationRun({
+    type: 'manual',
+    channel,
+    storeId,
+    status: 'running',
+    initiatedBy
+  });
+  
+  try {
+    // Get all allocations for this channel
+    const allocations = await getInventoryAllocations({ 
+      channel: channel === 'all' ? undefined : channel,
+      storeId 
+    });
+    
+    let totalSkus = 0;
+    let passedSkus = 0;
+    let warningSkus = 0;
+    let criticalSkus = 0;
+    
+    for (const allocation of allocations) {
+      totalSkus++;
+      
+      const erpQty = parseFloat(allocation.remainingQuantity);
+      const channelQty = allocation.channelReportedQuantity ? parseFloat(allocation.channelReportedQuantity) : 0;
+      const delta = erpQty - channelQty;
+      const variancePercent = erpQty > 0 ? Math.abs(delta / erpQty * 100) : (channelQty > 0 ? 100 : 0);
+      
+      // Determine status based on thresholds
+      let status: 'pass' | 'warning' | 'critical' = 'pass';
+      if (Math.abs(delta) <= 1 || variancePercent <= 0.5) {
+        status = 'pass';
+        passedSkus++;
+      } else if (variancePercent > 3) {
+        status = 'critical';
+        criticalSkus++;
+      } else {
+        status = 'warning';
+        warningSkus++;
+      }
+      
+      // Get product SKU
+      const product = await getProductById(allocation.productId);
+      
+      await createReconciliationLine({
+        runId,
+        productId: allocation.productId,
+        sku: product?.sku,
+        warehouseId: allocation.warehouseId,
+        erpQuantity: erpQty.toString(),
+        channelQuantity: channelQty.toString(),
+        deltaQuantity: delta.toString(),
+        variancePercent: variancePercent.toString(),
+        status
+      });
+    }
+    
+    // Update run with results
+    await updateReconciliationRun(runId, {
+      status: 'completed',
+      completedAt: new Date(),
+      totalSkus,
+      passedSkus,
+      warningSkus,
+      criticalSkus
+    });
+    
+    // Create alerts for critical variances
+    if (criticalSkus > 0) {
+      await createAlert({
+        type: 'reconciliation_variance',
+        severity: 'critical',
+        title: `Inventory reconciliation found ${criticalSkus} critical variances`,
+        description: `Reconciliation run ${runNumber} completed with ${criticalSkus} SKUs having variance > 3%`,
+        entityType: 'reconciliation_run',
+        entityId: runId,
+        autoGenerated: true
+      });
+    }
+    
+    return { runId, runNumber, totalSkus, passedSkus, warningSkus, criticalSkus };
+  } catch (error) {
+    await updateReconciliationRun(runId, {
+      status: 'failed',
+      completedAt: new Date(),
+      notes: error instanceof Error ? error.message : 'Unknown error'
+    });
+    throw error;
+  }
+}
+
+// Get available inventory (not reserved) for a product
+export async function getAvailableInventoryByProduct(productId: number) {
+  const db = await getDb();
+  if (!db) return { available: 0, reserved: 0, total: 0 };
+  
+  const balances = await db.select({
+    status: inventoryBalances.status,
+    totalQty: sum(inventoryBalances.quantity)
+  })
+    .from(inventoryBalances)
+    .where(eq(inventoryBalances.productId, productId))
+    .groupBy(inventoryBalances.status);
+  
+  let available = 0;
+  let reserved = 0;
+  
+  for (const b of balances) {
+    if (b.status === 'available') available = parseFloat(b.totalQty || '0');
+    if (b.status === 'reserved') reserved = parseFloat(b.totalQty || '0');
+  }
+  
+  return { available, reserved, total: available + reserved };
 }

@@ -3565,12 +3565,63 @@ Provide a brief status summary, any missing documents, and next steps.`;
         return { success: true };
       }),
     completeProduction: protectedProcedure
-      .input(z.object({ id: z.number(), completedQuantity: z.string() }))
+      .input(z.object({ 
+        id: z.number(), 
+        completedQuantity: z.string(),
+        warehouseId: z.number().optional(),
+        yieldPercent: z.number().optional()
+      }))
       .mutation(async ({ input, ctx }) => {
+        // Get work order details
+        const workOrder = await db.getWorkOrderById(input.id);
+        if (!workOrder) throw new Error("Work order not found");
+        
         // Consume materials
         await db.consumeWorkOrderMaterials(input.id, ctx.user?.id);
-        // Update completed quantity
-        await db.updateWorkOrder(input.id, { completedQuantity: input.completedQuantity });
+        
+        // Create finished goods lot output
+        const completedQty = parseFloat(input.completedQuantity);
+        const plannedQty = parseFloat(workOrder.quantity);
+        const yieldPercent = input.yieldPercent || (completedQty / plannedQty * 100);
+        
+        // Get BOM to find output product
+        const bom = await db.getBomById(workOrder.bomId);
+        if (bom && bom.productId) {
+          const outputWarehouse = input.warehouseId || workOrder.warehouseId;
+          if (outputWarehouse) {
+            const { lotId, lotCode } = await db.createWorkOrderOutput(
+              input.id,
+              bom.productId,
+              completedQty,
+              outputWarehouse,
+              yieldPercent,
+              ctx.user?.id
+            );
+            
+            // Create audit log
+            await db.createAuditLog({
+              entityType: 'work_order',
+              entityId: input.id,
+              action: 'update',
+              newValues: { 
+                event: 'production_completed',
+                completedQuantity: input.completedQuantity, 
+                yieldPercent, 
+                outputLotId: lotId, 
+                outputLotCode: lotCode 
+              },
+              userId: ctx.user?.id
+            });
+          }
+        }
+        
+        // Update work order status
+        await db.updateWorkOrder(input.id, { 
+          completedQuantity: input.completedQuantity,
+          status: 'completed',
+          actualEndDate: new Date()
+        });
+        
         return { success: true };
       }),
   }),
@@ -4153,5 +4204,494 @@ Provide your forecast in JSON format with the following structure:
       };
     }),
   }),
+
+  // ============================================
+  // ALERT SYSTEM
+  // ============================================
+  alerts: router({
+    list: protectedProcedure
+      .input(z.object({
+        type: z.enum(['low_stock', 'shortage', 'late_shipment', 'yield_variance', 'reconciliation_variance', 'expiring_lot', 'other']).optional(),
+        status: z.enum(['open', 'acknowledged', 'resolved', 'dismissed']).optional(),
+        severity: z.enum(['info', 'warning', 'critical']).optional(),
+      }).optional())
+      .query(async ({ input }) => {
+        return db.getAlerts(input);
+      }),
+    getById: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        return db.getAlertById(input.id);
+      }),
+    acknowledge: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.acknowledgeAlert(input.id, ctx.user!.id);
+        return { success: true };
+      }),
+    resolve: protectedProcedure
+      .input(z.object({ id: z.number(), notes: z.string().optional() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.resolveAlert(input.id, ctx.user!.id, input.notes);
+        return { success: true };
+      }),
+    dismiss: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input }) => {
+        await db.updateAlert(input.id, { status: 'dismissed' });
+        return { success: true };
+      }),
+    generateLowStockAlerts: protectedProcedure
+      .mutation(async () => {
+        const alertIds = await db.generateLowStockAlerts();
+        return { created: alertIds.length, alertIds };
+      }),
+    create: protectedProcedure
+      .input(z.object({
+        type: z.enum(['low_stock', 'shortage', 'late_shipment', 'yield_variance', 'reconciliation_variance', 'expiring_lot', 'quality_issue', 'po_overdue']),
+        severity: z.enum(['info', 'warning', 'critical']),
+        title: z.string(),
+        description: z.string().optional(),
+        entityType: z.string().optional(),
+        entityId: z.number().optional(),
+        assignedTo: z.number().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        return db.createAlert(input);
+      }),
+  }),
+
+  // Recommendations
+  recommendations: router({
+    list: protectedProcedure
+      .input(z.object({
+        status: z.enum(['pending', 'approved', 'rejected', 'expired']).optional(),
+        type: z.enum(['reorder', 'production', 'pricing', 'allocation', 'other']).optional(),
+      }).optional())
+      .query(async ({ input }) => {
+        return db.getRecommendations(input);
+      }),
+    approve: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.approveRecommendation(input.id, ctx.user!.id);
+        return { success: true };
+      }),
+    reject: protectedProcedure
+      .input(z.object({ id: z.number(), reason: z.string().optional() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.rejectRecommendation(input.id, ctx.user!.id, input.reason);
+        return { success: true };
+      }),
+  }),
+
+  // ============================================
+  // SHOPIFY INTEGRATION
+  // ============================================
+  shopify: router({
+    stores: router({
+      list: protectedProcedure.query(async () => {
+        return db.getShopifyStores();
+      }),
+      getById: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(async ({ input }) => {
+          return db.getShopifyStoreById(input.id);
+        }),
+      create: protectedProcedure
+        .input(z.object({
+          storeName: z.string(),
+          storeDomain: z.string(),
+          apiKey: z.string().optional(),
+          apiSecret: z.string().optional(),
+          accessToken: z.string().optional(),
+          isActive: z.boolean().default(true),
+        }))
+        .mutation(async ({ input }) => {
+          return db.createShopifyStore(input);
+        }),
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          storeName: z.string().optional(),
+          isActive: z.boolean().optional(),
+          lastSyncAt: z.date().optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const { id, ...data } = input;
+          await db.updateShopifyStore(id, data);
+          return { success: true };
+        }),
+    }),
+    skuMappings: router({
+      list: protectedProcedure
+        .input(z.object({ storeId: z.number() }))
+        .query(async ({ input }) => {
+          return db.getShopifySkuMappings(input.storeId);
+        }),
+      create: protectedProcedure
+        .input(z.object({
+          storeId: z.number(),
+          shopifyProductId: z.string(),
+          shopifyVariantId: z.string(),
+          productId: z.number(),
+          isActive: z.boolean().default(true),
+        }))
+        .mutation(async ({ input }) => {
+          return db.createShopifySkuMapping(input);
+        }),
+    }),
+    locationMappings: router({
+      list: protectedProcedure
+        .input(z.object({ storeId: z.number() }))
+        .query(async ({ input }) => {
+          return db.getShopifyLocationMappings(input.storeId);
+        }),
+      create: protectedProcedure
+        .input(z.object({
+          storeId: z.number(),
+          shopifyLocationId: z.string(),
+          warehouseId: z.number(),
+          isActive: z.boolean().default(true),
+        }))
+        .mutation(async ({ input }) => {
+          return db.createShopifyLocationMapping(input);
+        }),
+    }),
+    // Webhook handler (would be called by Shopify webhooks)
+    handleWebhook: publicProcedure
+      .input(z.object({
+        topic: z.string(),
+        shopDomain: z.string(),
+        payload: z.any(),
+        idempotencyKey: z.string(),
+      }))
+      .mutation(async ({ input }) => {
+        // Check idempotency
+        const existing = await db.getWebhookEventByIdempotencyKey(input.idempotencyKey);
+        if (existing) {
+          return { success: true, message: 'Already processed' };
+        }
+        
+        // Get store
+        const store = await db.getShopifyStoreByDomain(input.shopDomain);
+        if (!store) {
+          throw new Error('Unknown store');
+        }
+        
+        // Create webhook event
+        const { id: eventId } = await db.createWebhookEvent({
+          source: 'shopify',
+          topic: input.topic,
+          payload: JSON.stringify(input.payload),
+          idempotencyKey: input.idempotencyKey,
+          status: 'received',
+        });
+        
+        try {
+          // Process based on topic
+          if (input.topic === 'orders/create' || input.topic === 'orders/updated') {
+            // Create/update sales order from Shopify order
+            const shopifyOrder = input.payload;
+            const existingOrder = await db.getSalesOrderByShopifyId(shopifyOrder.id.toString());
+            
+            if (existingOrder) {
+              await db.updateSalesOrder(existingOrder.id, {
+                status: mapShopifyOrderStatusToDb(shopifyOrder.financial_status, shopifyOrder.fulfillment_status),
+                totalAmount: shopifyOrder.total_price,
+              });
+            } else {
+              const { id: orderId } = await db.createSalesOrder({
+                source: 'shopify',
+                shopifyOrderId: shopifyOrder.id.toString(),
+                customerId: undefined,
+                status: mapShopifyOrderStatusToDb(shopifyOrder.financial_status, shopifyOrder.fulfillment_status),
+                orderDate: new Date(shopifyOrder.created_at),
+                totalAmount: shopifyOrder.total_price,
+                currency: shopifyOrder.currency,
+                shippingAddress: JSON.stringify(shopifyOrder.shipping_address),
+              });
+              
+              // Create order lines
+              for (const item of shopifyOrder.line_items || []) {
+                const product = await db.getProductByShopifySku(store.id, item.variant_id?.toString());
+                if (product) {
+                  await db.createSalesOrderLine({
+                    salesOrderId: orderId,
+                    productId: product.id,
+                    shopifyLineItemId: item.id?.toString(),
+                    sku: item.sku,
+                    quantity: item.quantity?.toString() || '0',
+                    unitPrice: item.price || '0',
+                    totalPrice: (parseFloat(item.price || '0') * (item.quantity || 0)).toString(),
+                  });
+                }
+              }
+            }
+          }
+          
+          await db.updateWebhookEvent(eventId, { status: 'processed', processedAt: new Date() });
+          return { success: true };
+        } catch (error) {
+          await db.updateWebhookEvent(eventId, { 
+            status: 'failed', 
+            errorMessage: error instanceof Error ? error.message : 'Unknown error' 
+          });
+          throw error;
+        }
+      }),
+  }),
+
+  // ============================================
+  // SALES ORDERS
+  // ============================================
+  salesOrders: router({
+    list: protectedProcedure
+      .input(z.object({
+        status: z.enum(['pending', 'confirmed', 'allocated', 'picking', 'shipped', 'delivered', 'cancelled']).optional(),
+        source: z.enum(['shopify', 'amazon', 'manual', 'api']).optional(),
+        customerId: z.number().optional(),
+      }).optional())
+      .query(async ({ input }) => {
+        return db.getSalesOrders(input);
+      }),
+    getById: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const order = await db.getSalesOrderById(input.id);
+        if (!order) return null;
+        const lines = await db.getSalesOrderLines(input.id);
+        const reservations = await db.getInventoryReservations(input.id);
+        return { ...order, lines, reservations };
+      }),
+    create: protectedProcedure
+      .input(z.object({
+        customerId: z.number().optional(),
+        source: z.enum(['shopify', 'manual', 'api', 'other']).default('manual'),
+        orderDate: z.date().optional(),
+        requestedShipDate: z.date().optional(),
+        shippingAddress: z.string().optional(),
+        notes: z.string().optional(),
+        lines: z.array(z.object({
+          productId: z.number(),
+          quantity: z.string(),
+          unitPrice: z.string(),
+        })),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const totalAmount = input.lines.reduce((sum, line) => {
+          return sum + parseFloat(line.quantity) * parseFloat(line.unitPrice);
+        }, 0);
+        
+        const { id: orderId, orderNumber } = await db.createSalesOrder({
+          customerId: input.customerId,
+          source: input.source,
+          status: 'pending',
+          orderDate: input.orderDate || new Date(),
+          shippingAddress: input.shippingAddress,
+          notes: input.notes,
+          totalAmount: totalAmount.toString(),
+        });
+        
+        for (const line of input.lines) {
+          await db.createSalesOrderLine({
+            salesOrderId: orderId,
+            productId: line.productId,
+            quantity: line.quantity,
+            unitPrice: line.unitPrice,
+            totalPrice: (parseFloat(line.quantity) * parseFloat(line.unitPrice)).toString(),
+          });
+        }
+        
+        return { id: orderId, orderNumber };
+      }),
+    updateStatus: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        status: z.enum(['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled', 'refunded']),
+      }))
+      .mutation(async ({ input }) => {
+        await db.updateSalesOrder(input.id, { status: input.status });
+        return { success: true };
+      }),
+  }),
+
+  // ============================================
+  // INVENTORY LOTS
+  // ============================================
+  inventoryLots: router({
+    list: protectedProcedure
+      .input(z.object({
+        productId: z.number().optional(),
+        status: z.enum(['active', 'hold', 'expired', 'depleted']).optional(),
+      }).optional())
+      .query(async ({ input }) => {
+        return db.getInventoryLots(input);
+      }),
+    getById: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        return db.getInventoryLotById(input.id);
+      }),
+    getBalances: protectedProcedure
+      .input(z.object({
+        lotId: z.number().optional(),
+        productId: z.number().optional(),
+        warehouseId: z.number().optional(),
+        status: z.enum(['available', 'reserved', 'hold', 'damaged']).optional(),
+      }).optional())
+      .query(async ({ input }) => {
+        return db.getInventoryBalances(input);
+      }),
+    getTransactionHistory: protectedProcedure
+      .input(z.object({
+        productId: z.number().optional(),
+        lotId: z.number().optional(),
+        warehouseId: z.number().optional(),
+        type: z.string().optional(),
+        limit: z.number().default(100),
+      }))
+      .query(async ({ input }) => {
+        return db.getInventoryTransactionHistory(input, input.limit);
+      }),
+    reserve: protectedProcedure
+      .input(z.object({
+        lotId: z.number(),
+        productId: z.number(),
+        warehouseId: z.number(),
+        quantity: z.number(),
+        referenceType: z.string(),
+        referenceId: z.number(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return db.reserveInventory(
+          input.lotId,
+          input.productId,
+          input.warehouseId,
+          input.quantity,
+          input.referenceType,
+          input.referenceId,
+          ctx.user?.id
+        );
+      }),
+    release: protectedProcedure
+      .input(z.object({
+        lotId: z.number(),
+        productId: z.number(),
+        warehouseId: z.number(),
+        quantity: z.number(),
+        referenceType: z.string(),
+        referenceId: z.number(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return db.releaseReservation(
+          input.lotId,
+          input.productId,
+          input.warehouseId,
+          input.quantity,
+          input.referenceType,
+          input.referenceId,
+          ctx.user?.id
+        );
+      }),
+    updateStatus: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        status: z.enum(['active', 'expired', 'consumed', 'quarantine']),
+      }))
+      .mutation(async ({ input }) => {
+        await db.updateInventoryLot(input.id, { status: input.status });
+        return { success: true };
+      }),
+    getAvailableByProduct: protectedProcedure
+      .input(z.object({ productId: z.number() }))
+      .query(async ({ input }) => {
+        return db.getAvailableInventoryByProduct(input.productId);
+      }),
+  }),
+
+  // ============================================
+  // INVENTORY RECONCILIATION
+  // ============================================
+  reconciliation: router({
+    list: protectedProcedure
+      .input(z.object({
+        status: z.enum(['pending', 'running', 'completed', 'failed']).optional(),
+        channel: z.enum(['shopify', 'amazon', 'all']).optional(),
+      }).optional())
+      .query(async ({ input }) => {
+        return db.getReconciliationRuns(input);
+      }),
+    getById: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const run = await db.getReconciliationRunById(input.id);
+        if (!run) return null;
+        const lines = await db.getReconciliationLines(input.id);
+        return { ...run, lines };
+      }),
+    run: protectedProcedure
+      .input(z.object({
+        channel: z.enum(['shopify', 'amazon', 'all']),
+        storeId: z.number().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return db.runInventoryReconciliation(input.channel, input.storeId, ctx.user?.id);
+      }),
+  }),
+
+  // ============================================
+  // INVENTORY ALLOCATIONS
+  // ============================================
+  allocations: router({
+    list: protectedProcedure
+      .input(z.object({
+        channel: z.enum(['shopify', 'amazon', 'wholesale', 'retail']).optional(),
+        productId: z.number().optional(),
+        storeId: z.number().optional(),
+      }).optional())
+      .query(async ({ input }) => {
+        return db.getInventoryAllocations(input);
+      }),
+    create: protectedProcedure
+      .input(z.object({
+        channel: z.enum(['shopify', 'amazon', 'wholesale', 'retail']),
+        productId: z.number(),
+        warehouseId: z.number(),
+        storeId: z.number().optional(),
+        allocatedQuantity: z.string(),
+        reservedQuantity: z.string().default('0'),
+      }))
+      .mutation(async ({ input }) => {
+        return db.createInventoryAllocation({
+          ...input,
+          remainingQuantity: input.allocatedQuantity,
+        });
+      }),
+    update: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        allocatedQuantity: z.string().optional(),
+        reservedQuantity: z.string().optional(),
+        remainingQuantity: z.string().optional(),
+        channelReportedQuantity: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { id, ...data } = input;
+        await db.updateInventoryAllocation(id, data);
+        return { success: true };
+      }),
+  }),
 });
+
+// Helper function to map Shopify order status to DB enum
+function mapShopifyOrderStatusToDb(financialStatus: string, fulfillmentStatus: string | null): 'pending' | 'confirmed' | 'processing' | 'shipped' | 'delivered' | 'cancelled' | 'refunded' {
+  if (financialStatus === 'refunded') return 'refunded';
+  if (financialStatus === 'voided') return 'cancelled';
+  if (fulfillmentStatus === 'fulfilled') return 'delivered';
+  if (fulfillmentStatus === 'partial') return 'shipped';
+  if (financialStatus === 'paid') return 'confirmed';
+  return 'pending';
+}
+
 export type AppRouter = typeof appRouter;
