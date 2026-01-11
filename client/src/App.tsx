@@ -60,6 +60,7 @@ import Documents from "./pages/legal/Documents";
 
 // Settings
 import Integrations from "./pages/settings/Integrations";
+import NotificationSettings from "./pages/settings/Notifications";
 
 // Projects
 import Projects from "./pages/projects/Projects";
@@ -85,6 +86,7 @@ function Router() {
         <Route path="/notifications" component={Notifications} />
         <Route path="/settings" component={Settings} />
         <Route path="/settings/integrations" component={Integrations} />
+        <Route path="/settings/notifications" component={NotificationSettings} />
 
         {/* Finance */}
         <Route path="/finance/accounts" component={Accounts} />

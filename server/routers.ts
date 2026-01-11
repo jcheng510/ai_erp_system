@@ -776,8 +776,33 @@ export const appRouter = router({
       }))
       .mutation(async ({ input, ctx }) => {
         const { id, ...data } = input;
+        const [oldInventory] = await db.getInventory({ id } as any) || [];
         await db.updateInventory(id, data);
         await createAuditLog(ctx.user.id, 'update', 'inventory', id);
+        
+        // Check for low stock and create notification
+        if (data.quantity && oldInventory) {
+          const newQty = parseFloat(data.quantity);
+          const reorderLevel = parseFloat(oldInventory.reorderLevel || '0');
+          
+          if (newQty <= reorderLevel && newQty > 0) {
+            const allUsers = await db.getAllUsers();
+            const opsUsers = allUsers.filter(u => ['admin', 'ops', 'exec'].includes(u.role));
+            const product = await db.getProductById(oldInventory.productId);
+            
+            await db.notifyUsersOfEvent({
+              type: 'inventory_low',
+              title: `Low Stock Alert: ${product?.name || 'Product'}`,
+              message: `Inventory for ${product?.name} is at ${newQty} units, below reorder level of ${reorderLevel}`,
+              entityType: 'inventory',
+              entityId: id,
+              severity: 'warning',
+              link: `/operations/inventory`,
+              metadata: { productId: oldInventory.productId, quantity: newQty, reorderLevel },
+            }, opsUsers.map(u => u.id));
+          }
+        }
+        
         return { success: true };
       }),
   }),
@@ -1044,6 +1069,27 @@ export const appRouter = router({
         const oldPO = await db.getPurchaseOrderById(id);
         await db.updatePurchaseOrder(id, data);
         await createAuditLog(ctx.user.id, 'update', 'purchaseOrder', id, oldPO?.poNumber, oldPO, data);
+        
+        // Create notification for PO status changes
+        if (data.status && oldPO?.status !== data.status) {
+          const notificationType = data.status === 'received' ? 'po_received' as const :
+            data.status === 'confirmed' ? 'po_approved' as const :
+            data.status === 'partial' ? 'po_received' as const : 'system' as const;
+          
+          const allUsers = await db.getAllUsers();
+          const opsUsers = allUsers.filter(u => ['admin', 'ops', 'exec'].includes(u.role));
+          
+          await db.notifyUsersOfEvent({
+            type: notificationType,
+            title: `PO ${oldPO?.poNumber} ${data.status}`,
+            message: `Purchase Order ${oldPO?.poNumber} status changed from ${oldPO?.status} to ${data.status}`,
+            entityType: 'purchase_order',
+            entityId: id,
+            severity: data.status === 'received' ? 'info' : 'info',
+            link: `/operations/purchase-orders/${id}`,
+          }, opsUsers.map(u => u.id));
+        }
+        
         return { success: true };
       }),
     approve: opsProcedure
@@ -1097,8 +1143,27 @@ export const appRouter = router({
       }))
       .mutation(async ({ input, ctx }) => {
         const { id, ...data } = input;
+        const [oldShipment] = await db.getShipments({ id } as any) || [];
         await db.updateShipment(id, data);
         await createAuditLog(ctx.user.id, 'update', 'shipment', id);
+        
+        // Create notification for shipment status changes
+        if (data.status && oldShipment?.status !== data.status) {
+          const allUsers = await db.getAllUsers();
+          const opsUsers = allUsers.filter(u => ['admin', 'ops', 'exec'].includes(u.role));
+          
+          await db.notifyUsersOfEvent({
+            type: 'shipping_update',
+            title: `Shipment ${oldShipment?.shipmentNumber} ${data.status}`,
+            message: `Shipment ${oldShipment?.shipmentNumber} status changed to ${data.status}${data.trackingNumber ? ` (Tracking: ${data.trackingNumber})` : ''}`,
+            entityType: 'shipment',
+            entityId: id,
+            severity: data.status === 'delivered' ? 'info' : data.status === 'returned' ? 'warning' : 'info',
+            link: `/operations/shipments`,
+            metadata: { trackingNumber: data.trackingNumber || oldShipment?.trackingNumber },
+          }, opsUsers.map(u => u.id));
+        }
+        
         return { success: true };
       }),
   }),
@@ -1599,11 +1664,34 @@ export const appRouter = router({
   // NOTIFICATIONS
   // ============================================
   notifications: router({
-    list: protectedProcedure.query(({ ctx }) => db.getUserNotifications(ctx.user.id)),
+    list: protectedProcedure
+      .input(z.object({
+        unreadOnly: z.boolean().optional(),
+        type: z.string().optional(),
+        limit: z.number().optional(),
+      }).optional())
+      .query(({ ctx, input }) => db.getUserNotifications(ctx.user.id, input)),
+    unreadCount: protectedProcedure.query(({ ctx }) => db.getUnreadNotificationCount(ctx.user.id)),
     markRead: protectedProcedure
       .input(z.object({ id: z.number() }))
-      .mutation(({ input }) => db.markNotificationRead(input.id)),
-    markAllRead: protectedProcedure.mutation(({ ctx }) => db.markAllNotificationsRead(ctx.user.id)),
+      .mutation(({ input, ctx }) => db.markNotificationAsRead(input.id, ctx.user.id)),
+    markAllRead: protectedProcedure.mutation(({ ctx }) => db.markAllNotificationsAsRead(ctx.user.id)),
+    delete: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(({ input, ctx }) => db.deleteNotification(input.id, ctx.user.id)),
+    getPreferences: protectedProcedure.query(({ ctx }) => db.getUserNotificationPreferences(ctx.user.id)),
+    updatePreferences: protectedProcedure
+      .input(z.object({
+        notificationType: z.string(),
+        inApp: z.boolean().optional(),
+        email: z.boolean().optional(),
+        push: z.boolean().optional(),
+      }))
+      .mutation(({ input, ctx }) => db.updateNotificationPreference(
+        ctx.user.id,
+        input.notificationType,
+        { inApp: input.inApp, email: input.email, push: input.push }
+      )),
   }),
 
   // ============================================
@@ -3692,6 +3780,21 @@ Provide a brief status summary, any missing documents, and next steps.`;
           status: 'completed',
           actualEndDate: new Date()
         });
+        
+        // Create notification for work order completion
+        const allUsers = await db.getAllUsers();
+        const opsUsers = allUsers.filter(u => ['admin', 'ops', 'exec'].includes(u.role));
+        
+        await db.notifyUsersOfEvent({
+          type: 'work_order_completed',
+          title: `Work Order ${workOrder.workOrderNumber} Completed`,
+          message: `Work Order ${workOrder.workOrderNumber} completed with ${completedQty} units (${yieldPercent.toFixed(1)}% yield)`,
+          entityType: 'work_order',
+          entityId: input.id,
+          severity: yieldPercent < 90 ? 'warning' : 'info',
+          link: `/operations/work-orders`,
+          metadata: { completedQuantity: completedQty, yieldPercent },
+        }, opsUsers.map(u => u.id));
         
         return { success: true };
       }),

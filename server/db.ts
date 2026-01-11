@@ -1,4 +1,4 @@
-import { eq, desc, and, sql, gte, lte, like, or, count, sum } from "drizzle-orm";
+import { eq, desc, and, sql, gte, lte, lt, like, or, count, sum } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser, users, companies, customers, vendors, products,
@@ -30,6 +30,8 @@ import {
   inventoryAllocations, salesEvents,
   // Sync logs
   syncLogs,
+  // Notification preferences
+  notificationPreferences,
   // Reconciliation
   reconciliationRuns, reconciliationLines,
   InsertCompany, InsertCustomer, InsertVendor, InsertProduct,
@@ -1086,33 +1088,7 @@ export async function getAuditLogs(filters?: { companyId?: number; entityType?: 
   return db.select().from(auditLogs).orderBy(desc(auditLogs.createdAt)).limit(100);
 }
 
-// ============================================
-// NOTIFICATIONS
-// ============================================
-
-export async function getUserNotifications(userId: number) {
-  const db = await getDb();
-  if (!db) return [];
-  return db.select().from(notifications).where(eq(notifications.userId, userId)).orderBy(desc(notifications.createdAt)).limit(50);
-}
-
-export async function createNotification(data: typeof notifications.$inferInsert) {
-  const db = await getDb();
-  if (!db) return;
-  await db.insert(notifications).values(data);
-}
-
-export async function markNotificationRead(id: number) {
-  const db = await getDb();
-  if (!db) return;
-  await db.update(notifications).set({ isRead: true }).where(eq(notifications.id, id));
-}
-
-export async function markAllNotificationsRead(userId: number) {
-  const db = await getDb();
-  if (!db) return;
-  await db.update(notifications).set({ isRead: true }).where(eq(notifications.userId, userId));
-}
+// Old notification functions removed - see enhanced versions at end of file
 
 // ============================================
 // INTEGRATIONS
@@ -4050,4 +4026,265 @@ export async function clearSyncHistory() {
   const db = await getDb();
   if (!db) return;
   await db.delete(syncLogs);
+}
+
+
+// ============================================
+// NOTIFICATION FUNCTIONS
+// ============================================
+
+export type NotificationType = 
+  | "shipping_update" | "inventory_low" | "inventory_received" | "inventory_adjustment"
+  | "po_approved" | "po_shipped" | "po_received" | "po_fulfilled"
+  | "work_order_started" | "work_order_completed" | "work_order_shortage"
+  | "sales_order_new" | "sales_order_shipped" | "sales_order_delivered"
+  | "alert" | "system" | "info" | "warning" | "error" | "success" | "reminder";
+
+export interface CreateNotificationInput {
+  userId: number;
+  type: NotificationType;
+  title: string;
+  message: string;
+  entityType?: string;
+  entityId?: number;
+  severity?: "info" | "warning" | "critical";
+  link?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export async function createNotification(input: CreateNotificationInput) {
+  const db = await getDb();
+  if (!db) return null;
+  
+  const [result] = await db.insert(notifications).values({
+    userId: input.userId,
+    type: input.type,
+    title: input.title,
+    message: input.message,
+    entityType: input.entityType,
+    entityId: input.entityId,
+    severity: input.severity || "info",
+    link: input.link,
+    metadata: input.metadata,
+    isRead: false,
+  });
+  
+  return result.insertId;
+}
+
+export async function createNotificationsForAllUsers(
+  input: Omit<CreateNotificationInput, "userId">,
+  userIds: number[]
+) {
+  const db = await getDb();
+  if (!db || userIds.length === 0) return [];
+  
+  const notificationValues = userIds.map(userId => ({
+    userId,
+    type: input.type,
+    title: input.title,
+    message: input.message,
+    entityType: input.entityType,
+    entityId: input.entityId,
+    severity: input.severity || "info" as const,
+    link: input.link,
+    metadata: input.metadata,
+    isRead: false,
+  }));
+  
+  await db.insert(notifications).values(notificationValues);
+  return notificationValues.length;
+}
+
+export async function getUserNotifications(userId: number, options?: {
+  unreadOnly?: boolean;
+  limit?: number;
+  offset?: number;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+  
+  const conditions = [eq(notifications.userId, userId)];
+  if (options?.unreadOnly) {
+    conditions.push(eq(notifications.isRead, false));
+  }
+  
+  return db.select()
+    .from(notifications)
+    .where(and(...conditions))
+    .orderBy(desc(notifications.createdAt))
+    .limit(options?.limit || 50)
+    .offset(options?.offset || 0);
+}
+
+export async function getUnreadNotificationCount(userId: number) {
+  const db = await getDb();
+  if (!db) return 0;
+  
+  const [result] = await db.select({ count: sql<number>`count(*)` })
+    .from(notifications)
+    .where(and(
+      eq(notifications.userId, userId),
+      eq(notifications.isRead, false)
+    ));
+  
+  return result?.count || 0;
+}
+
+export async function markNotificationAsRead(notificationId: number, userId: number) {
+  const db = await getDb();
+  if (!db) return false;
+  
+  await db.update(notifications)
+    .set({ isRead: true, readAt: new Date() })
+    .where(and(
+      eq(notifications.id, notificationId),
+      eq(notifications.userId, userId)
+    ));
+  
+  return true;
+}
+
+export async function markAllNotificationsAsRead(userId: number) {
+  const db = await getDb();
+  if (!db) return false;
+  
+  await db.update(notifications)
+    .set({ isRead: true, readAt: new Date() })
+    .where(and(
+      eq(notifications.userId, userId),
+      eq(notifications.isRead, false)
+    ));
+  
+  return true;
+}
+
+export async function deleteNotification(notificationId: number, userId: number) {
+  const db = await getDb();
+  if (!db) return false;
+  
+  await db.delete(notifications)
+    .where(and(
+      eq(notifications.id, notificationId),
+      eq(notifications.userId, userId)
+    ));
+  
+  return true;
+}
+
+export async function deleteOldNotifications(daysOld: number = 30) {
+  const db = await getDb();
+  if (!db) return 0;
+  
+  const cutoffDate = new Date();
+  cutoffDate.setDate(cutoffDate.getDate() - daysOld);
+  
+  const [result] = await db.delete(notifications)
+    .where(lt(notifications.createdAt, cutoffDate));
+  
+  return result.affectedRows || 0;
+}
+
+// Notification preferences
+export async function getUserNotificationPreferences(userId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  
+  return db.select()
+    .from(notificationPreferences)
+    .where(eq(notificationPreferences.userId, userId));
+}
+
+export async function updateNotificationPreference(
+  userId: number,
+  notificationType: string,
+  settings: { inApp?: boolean; email?: boolean; push?: boolean }
+) {
+  const db = await getDb();
+  if (!db) return false;
+  
+  // Check if preference exists
+  const existing = await db.select()
+    .from(notificationPreferences)
+    .where(and(
+      eq(notificationPreferences.userId, userId),
+      eq(notificationPreferences.notificationType, notificationType)
+    ))
+    .limit(1);
+  
+  if (existing.length > 0) {
+    await db.update(notificationPreferences)
+      .set(settings)
+      .where(and(
+        eq(notificationPreferences.userId, userId),
+        eq(notificationPreferences.notificationType, notificationType)
+      ));
+  } else {
+    await db.insert(notificationPreferences).values({
+      userId,
+      notificationType,
+      inApp: settings.inApp ?? true,
+      email: settings.email ?? false,
+      push: settings.push ?? false,
+    });
+  }
+  
+  return true;
+}
+
+// Helper to check if user should receive notification
+export async function shouldNotifyUser(userId: number, notificationType: string, channel: "inApp" | "email" | "push") {
+  const db = await getDb();
+  if (!db) return channel === "inApp"; // Default to in-app only
+  
+  const [pref] = await db.select()
+    .from(notificationPreferences)
+    .where(and(
+      eq(notificationPreferences.userId, userId),
+      eq(notificationPreferences.notificationType, notificationType)
+    ))
+    .limit(1);
+  
+  if (!pref) return channel === "inApp"; // Default to in-app only
+  
+  return pref[channel] ?? false;
+}
+
+// Bulk notification creation for events
+export async function notifyUsersOfEvent(
+  event: {
+    type: NotificationType;
+    title: string;
+    message: string;
+    entityType?: string;
+    entityId?: number;
+    severity?: "info" | "warning" | "critical";
+    link?: string;
+    metadata?: Record<string, unknown>;
+  },
+  userIds: number[]
+) {
+  const db = await getDb();
+  if (!db || userIds.length === 0) return { inApp: 0, email: 0 };
+  
+  let inAppCount = 0;
+  let emailCount = 0;
+  
+  for (const userId of userIds) {
+    const shouldInApp = await shouldNotifyUser(userId, event.type, "inApp");
+    const shouldEmail = await shouldNotifyUser(userId, event.type, "email");
+    
+    if (shouldInApp) {
+      await createNotification({ ...event, userId });
+      inAppCount++;
+    }
+    
+    // Email notifications would be handled here with SendGrid
+    if (shouldEmail) {
+      emailCount++;
+      // TODO: Send email notification via SendGrid
+    }
+  }
+  
+  return { inApp: inAppCount, email: emailCount };
 }

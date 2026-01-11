@@ -732,15 +732,55 @@ export const auditLogs = mysqlTable("audit_logs", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
+export const notificationTypeEnum = mysqlEnum("notification_type", [
+  "shipping_update",
+  "inventory_low",
+  "inventory_received",
+  "inventory_adjustment",
+  "po_approved",
+  "po_shipped",
+  "po_received",
+  "po_fulfilled",
+  "work_order_started",
+  "work_order_completed",
+  "work_order_shortage",
+  "sales_order_new",
+  "sales_order_shipped",
+  "sales_order_delivered",
+  "alert",
+  "system",
+  "info",
+  "warning",
+  "error",
+  "success",
+  "reminder",
+]);
+
 export const notifications = mysqlTable("notifications", {
   id: int("id").autoincrement().primaryKey(),
   userId: int("userId").notNull(),
-  type: mysqlEnum("type", ["info", "warning", "error", "success", "reminder"]).default("info").notNull(),
+  type: notificationTypeEnum.default("info").notNull(),
   title: varchar("title", { length: 255 }).notNull(),
   message: text("message"),
   link: varchar("link", { length: 512 }),
+  entityType: varchar("entityType", { length: 50 }), // e.g., "shipment", "purchase_order", "inventory"
+  entityId: int("entityId"),
+  severity: mysqlEnum("severity", ["info", "warning", "critical"]).default("info"),
   isRead: boolean("isRead").default(false),
+  readAt: timestamp("readAt"),
+  metadata: json("metadata"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export const notificationPreferences = mysqlTable("notification_preferences", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  notificationType: varchar("notificationType", { length: 50 }).notNull(),
+  inApp: boolean("inApp").default(true),
+  email: boolean("email").default(false),
+  push: boolean("push").default(false),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
 export const integrationConfigs = mysqlTable("integration_configs", {

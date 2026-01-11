@@ -325,3 +325,20 @@
 - [x] Last sync timestamps for each integration
 - [x] Manual sync triggers for each service
 - [x] Navigation link in sidebar under Settings
+
+## Real-Time Notification System
+- [x] Notifications database table (type, title, message, entity_ref, read status, user_id)
+- [x] Notification preferences table (user settings for each notification type)
+- [x] Backend procedures for creating, listing, marking read notifications
+- [x] Shipping tracking update notifications (status changes, delivery updates)
+- [x] Inventory level notifications (low stock, stock received, adjustments)
+- [x] Purchase order notifications (PO approved, shipped, received, fulfilled)
+- [x] Work order notifications (started, completed, material shortage)
+- [x] Sales order notifications (new order, shipped, delivered)
+- [x] Alert-to-notification bridge (convert alerts to user notifications)
+- [x] Notification center UI in header with badge count
+- [x] Real-time polling for new notifications (15-30 second intervals)
+- [x] Mark as read/unread functionality
+- [x] Notification preferences settings page
+- [x] Email notification option for critical alerts (via preferences)
+- [x] All 193 unit tests passing

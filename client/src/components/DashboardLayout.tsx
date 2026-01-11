@@ -1,4 +1,5 @@
 import { useAuth } from "@/_core/hooks/useAuth";
+import { NotificationCenter } from "@/components/NotificationCenter";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -443,9 +444,7 @@ function DashboardLayoutContent({
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => setLocation("/notifications")}>
-              <Bell className="h-4 w-4" />
-            </Button>
+            <NotificationCenter />
           </div>
         </header>
         <main className="flex-1 overflow-auto p-4 md:p-6">{children}</main>
