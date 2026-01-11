@@ -58,6 +58,9 @@ import Contracts from "./pages/legal/Contracts";
 import Disputes from "./pages/legal/Disputes";
 import Documents from "./pages/legal/Documents";
 
+// Settings
+import Integrations from "./pages/settings/Integrations";
+
 // Projects
 import Projects from "./pages/projects/Projects";
 
@@ -81,6 +84,7 @@ function Router() {
         <Route path="/search" component={GlobalSearch} />
         <Route path="/notifications" component={Notifications} />
         <Route path="/settings" component={Settings} />
+        <Route path="/settings/integrations" component={Integrations} />
 
         {/* Finance */}
         <Route path="/finance/accounts" component={Accounts} />

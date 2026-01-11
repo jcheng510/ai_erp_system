@@ -313,3 +313,15 @@
 - [x] Role-based procedure guards implemented
 - [ ] Add Plant User role (Work Orders/Receiving/Inventory/Transfers only)
 - [ ] Split Finance/Procurement permissions
+
+## Integration Settings Page
+- [x] Create Integrations settings page with tabbed layout
+- [x] Shopify tab: store connection, API credentials, sync status, manual sync trigger
+- [x] SendGrid tab: API key status, sender email config, test email button
+- [x] Google tab: OAuth connection status, connected accounts, disconnect option
+- [x] QuickBooks tab: connection status placeholder for future integration
+- [x] Sync History tab: log of recent sync operations with status
+- [x] Connection status indicators (connected/disconnected/error)
+- [x] Last sync timestamps for each integration
+- [x] Manual sync triggers for each service
+- [x] Navigation link in sidebar under Settings

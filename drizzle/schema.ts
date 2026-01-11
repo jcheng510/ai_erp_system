@@ -1878,3 +1878,24 @@ export const reconciliationLines = mysqlTable("reconciliationLines", {
 
 export type ReconciliationLine = typeof reconciliationLines.$inferSelect;
 export type InsertReconciliationLine = typeof reconciliationLines.$inferInsert;
+
+
+// ============================================
+// INTEGRATION SYNC LOGS
+// ============================================
+
+export const syncLogs = mysqlTable("syncLogs", {
+  id: int("id").autoincrement().primaryKey(),
+  integration: varchar("integration", { length: 64 }).notNull(), // shopify, sendgrid, google, quickbooks
+  action: varchar("action", { length: 128 }).notNull(), // product_sync, order_sync, test_email, etc.
+  status: mysqlEnum("status", ["success", "error", "warning", "pending"]).default("pending").notNull(),
+  details: text("details"),
+  recordsProcessed: int("recordsProcessed"),
+  recordsFailed: int("recordsFailed"),
+  errorMessage: text("errorMessage"),
+  metadata: json("metadata"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type SyncLog = typeof syncLogs.$inferSelect;
+export type InsertSyncLog = typeof syncLogs.$inferInsert;

@@ -28,6 +28,8 @@ import {
   salesOrders, salesOrderLines, inventoryReservations,
   // Inventory allocation
   inventoryAllocations, salesEvents,
+  // Sync logs
+  syncLogs,
   // Reconciliation
   reconciliationRuns, reconciliationLines,
   InsertCompany, InsertCustomer, InsertVendor, InsertProduct,
@@ -4003,4 +4005,49 @@ export async function getAvailableInventoryByProduct(productId: number) {
   }
   
   return { available, reserved, total: available + reserved };
+}
+
+
+// ============================================
+// SYNC LOGS
+// ============================================
+
+export async function createSyncLog(data: {
+  integration: string;
+  action: string;
+  status: 'success' | 'error' | 'warning' | 'pending';
+  details?: string;
+  recordsProcessed?: number;
+  recordsFailed?: number;
+  errorMessage?: string;
+  metadata?: Record<string, unknown>;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(syncLogs).values({
+    integration: data.integration,
+    action: data.action,
+    status: data.status,
+    details: data.details || null,
+    recordsProcessed: data.recordsProcessed || null,
+    recordsFailed: data.recordsFailed || null,
+    errorMessage: data.errorMessage || null,
+    metadata: data.metadata || null,
+  });
+  return { id: result.insertId };
+}
+
+export async function getSyncHistory(limit: number = 50) {
+  const db = await getDb();
+  if (!db) return [];
+  return await db.select()
+    .from(syncLogs)
+    .orderBy(desc(syncLogs.createdAt))
+    .limit(limit);
+}
+
+export async function clearSyncHistory() {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(syncLogs);
 }

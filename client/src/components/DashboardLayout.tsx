@@ -59,6 +59,7 @@ import {
   ClipboardList,
   PackageCheck,
   Brain,
+  Plug,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -152,6 +153,7 @@ const menuGroups = [
     label: "Settings",
     items: [
       { icon: Users, label: "Team", path: "/settings/team" },
+      { icon: Plug, label: "Integrations", path: "/settings/integrations" },
       { icon: FileSpreadsheet, label: "Import Data", path: "/import" },
       { icon: Settings, label: "Settings", path: "/settings" },
     ],

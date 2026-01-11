@@ -1638,6 +1638,77 @@ export const appRouter = router({
         await createAuditLog(ctx.user.id, 'update', 'integration', id);
         return { success: true };
       }),
+    
+    // Get all integration statuses
+    getStatus: protectedProcedure.query(async () => {
+      const sendgridConfigured = isEmailConfigured();
+      const shopifyStores = await db.getShopifyStores();
+      const activeShopifyStores = shopifyStores.filter(s => s.isEnabled);
+      const syncHistory = await db.getSyncHistory(10);
+      
+      return {
+        sendgrid: {
+          configured: sendgridConfigured,
+          status: sendgridConfigured ? 'connected' : 'not_configured',
+        },
+        shopify: {
+          configured: activeShopifyStores.length > 0,
+          status: activeShopifyStores.length > 0 ? 'connected' : 'not_configured',
+          storeCount: activeShopifyStores.length,
+          stores: shopifyStores,
+        },
+        google: {
+          configured: false,
+          status: 'not_configured',
+        },
+        quickbooks: {
+          configured: false,
+          status: 'not_configured',
+        },
+        syncHistory,
+      };
+    }),
+
+    // Test SendGrid connection
+    testSendgrid: adminProcedure
+      .input(z.object({ testEmail: z.string().email() }))
+      .mutation(async ({ input }) => {
+        if (!isEmailConfigured()) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'SendGrid is not configured. Add SENDGRID_API_KEY and SENDGRID_FROM_EMAIL in Settings → Secrets.' });
+        }
+        
+        const result = await sendEmail({
+          to: input.testEmail,
+          subject: 'ERP System - SendGrid Test',
+          html: formatEmailHtml('SendGrid Connection Test\n\nThis is a test email to verify your SendGrid integration is working correctly.\n\nSent from your AI-Native ERP System'),
+        });
+        
+        if (!result.success) {
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error || 'Failed to send test email' });
+        }
+        
+        await db.createSyncLog({
+          integration: 'sendgrid',
+          action: 'test_email',
+          status: 'success',
+          details: `Test email sent to ${input.testEmail}`,
+        });
+        
+        return { success: true, message: `Test email sent to ${input.testEmail}` };
+      }),
+
+    // Sync history
+    getSyncHistory: protectedProcedure
+      .input(z.object({ limit: z.number().optional() }))
+      .query(async ({ input }) => {
+        return await db.getSyncHistory(input.limit || 50);
+      }),
+
+    // Clear sync history
+    clearSyncHistory: adminProcedure.mutation(async () => {
+      await db.clearSyncHistory();
+      return { success: true };
+    }),
   }),
 
   // ============================================
