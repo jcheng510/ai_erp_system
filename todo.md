@@ -440,3 +440,12 @@
 - [x] Send signed NDA copy to visitor via email
 - [x] Admin UI for managing visitor permissions
 - [x] Visitor access log with detailed activity
+
+
+## Menu Consolidation
+- [x] Combine Shipments, Receiving, Transfers into unified "Logistics" page with tabs
+- [x] Combine POs, Vendors, Raw Materials into unified "Procurement" page with tabs
+- [x] Combine Products, Inventory, BOM into unified "Inventory" page with tabs
+- [x] Combine Work Orders with Core Operations
+- [x] Simplify Operations menu to fewer top-level items
+- [x] Update navigation with consolidated structure

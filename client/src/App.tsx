@@ -41,6 +41,8 @@ import POReceiving from "./pages/operations/POReceiving";
 import Forecasting from "./pages/operations/Forecasting";
 import CoreOperations from "./pages/operations/CoreOperations";
 import EmailInbox from "./pages/operations/EmailInbox";
+import Logistics from "./pages/operations/Logistics";
+import Procurement from "./pages/operations/Procurement";
 
 // Freight
 import FreightDashboard from "./pages/freight/FreightDashboard";
@@ -122,6 +124,8 @@ function Router() {
         <Route path="/operations/forecasting" component={Forecasting} />
         <Route path="/operations/core" component={CoreOperations} />
         <Route path="/operations/email-inbox" component={EmailInbox} />
+        <Route path="/operations/logistics" component={Logistics} />
+        <Route path="/operations/procurement" component={Procurement} />
 
         {/* Freight */}
         <Route path="/freight" component={FreightDashboard} />
