@@ -423,7 +423,32 @@ export async function getInvoiceWithItems(id: number) {
   const db = await getDb();
   if (!db) return undefined;
   
-  const invoice = await getInvoiceById(id);
+  const invoiceResult = await db.select({
+    id: invoices.id,
+    companyId: invoices.companyId,
+    invoiceNumber: invoices.invoiceNumber,
+    customerId: invoices.customerId,
+    type: invoices.type,
+    status: invoices.status,
+    issueDate: invoices.issueDate,
+    dueDate: invoices.dueDate,
+    subtotal: invoices.subtotal,
+    taxAmount: invoices.taxAmount,
+    discountAmount: invoices.discountAmount,
+    totalAmount: invoices.totalAmount,
+    paidAmount: invoices.paidAmount,
+    currency: invoices.currency,
+    notes: invoices.notes,
+    terms: invoices.terms,
+    createdAt: invoices.createdAt,
+    customer: {
+      id: customers.id,
+      name: customers.name,
+      email: customers.email,
+    },
+  }).from(invoices).leftJoin(customers, eq(invoices.customerId, customers.id)).where(eq(invoices.id, id)).limit(1);
+  
+  const invoice = invoiceResult[0];
   if (!invoice) return undefined;
   
   const items = await db.select().from(invoiceItems).where(eq(invoiceItems.invoiceId, id));
