@@ -84,19 +84,11 @@ const menuGroups = [
     ],
   },
   {
-    label: "Finance",
+    label: "Sales & Finance",
     items: [
+      { icon: ShoppingCart, label: "Sales Hub", path: "/sales/hub" },
       { icon: DollarSign, label: "Accounts", path: "/finance/accounts" },
-      { icon: FileText, label: "Invoices", path: "/finance/invoices" },
-      { icon: CreditCard, label: "Payments", path: "/finance/payments" },
       { icon: TrendingUp, label: "Transactions", path: "/finance/transactions" },
-    ],
-  },
-  {
-    label: "Sales",
-    items: [
-      { icon: ShoppingCart, label: "Orders", path: "/sales/orders" },
-      { icon: Users, label: "Customers", path: "/sales/customers" },
     ],
   },
   {

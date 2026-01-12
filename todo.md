@@ -457,3 +457,9 @@
 - [x] Logistics Hub - Multi-column view with Shipments, Transfers, Tracking as panels
 - [x] Update navigation to use hub structure
 - [x] Remove redundant separate pages
+
+
+## Sales Hub Consolidation
+- [x] Create Sales Hub with Orders, Invoices, Customers, Payments as 4 columns
+- [x] Update navigation to use Sales Hub
+- [x] Remove separate Sales and Finance menu sections where redundant
