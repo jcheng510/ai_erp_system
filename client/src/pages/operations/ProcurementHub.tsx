@@ -453,8 +453,12 @@ export default function ProcurementHub() {
   const handlePoBulkAction = (action: string, selectedIds: Set<number | string>) => {
     const ids = Array.from(selectedIds) as number[];
     if (action === "send") {
-      toast.info(`Sending ${ids.length} POs to suppliers...`);
-      // TODO: Implement bulk send
+      // Update PO status to sent
+      ids.forEach(id => {
+        updatePoStatus.mutate({ id, status: "sent" });
+      });
+      toast.success(`${ids.length} POs marked as sent to suppliers`);
+      setSelectedPos(new Set());
     } else if (action === "approve") {
       ids.forEach(id => updatePoStatus.mutate({ id, status: "confirmed" }));
       setSelectedPos(new Set());
@@ -475,7 +479,9 @@ export default function ProcurementHub() {
       ids.forEach(id => updateVendor.mutate({ id, status: "inactive" }));
       setSelectedVendors(new Set());
     } else if (action === "request_quotes") {
-      toast.info(`Requesting quotes from ${ids.length} vendors...`);
+      // Create AI tasks to request quotes from vendors
+      // For now, show info that user needs to select materials first
+      toast.info(`Select materials first, then use 'AI: Create Reorder PO' to generate RFQs`);
     }
   };
 
@@ -488,7 +494,7 @@ export default function ProcurementHub() {
         if (material && material.preferredVendorId) {
           generatePoSuggestion.mutate({
             rawMaterialId: id,
-            quantity: material.reorderPoint?.toString() || "100",
+            quantity: material.minOrderQty?.toString() || "100",
             vendorId: material.preferredVendorId,
             reason: `Low stock reorder for ${material.name}`,
           });

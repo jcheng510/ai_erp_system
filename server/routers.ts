@@ -2596,6 +2596,35 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
       
       pendingApprovals: protectedProcedure.query(() => db.getPendingApprovalTasks()),
       
+      create: adminProcedure
+        .input(z.object({
+          taskType: z.enum(['generate_po', 'send_rfq', 'send_quote_request', 'send_email', 'update_inventory', 'create_shipment', 'generate_invoice', 'reconcile_payment', 'reorder_materials', 'vendor_followup']),
+          priority: z.enum(['low', 'medium', 'high', 'urgent']).default('medium'),
+          taskData: z.string(), // JSON string with task-specific data
+          aiReasoning: z.string().optional(),
+          aiConfidence: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const task = await db.createAiAgentTask({
+            taskType: input.taskType,
+            priority: input.priority,
+            status: 'pending_approval',
+            taskData: input.taskData,
+            aiReasoning: input.aiReasoning || 'Manual task creation',
+            aiConfidence: input.aiConfidence || '100.00',
+          });
+          
+          await db.createAiAgentLog({
+            taskId: task.id,
+            action: 'task_created',
+            status: 'info',
+            message: `Task created by ${ctx.user.name}`,
+            details: input.taskData,
+          });
+          
+          return task;
+        }),
+      
       approve: adminProcedure
         .input(z.object({ id: z.number() }))
         .mutation(async ({ input, ctx }) => {
@@ -2648,27 +2677,169 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
             let result: any = {};
             
             switch (task.taskType) {
-              case 'generate_po':
+              case 'generate_po': {
+                // Create PO with line items for raw materials
                 const poNumber = generateNumber('PO');
+                const vendor = await db.getVendorById(taskData.vendorId);
+                const material = taskData.rawMaterialId ? await db.getRawMaterialById(taskData.rawMaterialId) : null;
+                
+                // Calculate expected date based on vendor lead time
+                const leadDays = vendor?.defaultLeadTimeDays || material?.leadTimeDays || 14;
+                const expectedDate = new Date();
+                expectedDate.setDate(expectedDate.getDate() + leadDays);
+                
+                const unitCost = parseFloat(taskData.unitCost || material?.unitCost || '0');
+                const quantity = parseFloat(taskData.quantity || '0');
+                const subtotal = unitCost * quantity;
+                const totalAmount = subtotal; // Could add tax/shipping later
+                
                 const po = await db.createPurchaseOrder({
                   poNumber,
                   vendorId: taskData.vendorId,
                   orderDate: new Date(),
-                  expectedDate: taskData.expectedDate ? new Date(taskData.expectedDate) : undefined,
-                  notes: taskData.notes,
-                  subtotal: taskData.subtotal || '0',
-                  totalAmount: taskData.totalAmount || '0',
+                  expectedDate,
+                  notes: taskData.notes || `AI-generated PO for ${material?.name || 'materials'}`,
+                  subtotal: subtotal.toFixed(2),
+                  totalAmount: totalAmount.toFixed(2),
+                  status: 'draft',
                 });
-                result = { purchaseOrderId: po.id, poNumber };
+                
+                // Create PO line item for the raw material
+                if (material) {
+                  await db.createPurchaseOrderItem({
+                    purchaseOrderId: po.id,
+                    description: material.name,
+                    quantity: quantity.toString(),
+                    unitPrice: unitCost.toFixed(2),
+                    totalAmount: subtotal.toFixed(2),
+                  });
+                  
+                  // Update raw material with on-order quantity
+                  await db.updateRawMaterial(material.id, {
+                    quantityOnOrder: ((parseFloat(material.quantityOnOrder?.toString() || '0')) + quantity).toString(),
+                    receivingStatus: 'ordered',
+                    expectedDeliveryDate: expectedDate,
+                    lastPoId: po.id,
+                  });
+                }
+                
+                result = { purchaseOrderId: po.id, poNumber, expectedDate: expectedDate.toISOString(), totalAmount: totalAmount.toFixed(2) };
                 break;
+              }
               
-              case 'send_email':
-                // Email sending would be implemented here
-                result = { emailSent: true };
+              case 'send_rfq': {
+                // Create RFQ and send emails to vendors
+                const material = taskData.rawMaterialId ? await db.getRawMaterialById(taskData.rawMaterialId) : null;
+                const vendorIds = taskData.vendorIds || [];
+                const emailsSent: string[] = [];
+                
+                for (const vendorId of vendorIds) {
+                  const vendor = await db.getVendorById(vendorId);
+                  if (vendor && vendor.email) {
+                    const emailResult = await sendEmail({
+                      to: vendor.email,
+                      subject: `Request for Quote: ${material?.name || 'Materials'}`,
+                      html: `
+                        <p>Dear ${vendor.contactName || vendor.name},</p>
+                        <p>We are requesting a quote for the following:</p>
+                        <ul>
+                          <li><strong>Material:</strong> ${material?.name || 'Various materials'}</li>
+                          <li><strong>SKU:</strong> ${material?.sku || 'N/A'}</li>
+                          <li><strong>Quantity:</strong> ${taskData.quantity} ${material?.unit || 'units'}</li>
+                          <li><strong>Required By:</strong> ${taskData.requiredDate || 'ASAP'}</li>
+                        </ul>
+                        <p>Please reply with your best price and lead time.</p>
+                        <p>Best regards,<br/>Procurement Team</p>
+                      `,
+                    });
+                    if (emailResult.success) {
+                      emailsSent.push(vendor.email);
+                    }
+                  }
+                }
+                
+                result = { rfqSent: true, vendorCount: vendorIds.length, emailsSent };
                 break;
+              }
+              
+              case 'send_email': {
+                // Send general email
+                const emailResult = await sendEmail({
+                  to: taskData.to,
+                  subject: taskData.subject,
+                  html: taskData.body || taskData.content,
+                });
+                result = { emailSent: emailResult.success, messageId: emailResult.messageId };
+                break;
+              }
+              
+              case 'vendor_followup': {
+                // Send follow-up email to vendor
+                const vendor = await db.getVendorById(taskData.vendorId);
+                if (vendor && vendor.email) {
+                  const emailResult = await sendEmail({
+                    to: vendor.email,
+                    subject: taskData.subject || `Follow-up: ${taskData.poNumber || 'Order Status'}`,
+                    html: taskData.body || `
+                      <p>Dear ${vendor.contactName || vendor.name},</p>
+                      <p>We are following up on ${taskData.poNumber ? `PO ${taskData.poNumber}` : 'our recent order'}.</p>
+                      <p>Could you please provide an update on the status and expected delivery date?</p>
+                      <p>Best regards,<br/>Procurement Team</p>
+                    `,
+                  });
+                  result = { emailSent: emailResult.success, vendorEmail: vendor.email };
+                } else {
+                  result = { emailSent: false, error: 'Vendor email not found' };
+                }
+                break;
+              }
+              
+              case 'reorder_materials': {
+                // Create work order from BOM (reorder_materials type handles work orders)
+                const bom = taskData.bomId ? await db.getBomById(taskData.bomId) : null;
+                if (!bom) throw new Error('BOM not found');
+                
+                const workOrder = await db.createWorkOrder({
+                  bomId: bom.id,
+                  productId: bom.productId,
+                  quantity: taskData.quantity?.toString() || '1',
+                  status: 'draft',
+                  priority: taskData.priority || 'medium',
+                  notes: taskData.notes || `AI-generated work order for ${bom.name}`,
+                });
+                
+                // Create work order materials from BOM components
+                const components = await db.getBomComponents(bom.id);
+                for (const comp of components) {
+                  const requiredQty = parseFloat(comp.quantity?.toString() || '0') * parseFloat(taskData.quantity || '1');
+                  await db.createWorkOrderMaterial({
+                    workOrderId: workOrder.id,
+                    rawMaterialId: comp.rawMaterialId || undefined,
+                    productId: comp.productId || undefined,
+                    name: comp.name,
+                    requiredQuantity: requiredQty.toString(),
+                    unit: comp.unit || 'EA',
+                    status: 'pending',
+                  });
+                }
+                
+                result = { workOrderId: workOrder.id, workOrderNumber: workOrder.workOrderNumber, materialsCount: components.length };
+                break;
+              }
+              
+              case 'update_inventory': {
+                // Update inventory levels
+                if (taskData.rawMaterialId) {
+                  await db.upsertRawMaterialInventory(taskData.rawMaterialId, taskData.warehouseId || 1, {
+                    quantity: taskData.quantity?.toString(),
+                  });
+                }
+                result = { updated: true };
+                break;
+              }
               
               default:
-                result = { executed: true };
+                result = { executed: true, taskType: task.taskType };
             }
             
             await db.updateAiAgentTask(input.id, {

@@ -112,10 +112,12 @@ function BomDetailPanel({ bom, onClose }: { bom: any; onClose: () => void }) {
   );
 }
 
-function WorkOrderDetailPanel({ workOrder, onClose, onStatusChange }: { 
+function WorkOrderDetailPanel({ workOrder, onClose, onStatusChange, onStartProduction, onCompleteProduction }: { 
   workOrder: any; 
   onClose: () => void;
   onStatusChange: (id: number, status: string) => void;
+  onStartProduction?: (id: number) => void;
+  onCompleteProduction?: (id: number, completedQuantity: string) => void;
 }) {
   const statusOption = workOrderStatuses.find(s => s.value === workOrder.status);
   
@@ -128,18 +130,18 @@ function WorkOrderDetailPanel({ workOrder, onClose, onStatusChange }: {
         </div>
         <div className="flex items-center gap-2">
           <Badge className={statusOption?.color}>{statusOption?.label}</Badge>
-          {workOrder.status === "pending" && (
-            <Button size="sm" onClick={() => onStatusChange(workOrder.id, "in_progress")}>
-              <Play className="h-4 w-4 mr-1" /> Start
+          {(workOrder.status === "pending" || workOrder.status === "draft" || workOrder.status === "scheduled") && (
+            <Button size="sm" onClick={() => onStartProduction?.(workOrder.id)}>
+              <Play className="h-4 w-4 mr-1" /> Start Production
             </Button>
           )}
           {workOrder.status === "in_progress" && (
             <>
-              <Button size="sm" variant="outline" onClick={() => onStatusChange(workOrder.id, "pending")}>
+              <Button size="sm" variant="outline" onClick={() => onStatusChange(workOrder.id, "scheduled")}>
                 <Pause className="h-4 w-4 mr-1" /> Pause
               </Button>
-              <Button size="sm" onClick={() => onStatusChange(workOrder.id, "completed")}>
-                <CheckCircle className="h-4 w-4 mr-1" /> Complete
+              <Button size="sm" onClick={() => onCompleteProduction?.(workOrder.id, workOrder.quantity)}>
+                <CheckCircle className="h-4 w-4 mr-1" /> Complete Production
               </Button>
             </>
           )}
@@ -240,6 +242,39 @@ export default function ManufacturingHub() {
     onError: (err: any) => toast.error(err.message),
   });
 
+  // AI Agent mutations for autonomous operations
+  const createAiTask = trpc.aiAgent.tasks.create.useMutation({
+    onSuccess: () => {
+      toast.success("AI task created - check Approval Queue for approval");
+    },
+    onError: (err: any) => toast.error(err.message),
+  });
+
+  const startProduction = trpc.workOrders.startProduction.useMutation({
+    onSuccess: () => {
+      toast.success("Production started - materials will be consumed");
+      refetchWorkOrders();
+    },
+    onError: (err: any) => toast.error(err.message),
+  });
+
+  const completeProduction = trpc.workOrders.completeProduction.useMutation({
+    onSuccess: () => {
+      toast.success("Production completed - finished goods added to inventory");
+      refetchWorkOrders();
+      refetchInventory();
+    },
+    onError: (err: any) => toast.error(err.message),
+  });
+
+  const startWorkOrder = trpc.workOrders.update.useMutation({
+    onSuccess: () => {
+      toast.success("Work order started");
+      refetchWorkOrders();
+    },
+    onError: (err: any) => toast.error(err.message),
+  });
+
   // Column definitions
   const inventoryColumns: Column<any>[] = [
     { key: "sku", header: "SKU", type: "text", sortable: true },
@@ -276,6 +311,62 @@ export default function ManufacturingHub() {
     { key: "capacity", header: "Capacity", type: "number" },
     { key: "isActive", header: "Status", type: "badge",
       render: (val) => val ? "Active" : "Inactive" },
+  ];
+
+  // Selection state for bulk actions
+  const [selectedWorkOrders, setSelectedWorkOrders] = useState<Set<number | string>>(new Set());
+  const [selectedBoms, setSelectedBoms] = useState<Set<number | string>>(new Set());
+
+  // Bulk action handlers
+  const handleWorkOrderBulkAction = (action: string, selectedIds: Set<number | string>) => {
+    const ids = Array.from(selectedIds);
+    if (action === "start_all") {
+      ids.forEach(id => startProduction.mutate({ id: Number(id) }));
+      setSelectedWorkOrders(new Set());
+    } else if (action === "complete_all") {
+      ids.forEach(id => {
+        const wo = workOrders?.find((w: any) => w.id === id);
+        if (wo) completeProduction.mutate({ id: Number(id), completedQuantity: wo.quantity });
+      });
+      setSelectedWorkOrders(new Set());
+    } else if (action === "cancel_all") {
+      ids.forEach(id => updateWorkOrderStatus.mutate({ id: Number(id), status: "cancelled" }));
+      setSelectedWorkOrders(new Set());
+    }
+  };
+
+  const handleBomBulkAction = (action: string, selectedIds: Set<number | string>) => {
+    const ids = Array.from(selectedIds);
+    if (action === "create_work_orders") {
+      ids.forEach(id => {
+        const bom = boms?.find((b: any) => b.id === id);
+        if (bom) {
+          createAiTask.mutate({
+            taskType: "reorder_materials",
+            priority: "medium",
+            taskData: JSON.stringify({
+              bomId: bom.id,
+              productId: bom.productId,
+              quantity: "1",
+              notes: `AI-generated work order for ${bom.name}`,
+            }),
+            aiReasoning: `Creating work order from BOM ${bom.name}`,
+          });
+        }
+      });
+      setSelectedBoms(new Set());
+    }
+  };
+
+  // Bulk action definitions
+  const workOrderBulkActions = [
+    { key: "start_all", label: "Start All", icon: <Play className="h-4 w-4" />, variant: "default" as const },
+    { key: "complete_all", label: "Complete All", icon: <CheckCircle className="h-4 w-4" />, variant: "default" as const },
+    { key: "cancel_all", label: "Cancel All", icon: <X className="h-4 w-4" />, variant: "destructive" as const },
+  ];
+
+  const bomBulkActions = [
+    { key: "create_work_orders", label: "AI: Create Work Orders", icon: <ClipboardList className="h-4 w-4" />, variant: "default" as const },
   ];
 
   // Stats
@@ -414,6 +505,10 @@ export default function ManufacturingHub() {
                   showSearch
                   expandedRowId={expandedBomId}
                   onExpandChange={setExpandedBomId}
+                  selectedRows={selectedBoms}
+                  onSelectionChange={setSelectedBoms}
+                  bulkActions={bomBulkActions}
+                  onBulkAction={handleBomBulkAction}
                   renderExpanded={(bom, onClose) => (
                     <BomDetailPanel bom={bom} onClose={onClose} />
                   )}
@@ -432,11 +527,17 @@ export default function ManufacturingHub() {
                   showSearch
                   expandedRowId={expandedWorkOrderId}
                   onExpandChange={setExpandedWorkOrderId}
+                  selectedRows={selectedWorkOrders}
+                  onSelectionChange={setSelectedWorkOrders}
+                  bulkActions={workOrderBulkActions}
+                  onBulkAction={handleWorkOrderBulkAction}
                   renderExpanded={(workOrder, onClose) => (
                     <WorkOrderDetailPanel 
                       workOrder={workOrder} 
                       onClose={onClose}
                       onStatusChange={(id, status) => updateWorkOrderStatus.mutate({ id, status } as any)}
+                      onStartProduction={(id) => startProduction.mutate({ id })}
+                      onCompleteProduction={(id, completedQuantity) => completeProduction.mutate({ id, completedQuantity })}
                     />
                   )}
                 />

@@ -582,3 +582,15 @@
 - [x] Create approval queue dashboard for human oversight (/ai/approvals)
 - [x] Add Approval Queue to sidebar navigation
 - [x] AI bulk action: Create Reorder PO from selected materials
+
+## Backend AI Operations Wiring (Jan 2026)
+- [x] AI Agent task creation procedure with approval workflow
+- [x] AI Agent task execution procedure (PO generation, RFQ sending, work orders)
+- [x] Manufacturing Hub AI operations (start/complete production, bulk actions)
+- [x] Procurement Hub AI operations (send POs, approve, cancel, reorder materials)
+- [x] Work order bulk actions (start all, complete all, cancel all)
+- [x] BOM bulk actions (AI: Create Work Orders)
+- [x] PO bulk actions (send, approve, cancel)
+- [x] Vendor bulk actions (activate, deactivate)
+- [x] Material bulk actions (AI: Create Reorder PO, mark received, mark inspected)
+- [x] All 258 unit tests passing
