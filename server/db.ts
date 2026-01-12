@@ -48,6 +48,8 @@ import {
   recurringInvoices, recurringInvoiceItems, recurringInvoiceHistory,
   // Supplier portal
   supplierPortalSessions, supplierDocuments, supplierFreightInfo,
+  // AI Agent system
+  aiAgentTasks, aiAgentRules, aiAgentLogs, emailTemplates,
   InsertCompany, InsertCustomer, InsertVendor, InsertProduct,
   InsertAccount, InsertInvoice, InsertPayment, InsertTransaction,
   InsertOrder, InsertInventory, InsertPurchaseOrder, InsertWarehouse,
@@ -73,7 +75,9 @@ import {
   InsertDataRoom, InsertDataRoomFolder, InsertDataRoomDocument, InsertDataRoomLink, InsertDataRoomVisitor, InsertDocumentView, InsertDataRoomInvitation,
   // NDA types
   InsertNdaDocument, InsertNdaSignature, InsertNdaSignatureAuditLog,
-  InsertImapCredential
+  InsertImapCredential,
+  // AI Agent types
+  InsertAiAgentTask, InsertAiAgentRule, InsertAiAgentLog, InsertEmailTemplate
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -5967,4 +5971,162 @@ export async function updateSupplierFreightInfo(id: number, data: Partial<{
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.update(supplierFreightInfo).set(data as any).where(eq(supplierFreightInfo.id, id));
+}
+
+
+// ============================================
+// AI AGENT SYSTEM
+// ============================================
+
+export async function createAiAgentTask(data: InsertAiAgentTask) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(aiAgentTasks).values(data as any);
+  return { id: result[0].insertId, ...data };
+}
+
+export async function getAiAgentTasks(filters?: { 
+  status?: string; 
+  taskType?: string; 
+  priority?: string;
+  requiresApproval?: boolean;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+  let query = db.select().from(aiAgentTasks);
+  const conditions = [];
+  if (filters?.status) conditions.push(eq(aiAgentTasks.status, filters.status as any));
+  if (filters?.taskType) conditions.push(eq(aiAgentTasks.taskType, filters.taskType as any));
+  if (filters?.priority) conditions.push(eq(aiAgentTasks.priority, filters.priority as any));
+  if (filters?.requiresApproval !== undefined) conditions.push(eq(aiAgentTasks.requiresApproval, filters.requiresApproval));
+  if (conditions.length > 0) query = query.where(and(...conditions)) as any;
+  return query.orderBy(desc(aiAgentTasks.createdAt));
+}
+
+export async function getAiAgentTaskById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(aiAgentTasks).where(eq(aiAgentTasks.id, id));
+  return result[0] || null;
+}
+
+export async function updateAiAgentTask(id: number, data: Partial<{
+  status: string;
+  approvedBy: number;
+  approvedAt: Date;
+  rejectedBy: number;
+  rejectedAt: Date;
+  rejectionReason: string;
+  executedAt: Date;
+  executionResult: string;
+  errorMessage: string;
+  retryCount: number;
+}>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(aiAgentTasks).set(data as any).where(eq(aiAgentTasks.id, id));
+}
+
+export async function getPendingApprovalTasks() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(aiAgentTasks)
+    .where(eq(aiAgentTasks.status, "pending_approval"))
+    .orderBy(desc(aiAgentTasks.priority), desc(aiAgentTasks.createdAt));
+}
+
+export async function createAiAgentRule(data: InsertAiAgentRule) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(aiAgentRules).values(data as any);
+  return { id: result[0].insertId, ...data };
+}
+
+export async function getAiAgentRules(filters?: { ruleType?: string; isActive?: boolean }) {
+  const db = await getDb();
+  if (!db) return [];
+  let query = db.select().from(aiAgentRules);
+  const conditions = [];
+  if (filters?.ruleType) conditions.push(eq(aiAgentRules.ruleType, filters.ruleType as any));
+  if (filters?.isActive !== undefined) conditions.push(eq(aiAgentRules.isActive, filters.isActive));
+  if (conditions.length > 0) query = query.where(and(...conditions)) as any;
+  return query.orderBy(desc(aiAgentRules.createdAt));
+}
+
+export async function updateAiAgentRule(id: number, data: Partial<{
+  name: string;
+  description: string;
+  triggerCondition: string;
+  actionConfig: string;
+  requiresApproval: boolean;
+  autoApproveThreshold: string;
+  notifyUsers: string;
+  isActive: boolean;
+  lastTriggeredAt: Date;
+  triggerCount: number;
+}>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(aiAgentRules).set(data as any).where(eq(aiAgentRules.id, id));
+}
+
+export async function createAiAgentLog(data: InsertAiAgentLog) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(aiAgentLogs).values(data as any);
+  return { id: result[0].insertId, ...data };
+}
+
+export async function getAiAgentLogs(filters?: { taskId?: number; ruleId?: number; status?: string }, limit = 100) {
+  const db = await getDb();
+  if (!db) return [];
+  let query = db.select().from(aiAgentLogs);
+  const conditions = [];
+  if (filters?.taskId) conditions.push(eq(aiAgentLogs.taskId, filters.taskId));
+  if (filters?.ruleId) conditions.push(eq(aiAgentLogs.ruleId, filters.ruleId));
+  if (filters?.status) conditions.push(eq(aiAgentLogs.status, filters.status as any));
+  if (conditions.length > 0) query = query.where(and(...conditions)) as any;
+  return query.orderBy(desc(aiAgentLogs.createdAt)).limit(limit);
+}
+
+export async function createEmailTemplate(data: InsertEmailTemplate) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(emailTemplates).values(data as any);
+  return { id: result[0].insertId, ...data };
+}
+
+export async function getEmailTemplates(filters?: { templateType?: string; isActive?: boolean }) {
+  const db = await getDb();
+  if (!db) return [];
+  let query = db.select().from(emailTemplates);
+  const conditions = [];
+  if (filters?.templateType) conditions.push(eq(emailTemplates.templateType, filters.templateType as any));
+  if (filters?.isActive !== undefined) conditions.push(eq(emailTemplates.isActive, filters.isActive));
+  if (conditions.length > 0) query = query.where(and(...conditions)) as any;
+  return query.orderBy(desc(emailTemplates.createdAt));
+}
+
+export async function getDefaultEmailTemplate(templateType: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(emailTemplates)
+    .where(and(
+      eq(emailTemplates.templateType, templateType as any),
+      eq(emailTemplates.isDefault, true),
+      eq(emailTemplates.isActive, true)
+    ));
+  return result[0] || null;
+}
+
+export async function updateEmailTemplate(id: number, data: Partial<{
+  name: string;
+  subject: string;
+  bodyTemplate: string;
+  isDefault: boolean;
+  isActive: boolean;
+}>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(emailTemplates).set(data as any).where(eq(emailTemplates.id, id));
 }

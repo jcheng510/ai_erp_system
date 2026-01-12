@@ -44,6 +44,9 @@ import {
   CheckCircle,
   AlertCircle,
   Truck,
+  XCircle,
+  Bot,
+  Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -320,6 +323,11 @@ export default function ProcurementHub() {
   const [expandedVendorId, setExpandedVendorId] = useState<number | string | null>(null);
   const [expandedMaterialId, setExpandedMaterialId] = useState<number | string | null>(null);
   
+  // Bulk selection state
+  const [selectedPos, setSelectedPos] = useState<Set<number | string>>(new Set());
+  const [selectedVendors, setSelectedVendors] = useState<Set<number | string>>(new Set());
+  const [selectedMaterials, setSelectedMaterials] = useState<Set<number | string>>(new Set());
+  
   const [poForm, setPoForm] = useState({
     vendorId: "",
     expectedDate: "",
@@ -397,10 +405,125 @@ export default function ProcurementHub() {
     onError: (err) => toast.error(err.message),
   });
 
-  // Receiving data
-  const receivingData = (purchaseOrders || []).filter((po: any) => 
-    po.status === "shipped" || po.status === "confirmed"
-  );
+  const updateMaterial = trpc.rawMaterials.update.useMutation({
+    onSuccess: () => {
+      toast.success("Material updated");
+      refetchMaterials();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const updateVendor = trpc.vendors.update.useMutation({
+    onSuccess: () => {
+      toast.success("Vendor updated");
+      refetchVendors();
+    },
+    onError: (err: any) => toast.error(err.message),
+  });
+
+  // AI Agent mutations
+  const generatePoSuggestion = trpc.aiAgent.generatePoSuggestion.useMutation({
+    onSuccess: (task) => {
+      toast.success("PO suggestion created! Check Approval Queue to review.");
+    },
+    onError: (err: any) => toast.error(err.message),
+  });
+
+  const generateRfqSuggestion = trpc.aiAgent.generateRfqSuggestion.useMutation({
+    onSuccess: (task) => {
+      toast.success("RFQ suggestion created! Check Approval Queue to review.");
+    },
+    onError: (err: any) => toast.error(err.message),
+  });
+
+  // Inline edit handlers
+  const handleMaterialCellEdit = (rowId: number | string, key: string, value: any) => {
+    updateMaterial.mutate({ id: rowId as number, [key]: value });
+  };
+
+  const handleVendorCellEdit = (rowId: number | string, key: string, value: any) => {
+    updateVendor.mutate({ id: rowId as number, [key]: value });
+  };
+
+  const handlePoCellEdit = (rowId: number | string, key: string, value: any) => {
+    updatePoStatus.mutate({ id: rowId as number, [key]: value } as any);
+  };
+
+  // Bulk action handlers
+  const handlePoBulkAction = (action: string, selectedIds: Set<number | string>) => {
+    const ids = Array.from(selectedIds) as number[];
+    if (action === "send") {
+      toast.info(`Sending ${ids.length} POs to suppliers...`);
+      // TODO: Implement bulk send
+    } else if (action === "approve") {
+      ids.forEach(id => updatePoStatus.mutate({ id, status: "confirmed" }));
+      setSelectedPos(new Set());
+    } else if (action === "cancel") {
+      ids.forEach(id => updatePoStatus.mutate({ id, status: "cancelled" }));
+      setSelectedPos(new Set());
+    } else if (action === "export") {
+      toast.info(`Exporting ${ids.length} POs...`);
+    }
+  };
+
+  const handleVendorBulkAction = (action: string, selectedIds: Set<number | string>) => {
+    const ids = Array.from(selectedIds) as number[];
+    if (action === "activate") {
+      ids.forEach(id => updateVendor.mutate({ id, status: "active" }));
+      setSelectedVendors(new Set());
+    } else if (action === "deactivate") {
+      ids.forEach(id => updateVendor.mutate({ id, status: "inactive" }));
+      setSelectedVendors(new Set());
+    } else if (action === "request_quotes") {
+      toast.info(`Requesting quotes from ${ids.length} vendors...`);
+    }
+  };
+
+  const handleMaterialBulkAction = (action: string, selectedIds: Set<number | string>) => {
+    const ids = Array.from(selectedIds) as number[];
+    if (action === "reorder") {
+      // Create AI-driven PO suggestions for each material
+      ids.forEach(id => {
+        const material = rawMaterials?.find((m: any) => m.id === id);
+        if (material && material.preferredVendorId) {
+          generatePoSuggestion.mutate({
+            rawMaterialId: id,
+            quantity: material.reorderPoint?.toString() || "100",
+            vendorId: material.preferredVendorId,
+            reason: `Low stock reorder for ${material.name}`,
+          });
+        } else {
+          toast.warning(`Material ${material?.name || id} has no preferred vendor`);
+        }
+      });
+      setSelectedMaterials(new Set());
+    } else if (action === "mark_received") {
+      ids.forEach(id => updateMaterial.mutate({ id, receivingStatus: "received" }));
+      setSelectedMaterials(new Set());
+    } else if (action === "mark_inspected") {
+      ids.forEach(id => updateMaterial.mutate({ id, receivingStatus: "inspected" }));
+      setSelectedMaterials(new Set());
+    }
+  };
+
+  // Bulk action definitions
+  const poBulkActions = [
+    { key: "send", label: "Send to Suppliers", icon: <Send className="h-3 w-3 mr-1" /> },
+    { key: "approve", label: "Approve", icon: <CheckCircle className="h-3 w-3 mr-1" /> },
+    { key: "cancel", label: "Cancel", variant: "destructive" as const, icon: <XCircle className="h-3 w-3 mr-1" /> },
+  ];
+
+  const vendorBulkActions = [
+    { key: "activate", label: "Activate" },
+    { key: "deactivate", label: "Deactivate" },
+    { key: "request_quotes", label: "Request Quotes" },
+  ];
+
+  const materialBulkActions = [
+    { key: "reorder", label: "AI: Create Reorder PO", icon: <Sparkles className="h-3 w-3 mr-1" /> },
+    { key: "mark_received", label: "Mark Received" },
+    { key: "mark_inspected", label: "Mark Inspected" },
+  ];
 
   // Column definitions
   const poColumns: Column<any>[] = [
@@ -413,37 +536,42 @@ export default function ProcurementHub() {
   ];
 
   const vendorColumns: Column<any>[] = [
-    { key: "name", header: "Name", type: "text", sortable: true },
-    { key: "email", header: "Email", type: "text", sortable: true },
-    { key: "contactPerson", header: "Contact", type: "text" },
-    { key: "phone", header: "Phone", type: "text" },
-    { key: "leadTimeDays", header: "Lead Time", type: "text", render: (row) => `${row.leadTimeDays || 14} days` },
-    { key: "status", header: "Status", type: "badge", options: [
+    { key: "name", header: "Name", type: "text", sortable: true, editable: true },
+    { key: "email", header: "Email", type: "text", sortable: true, editable: true },
+    { key: "contactName", header: "Contact", type: "text", editable: true },
+    { key: "phone", header: "Phone", type: "text", editable: true },
+    { key: "leadTimeDays", header: "Lead Time", type: "number", editable: true, render: (row) => `${row.leadTimeDays || 14} days` },
+    { key: "status", header: "Status", type: "status", editable: true, options: [
       { value: "active", label: "Active", color: "bg-green-100 text-green-800" },
       { value: "inactive", label: "Inactive", color: "bg-gray-100 text-gray-800" },
     ]},
   ];
 
+  const receivingStatusOptions = [
+    { value: "none", label: "None", color: "bg-gray-100 text-gray-800" },
+    { value: "ordered", label: "Ordered", color: "bg-blue-100 text-blue-800" },
+    { value: "in_transit", label: "In Transit", color: "bg-purple-100 text-purple-800" },
+    { value: "received", label: "Received", color: "bg-green-100 text-green-800" },
+    { value: "inspected", label: "Inspected", color: "bg-emerald-100 text-emerald-800" },
+  ];
+
   const materialColumns: Column<any>[] = [
-    { key: "name", header: "Material", type: "text", sortable: true },
-    { key: "sku", header: "SKU", type: "text", sortable: true, width: "100px" },
-    { key: "quantityOnHand", header: "On Hand", type: "number", sortable: true, width: "100px", render: (row) => (
+    { key: "name", header: "Material", type: "text", sortable: true, editable: true },
+    { key: "sku", header: "SKU", type: "text", sortable: true, width: "80px", editable: true },
+    { key: "quantityOnHand", header: "On Hand", type: "number", sortable: true, width: "80px", render: (row) => (
       <span className={row.quantityOnHand < (row.reorderPoint || 0) ? "text-red-600 font-medium" : ""}>
         {row.quantityOnHand || 0}
       </span>
     )},
-    { key: "reorderPoint", header: "Reorder At", type: "number", width: "100px" },
-    { key: "unitCost", header: "Unit Cost", type: "currency", sortable: true, width: "100px" },
-    { key: "unitOfMeasure", header: "Unit", type: "text", width: "80px" },
-    { key: "preferredVendor", header: "Vendor", type: "text", render: (row) => row.preferredVendor?.name || "-" },
-  ];
-
-  const receivingColumns: Column<any>[] = [
-    { key: "poNumber", header: "PO #", type: "text", sortable: true },
-    { key: "vendor", header: "Vendor", type: "text", render: (row) => row.vendor?.name || "-" },
-    { key: "status", header: "Status", type: "status", options: poStatusOptions },
-    { key: "expectedDate", header: "Expected", type: "date", sortable: true },
-    { key: "totalAmount", header: "Value", type: "currency" },
+    { key: "quantityOnOrder", header: "On Order", type: "number", sortable: true, width: "80px", render: (row) => (
+      <span className={parseFloat(row.quantityOnOrder || "0") > 0 ? "text-blue-600" : "text-muted-foreground"}>
+        {parseFloat(row.quantityOnOrder || "0")}
+      </span>
+    )},
+    { key: "receivingStatus", header: "Receiving", type: "status", options: receivingStatusOptions, filterable: true, width: "100px", editable: true },
+    { key: "expectedDeliveryDate", header: "Expected", type: "date", sortable: true, width: "100px" },
+    { key: "unitCost", header: "Cost", type: "currency", sortable: true, width: "80px", editable: true },
+    { key: "preferredVendor", header: "Vendor", type: "text", render: (row) => row.preferredVendor?.name || "-", width: "120px" },
   ];
 
   // Handlers
@@ -518,7 +646,7 @@ export default function ProcurementHub() {
     activeVendors: vendors?.filter((v: any) => v.status === "active").length || 0,
     totalMaterials: rawMaterials?.length || 0,
     lowStock: rawMaterials?.filter((m: any) => (m.quantityOnHand || 0) < (m.reorderPoint || 0)).length || 0,
-    pendingReceiving: receivingData.length,
+    inTransit: rawMaterials?.filter((m: any) => m.receivingStatus === "ordered" || m.receivingStatus === "in_transit").length || 0,
   };
 
   return (
@@ -562,9 +690,9 @@ export default function ProcurementHub() {
             <div className="text-2xl font-bold text-orange-600">{stats.lowStock}</div>
             <div className="text-xs text-muted-foreground">Low Stock</div>
           </Card>
-          <Card className="p-4 cursor-pointer hover:bg-muted/50" onClick={() => setActiveTab("receiving")}>
-            <div className="text-2xl font-bold text-purple-600">{stats.pendingReceiving}</div>
-            <div className="text-xs text-muted-foreground">To Receive</div>
+          <Card className="p-4 cursor-pointer hover:bg-muted/50" onClick={() => setActiveTab("materials")}>
+            <div className="text-2xl font-bold text-purple-600">{stats.inTransit}</div>
+            <div className="text-xs text-muted-foreground">In Transit</div>
           </Card>
         </div>
 
@@ -582,10 +710,6 @@ export default function ProcurementHub() {
             <TabsTrigger value="materials" className="gap-2">
               <Package className="h-4 w-4" />
               Raw Materials
-            </TabsTrigger>
-            <TabsTrigger value="receiving" className="gap-2">
-              <TruckIcon className="h-4 w-4" />
-              Receiving
             </TabsTrigger>
           </TabsList>
 
@@ -613,11 +737,11 @@ export default function ProcurementHub() {
                       onStatusChange={handleUpdatePoStatus}
                     />
                   )}
-                  onCellEdit={(rowId, key, value) => {
-                    if (key === "status") {
-                      handleUpdatePoStatus(rowId as number, value);
-                    }
-                  }}
+                  onCellEdit={handlePoCellEdit}
+                  selectedRows={selectedPos}
+                  onSelectionChange={setSelectedPos}
+                  bulkActions={poBulkActions}
+                  onBulkAction={handlePoBulkAction}
                   compact
                 />
               </CardContent>
@@ -642,6 +766,11 @@ export default function ProcurementHub() {
                   renderExpanded={(vendor, onClose) => (
                     <VendorDetailPanel vendor={vendor} onClose={onClose} />
                   )}
+                  onCellEdit={handleVendorCellEdit}
+                  selectedRows={selectedVendors}
+                  onSelectionChange={setSelectedVendors}
+                  bulkActions={vendorBulkActions}
+                  onBulkAction={handleVendorBulkAction}
                   compact
                 />
               </CardContent>
@@ -666,37 +795,18 @@ export default function ProcurementHub() {
                   renderExpanded={(material, onClose) => (
                     <MaterialDetailPanel material={material} onClose={onClose} />
                   )}
+                  onCellEdit={handleMaterialCellEdit}
+                  selectedRows={selectedMaterials}
+                  onSelectionChange={setSelectedMaterials}
+                  bulkActions={materialBulkActions}
+                  onBulkAction={handleMaterialBulkAction}
                   compact
                 />
               </CardContent>
             </Card>
           </TabsContent>
 
-          <TabsContent value="receiving" className="mt-4">
-            <Card>
-              <CardContent className="pt-6">
-                <SpreadsheetTable
-                  data={receivingData}
-                  columns={receivingColumns}
-                  isLoading={posLoading}
-                  emptyMessage="No items pending receiving"
-                  showSearch
-                  expandable
-                  expandedRowId={expandedPoId}
-                  onExpandChange={setExpandedPoId}
-                  renderExpanded={(po, onClose) => (
-                    <PoDetailPanel 
-                      po={po} 
-                      onClose={onClose}
-                      onSendToSupplier={openSendDialog}
-                      onStatusChange={handleUpdatePoStatus}
-                    />
-                  )}
-                  compact
-                />
-              </CardContent>
-            </Card>
-          </TabsContent>
+
         </Tabs>
 
         {/* Create PO Dialog */}

@@ -2577,6 +2577,315 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
   }),
 
   // ============================================
+  // AI AGENT SYSTEM
+  // ============================================
+  aiAgent: router({
+    // Tasks
+    tasks: router({
+      list: protectedProcedure
+        .input(z.object({
+          status: z.string().optional(),
+          taskType: z.string().optional(),
+          priority: z.string().optional(),
+        }).optional())
+        .query(({ input }) => db.getAiAgentTasks(input)),
+      
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getAiAgentTaskById(input.id)),
+      
+      pendingApprovals: protectedProcedure.query(() => db.getPendingApprovalTasks()),
+      
+      approve: adminProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.updateAiAgentTask(input.id, {
+            status: 'approved',
+            approvedBy: ctx.user.id,
+            approvedAt: new Date(),
+          });
+          await db.createAiAgentLog({
+            taskId: input.id,
+            action: 'task_approved',
+            status: 'success',
+            message: `Task approved by ${ctx.user.name}`,
+          });
+          return { success: true };
+        }),
+      
+      reject: adminProcedure
+        .input(z.object({ id: z.number(), reason: z.string().optional() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.updateAiAgentTask(input.id, {
+            status: 'rejected',
+            rejectedBy: ctx.user.id,
+            rejectedAt: new Date(),
+            rejectionReason: input.reason,
+          });
+          await db.createAiAgentLog({
+            taskId: input.id,
+            action: 'task_rejected',
+            status: 'warning',
+            message: `Task rejected by ${ctx.user.name}: ${input.reason || 'No reason provided'}`,
+          });
+          return { success: true };
+        }),
+      
+      execute: adminProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const task = await db.getAiAgentTaskById(input.id);
+          if (!task) throw new TRPCError({ code: 'NOT_FOUND', message: 'Task not found' });
+          if (task.status !== 'approved') {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'Task must be approved before execution' });
+          }
+          
+          await db.updateAiAgentTask(input.id, { status: 'in_progress' });
+          
+          try {
+            // Execute based on task type
+            const taskData = JSON.parse(task.taskData);
+            let result: any = {};
+            
+            switch (task.taskType) {
+              case 'generate_po':
+                const poNumber = generateNumber('PO');
+                const po = await db.createPurchaseOrder({
+                  poNumber,
+                  vendorId: taskData.vendorId,
+                  orderDate: new Date(),
+                  expectedDate: taskData.expectedDate ? new Date(taskData.expectedDate) : undefined,
+                  notes: taskData.notes,
+                  subtotal: taskData.subtotal || '0',
+                  totalAmount: taskData.totalAmount || '0',
+                });
+                result = { purchaseOrderId: po.id, poNumber };
+                break;
+              
+              case 'send_email':
+                // Email sending would be implemented here
+                result = { emailSent: true };
+                break;
+              
+              default:
+                result = { executed: true };
+            }
+            
+            await db.updateAiAgentTask(input.id, {
+              status: 'completed',
+              executedAt: new Date(),
+              executionResult: JSON.stringify(result),
+            });
+            
+            await db.createAiAgentLog({
+              taskId: input.id,
+              action: 'task_executed',
+              status: 'success',
+              message: `Task executed successfully`,
+              details: JSON.stringify(result),
+            });
+            
+            return { success: true, result };
+          } catch (error: any) {
+            await db.updateAiAgentTask(input.id, {
+              status: 'failed',
+              errorMessage: error.message,
+              retryCount: (task.retryCount || 0) + 1,
+            });
+            
+            await db.createAiAgentLog({
+              taskId: input.id,
+              action: 'task_failed',
+              status: 'error',
+              message: `Task execution failed: ${error.message}`,
+            });
+            
+            throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: error.message });
+          }
+        }),
+    }),
+    
+    // Rules
+    rules: router({
+      list: protectedProcedure
+        .input(z.object({ ruleType: z.string().optional(), isActive: z.boolean().optional() }).optional())
+        .query(({ input }) => db.getAiAgentRules(input)),
+      
+      create: adminProcedure
+        .input(z.object({
+          name: z.string(),
+          description: z.string().optional(),
+          ruleType: z.enum(['inventory_reorder', 'po_auto_generate', 'rfq_auto_send', 'vendor_followup', 'payment_reminder', 'shipment_tracking', 'price_alert', 'quality_check']),
+          triggerCondition: z.string(),
+          actionConfig: z.string(),
+          requiresApproval: z.boolean().default(true),
+          autoApproveThreshold: z.string().optional(),
+          notifyUsers: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          return db.createAiAgentRule({ ...input, createdBy: ctx.user.id });
+        }),
+      
+      update: adminProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          description: z.string().optional(),
+          triggerCondition: z.string().optional(),
+          actionConfig: z.string().optional(),
+          requiresApproval: z.boolean().optional(),
+          autoApproveThreshold: z.string().optional(),
+          notifyUsers: z.string().optional(),
+          isActive: z.boolean().optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const { id, ...data } = input;
+          await db.updateAiAgentRule(id, data);
+          return { success: true };
+        }),
+    }),
+    
+    // Logs
+    logs: router({
+      list: protectedProcedure
+        .input(z.object({
+          taskId: z.number().optional(),
+          ruleId: z.number().optional(),
+          status: z.string().optional(),
+          limit: z.number().default(100),
+        }).optional())
+        .query(({ input }) => db.getAiAgentLogs(input, input?.limit)),
+    }),
+    
+    // Email Templates
+    emailTemplates: router({
+      list: protectedProcedure
+        .input(z.object({ templateType: z.string().optional(), isActive: z.boolean().optional() }).optional())
+        .query(({ input }) => db.getEmailTemplates(input)),
+      
+      create: adminProcedure
+        .input(z.object({
+          name: z.string(),
+          templateType: z.enum(['po_to_vendor', 'rfq_request', 'quote_request', 'shipment_confirmation', 'payment_reminder', 'vendor_followup', 'quality_issue', 'general']),
+          subject: z.string(),
+          bodyTemplate: z.string(),
+          isDefault: z.boolean().default(false),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          return db.createEmailTemplate({ ...input, createdBy: ctx.user.id });
+        }),
+      
+      update: adminProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          subject: z.string().optional(),
+          bodyTemplate: z.string().optional(),
+          isDefault: z.boolean().optional(),
+          isActive: z.boolean().optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const { id, ...data } = input;
+          await db.updateEmailTemplate(id, data);
+          return { success: true };
+        }),
+    }),
+    
+    // AI-driven automation triggers
+    generatePoSuggestion: adminProcedure
+      .input(z.object({
+        rawMaterialId: z.number(),
+        quantity: z.string(),
+        vendorId: z.number().optional(),
+        reason: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        // Get material and vendor info
+        const material = await db.getRawMaterialById(input.rawMaterialId);
+        if (!material) throw new TRPCError({ code: 'NOT_FOUND', message: 'Material not found' });
+        
+        const vendorId = input.vendorId || material.preferredVendorId;
+        if (!vendorId) throw new TRPCError({ code: 'BAD_REQUEST', message: 'No vendor specified' });
+        
+        const vendor = await db.getVendorById(vendorId);
+        if (!vendor) throw new TRPCError({ code: 'NOT_FOUND', message: 'Vendor not found' });
+        
+        // Calculate expected date based on lead time
+        const leadDays = vendor.defaultLeadTimeDays || 14;
+        const expectedDate = new Date();
+        expectedDate.setDate(expectedDate.getDate() + leadDays);
+        
+        // Calculate total amount
+        const unitCost = parseFloat(material.unitCost?.toString() || '0');
+        const qty = parseFloat(input.quantity);
+        const totalAmount = (unitCost * qty).toFixed(2);
+        
+        // Create AI task for PO generation
+        const task = await db.createAiAgentTask({
+          taskType: 'generate_po',
+          priority: 'medium',
+          taskData: JSON.stringify({
+            vendorId,
+            vendorName: vendor.name,
+            rawMaterialId: input.rawMaterialId,
+            materialName: material.name,
+            quantity: input.quantity,
+            unitCost: material.unitCost,
+            totalAmount,
+            expectedDate: expectedDate.toISOString(),
+            notes: input.reason || `Auto-generated PO for ${material.name}`,
+          }),
+          aiReasoning: input.reason || `Material ${material.name} needs reorder. Current stock is low.`,
+          aiConfidence: '85.00',
+          relatedEntityType: 'rawMaterial',
+          relatedEntityId: input.rawMaterialId,
+          requiresApproval: true,
+        });
+        
+        await db.createAiAgentLog({
+          taskId: task.id,
+          action: 'po_suggestion_created',
+          status: 'info',
+          message: `PO suggestion created for ${material.name} from ${vendor.name}`,
+          details: JSON.stringify({ quantity: input.quantity, totalAmount }),
+        });
+        
+        return task;
+      }),
+    
+    generateRfqSuggestion: adminProcedure
+      .input(z.object({
+        rawMaterialId: z.number(),
+        quantity: z.string(),
+        vendorIds: z.array(z.number()),
+        dueDate: z.date().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const material = await db.getRawMaterialById(input.rawMaterialId);
+        if (!material) throw new TRPCError({ code: 'NOT_FOUND', message: 'Material not found' });
+        
+        const task = await db.createAiAgentTask({
+          taskType: 'send_rfq',
+          priority: 'medium',
+          taskData: JSON.stringify({
+            rawMaterialId: input.rawMaterialId,
+            materialName: material.name,
+            quantity: input.quantity,
+            vendorIds: input.vendorIds,
+            dueDate: input.dueDate?.toISOString(),
+          }),
+          aiReasoning: `RFQ needed for ${material.name} to compare vendor pricing`,
+          aiConfidence: '90.00',
+          relatedEntityType: 'rawMaterial',
+          relatedEntityId: input.rawMaterialId,
+          requiresApproval: true,
+        });
+        
+        return task;
+      }),
+  }),
+
+  // ============================================
   // FREIGHT MANAGEMENT
   // ============================================
   freight: router({
@@ -3925,6 +4234,13 @@ Provide a brief status summary, any missing documents, and next steps.`;
         leadTimeDays: z.number().optional(),
         preferredVendorId: z.number().optional(),
         status: z.enum(['active', 'inactive', 'discontinued']).optional(),
+        receivingStatus: z.enum(['none', 'ordered', 'in_transit', 'received', 'inspected']).optional(),
+        quantityOnOrder: z.string().optional(),
+        quantityInTransit: z.string().optional(),
+        quantityReceived: z.string().optional(),
+        expectedDeliveryDate: z.date().optional(),
+        lastReceivedDate: z.date().optional(),
+        lastReceivedQty: z.string().optional(),
         notes: z.string().optional(),
       }))
       .mutation(async ({ input }) => {

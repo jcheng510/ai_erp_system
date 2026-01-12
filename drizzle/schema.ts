@@ -1358,6 +1358,15 @@ export const rawMaterials = mysqlTable("rawMaterials", {
   leadTimeDays: int("leadTimeDays").default(0),
   preferredVendorId: int("preferredVendorId"),
   status: mysqlEnum("status", ["active", "inactive", "discontinued"]).default("active").notNull(),
+  // Receiving tracking fields
+  receivingStatus: mysqlEnum("receivingStatus", ["none", "ordered", "in_transit", "received", "inspected"]).default("none"),
+  lastPoId: int("lastPoId"), // Reference to most recent PO
+  quantityOnOrder: decimal("quantityOnOrder", { precision: 15, scale: 4 }).default("0"),
+  quantityInTransit: decimal("quantityInTransit", { precision: 15, scale: 4 }).default("0"),
+  quantityReceived: decimal("quantityReceived", { precision: 15, scale: 4 }).default("0"),
+  expectedDeliveryDate: timestamp("expectedDeliveryDate"),
+  lastReceivedDate: timestamp("lastReceivedDate"),
+  lastReceivedQty: decimal("lastReceivedQty", { precision: 15, scale: 4 }),
   notes: text("notes"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
@@ -2752,3 +2761,149 @@ export const supplierFreightInfo = mysqlTable("supplierFreightInfo", {
 
 export type SupplierFreightInfo = typeof supplierFreightInfo.$inferSelect;
 export type InsertSupplierFreightInfo = typeof supplierFreightInfo.$inferInsert;
+
+
+// ============================================
+// AI AGENT SYSTEM
+// ============================================
+
+// AI Agent tasks - pending actions that need approval or are in progress
+export const aiAgentTasks = mysqlTable("aiAgentTasks", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  // Task type and status
+  taskType: mysqlEnum("taskType", [
+    "generate_po", 
+    "send_rfq", 
+    "send_quote_request",
+    "send_email",
+    "update_inventory",
+    "create_shipment",
+    "generate_invoice",
+    "reconcile_payment",
+    "reorder_materials",
+    "vendor_followup"
+  ]).notNull(),
+  status: mysqlEnum("status", [
+    "pending_approval",
+    "approved",
+    "rejected", 
+    "in_progress",
+    "completed",
+    "failed",
+    "cancelled"
+  ]).default("pending_approval").notNull(),
+  priority: mysqlEnum("priority", ["low", "medium", "high", "urgent"]).default("medium").notNull(),
+  // Task details (JSON)
+  taskData: text("taskData").notNull(), // JSON with all task parameters
+  // AI reasoning
+  aiReasoning: text("aiReasoning"), // Why the AI decided to create this task
+  aiConfidence: decimal("aiConfidence", { precision: 5, scale: 2 }), // 0-100 confidence score
+  // Related entities
+  relatedEntityType: varchar("relatedEntityType", { length: 50 }), // e.g., "purchaseOrder", "vendor", "rawMaterial"
+  relatedEntityId: int("relatedEntityId"),
+  // Approval workflow
+  requiresApproval: boolean("requiresApproval").default(true).notNull(),
+  approvalThreshold: decimal("approvalThreshold", { precision: 12, scale: 2 }), // Auto-approve below this amount
+  approvedBy: int("approvedBy"),
+  approvedAt: timestamp("approvedAt"),
+  rejectedBy: int("rejectedBy"),
+  rejectedAt: timestamp("rejectedAt"),
+  rejectionReason: text("rejectionReason"),
+  // Execution
+  executedAt: timestamp("executedAt"),
+  executionResult: text("executionResult"), // JSON with result details
+  errorMessage: text("errorMessage"),
+  retryCount: int("retryCount").default(0),
+  maxRetries: int("maxRetries").default(3),
+  // Scheduling
+  scheduledFor: timestamp("scheduledFor"),
+  expiresAt: timestamp("expiresAt"),
+  // Audit
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type AiAgentTask = typeof aiAgentTasks.$inferSelect;
+export type InsertAiAgentTask = typeof aiAgentTasks.$inferInsert;
+
+// AI Agent rules - configurable automation rules
+export const aiAgentRules = mysqlTable("aiAgentRules", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  // Rule type and trigger
+  ruleType: mysqlEnum("ruleType", [
+    "inventory_reorder",
+    "po_auto_generate",
+    "rfq_auto_send",
+    "vendor_followup",
+    "payment_reminder",
+    "shipment_tracking",
+    "price_alert",
+    "quality_check"
+  ]).notNull(),
+  triggerCondition: text("triggerCondition").notNull(), // JSON condition definition
+  // Action configuration
+  actionConfig: text("actionConfig").notNull(), // JSON action parameters
+  // Approval settings
+  requiresApproval: boolean("requiresApproval").default(true).notNull(),
+  autoApproveThreshold: decimal("autoApproveThreshold", { precision: 12, scale: 2 }),
+  notifyUsers: text("notifyUsers"), // JSON array of user IDs to notify
+  // Rule status
+  isActive: boolean("isActive").default(true).notNull(),
+  lastTriggeredAt: timestamp("lastTriggeredAt"),
+  triggerCount: int("triggerCount").default(0),
+  // Audit
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type AiAgentRule = typeof aiAgentRules.$inferSelect;
+export type InsertAiAgentRule = typeof aiAgentRules.$inferInsert;
+
+// AI Agent logs - detailed execution history
+export const aiAgentLogs = mysqlTable("aiAgentLogs", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  taskId: int("taskId"),
+  ruleId: int("ruleId"),
+  // Log details
+  action: varchar("action", { length: 100 }).notNull(),
+  status: mysqlEnum("status", ["info", "success", "warning", "error"]).default("info").notNull(),
+  message: text("message").notNull(),
+  details: text("details"), // JSON with additional context
+  // Performance
+  durationMs: int("durationMs"),
+  tokensUsed: int("tokensUsed"),
+  // Audit
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type AiAgentLog = typeof aiAgentLogs.$inferSelect;
+export type InsertAiAgentLog = typeof aiAgentLogs.$inferInsert;
+
+// Email templates for AI-generated communications
+export const emailTemplates = mysqlTable("emailTemplates", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 255 }).notNull(),
+  templateType: mysqlEnum("templateType", [
+    "po_to_vendor",
+    "rfq_request",
+    "quote_request",
+    "shipment_confirmation",
+    "payment_reminder",
+    "vendor_followup",
+    "quality_issue",
+    "general"
+  ]).notNull(),
+  subject: varchar("subject", { length: 500 }).notNull(),
+  bodyTemplate: text("bodyTemplate").notNull(), // Template with {{placeholders}}
+  isDefault: boolean("isDefault").default(false),
+  isActive: boolean("isActive").default(true).notNull(),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type EmailTemplate = typeof emailTemplates.$inferSelect;
+export type InsertEmailTemplate = typeof emailTemplates.$inferInsert;

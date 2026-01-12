@@ -508,3 +508,77 @@
 - [x] Add bulk actions toolbar to SpreadsheetTable component
 - [x] Fix TypeScript errors in ManufacturingHub, ProcurementHub, SalesHub
 - [x] Replace searchTerm prop with showSearch in SpreadsheetTable usage
+
+## AI-Autonomous ERP Transformation (Jan 12, 2026)
+
+### Procurement Hub Restructure
+- [ ] Remove Receiving tab from Procurement Hub
+- [ ] Add receiving status to Raw Materials (ordered, in_transit, received, inspected)
+- [ ] Add expected delivery date and actual delivery date to raw materials
+- [ ] Add quantity ordered vs quantity received tracking
+- [ ] Update raw materials list to show receiving status inline
+
+### Inline Editing
+- [ ] Enable inline editing on Sales Hub spreadsheets (products, orders, invoices, customers)
+- [ ] Enable inline editing on Procurement Hub spreadsheets (POs, vendors, materials)
+- [ ] Enable inline editing on Manufacturing Hub spreadsheets (inventory, BOMs, work orders)
+- [ ] Enable inline editing on Logistics Hub spreadsheets (shipments, RFQs)
+- [ ] Wire up onCellEdit callbacks to mutation handlers
+
+### Bulk Actions
+- [ ] Add bulk delete action with confirmation dialog
+- [ ] Add bulk status change action
+- [ ] Add bulk export to CSV action
+- [ ] Add bulk email action for selected vendors/customers
+- [ ] Add bulk approve/reject for pending items
+
+### AI Agent Orchestration System
+- [ ] Create AI Agent table to track autonomous tasks
+- [ ] Create AI Task Queue for pending AI operations
+- [ ] Create AI Action Log for audit trail
+- [ ] Build AI Agent scheduler for periodic checks
+- [ ] Implement AI decision engine using LLM
+
+### AI-Driven PO Auto-Generation
+- [ ] AI monitors inventory levels and demand forecasts
+- [ ] AI identifies materials needing reorder
+- [ ] AI selects optimal vendor based on price/lead time/history
+- [ ] AI generates draft PO with smart quantities
+- [ ] AI queues PO for human approval
+- [ ] Auto-send PO to vendor after approval
+
+### AI-Driven RFQ Automation
+- [ ] AI monitors upcoming shipment needs
+- [ ] AI generates RFQ requests for freight quotes
+- [ ] AI sends personalized emails to freight forwarders
+- [ ] AI parses incoming quote responses
+- [ ] AI compares and scores quotes
+- [ ] AI recommends best quote for approval
+
+### AI-Driven Email Automation
+- [ ] AI drafts vendor follow-up emails for late deliveries
+- [ ] AI drafts customer order confirmations
+- [ ] AI drafts payment reminders
+- [ ] AI drafts shipment status updates
+- [ ] All emails queued for review before sending
+
+### Approval Queue Dashboard
+- [ ] Central approval queue showing all pending AI actions
+- [ ] One-click approve/reject with comments
+- [ ] Batch approval for low-risk items
+- [ ] Escalation rules for high-value items
+- [ ] Approval history and audit trail
+
+
+## AI-Autonomous ERP Transformation
+- [x] Remove Receiving tab from Procurement Hub (receiving is now a status on raw materials)
+- [x] Add receiving status columns to Raw Materials table (onOrder, receivingStatus, expectedDeliveryDate)
+- [x] Enable inline editing on spreadsheet cells across all hubs
+- [x] Implement bulk action handlers (materials, vendors, POs)
+- [x] Create AI Agent orchestration system (aiAgentTasks, aiAgentRules, aiAgentLogs tables)
+- [x] Build AI-driven PO auto-generation with approval workflow (generatePoSuggestion mutation)
+- [x] Build AI-driven RFQ suggestion system (generateRfqSuggestion mutation)
+- [ ] Build AI-driven email automation for vendor communications (needs SendGrid)
+- [x] Create approval queue dashboard for human oversight (/ai/approvals)
+- [x] Add Approval Queue to sidebar navigation
+- [x] AI bulk action: Create Reorder PO from selected materials

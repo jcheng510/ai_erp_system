@@ -88,6 +88,9 @@ import DataRooms from "./pages/DataRooms";
 import DataRoomDetail from "./pages/DataRoomDetail";
 import DataRoomPublic from "./pages/DataRoomPublic";
 
+// AI Agent
+import ApprovalQueue from "./pages/ai/ApprovalQueue";
+
 function Router() {
   return (
     <DashboardLayout>
@@ -95,6 +98,7 @@ function Router() {
         {/* Overview */}
         <Route path="/" component={Home} />
         <Route path="/ai" component={AIAssistant} />
+        <Route path="/ai/approvals" component={ApprovalQueue} />
         <Route path="/search" component={GlobalSearch} />
         <Route path="/notifications" component={Notifications} />
         <Route path="/settings" component={Settings} />
