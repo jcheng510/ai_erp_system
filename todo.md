@@ -619,3 +619,9 @@
 - [x] Fix backend generate_po to accept rawMaterialName (not just rawMaterialId)
 - [x] Handle missing vendor gracefully (return needs_vendor status and prompt user)
 - [x] Change aiAgent.tasks.create to protectedProcedure for non-admin users
+
+## Natural Language Parsing for AICommandBar
+- [x] Parse quantities with units (50kg, 100 lbs, 25 cases, 1000 units)
+- [x] Parse relative dates (next Friday, in 2 weeks, tomorrow, next month)
+- [x] Parse absolute dates (March 15th, 2026-03-15, 3/15/26)
+- [x] Integrate parsers into intent detection for PO generation
