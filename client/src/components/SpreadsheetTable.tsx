@@ -1,4 +1,5 @@
 import { useState, useMemo, useCallback, ReactNode } from "react";
+import React from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -504,7 +505,7 @@ export function SpreadsheetTable<T extends { id: number | string }>({
               </tr>
             ) : (
               filteredData.map((row) => (
-                <>
+                <React.Fragment key={row.id}>
                   <tr
                     key={row.id}
                     className={cn(
@@ -568,7 +569,7 @@ export function SpreadsheetTable<T extends { id: number | string }>({
                       </td>
                     </tr>
                   )}
-                </>
+                </React.Fragment>
               ))
             )}
           </tbody>
