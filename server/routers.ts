@@ -583,6 +583,55 @@ export const appRouter = router({
         await createAuditLog(ctx.user.id, 'approve', 'invoice', input.id);
         return { success: true };
       }),
+    sendEmail: financeProcedure
+      .input(z.object({
+        invoiceId: z.number(),
+        message: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const invoice = await db.getInvoiceWithItems(input.invoiceId);
+        if (!invoice) throw new TRPCError({ code: 'NOT_FOUND', message: 'Invoice not found' });
+        
+        const customer = invoice.customer;
+        if (!customer?.email) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'Customer has no email address' });
+        }
+        
+        // Format line items for email
+        const itemsHtml = invoice.items?.map((item: any) => 
+          `<tr><td>${item.description}</td><td>${item.quantity}</td><td>$${Number(item.unitPrice).toFixed(2)}</td><td>$${Number(item.totalAmount).toFixed(2)}</td></tr>`
+        ).join('') || '';
+        
+        const emailContent = `
+          <h2>Invoice ${invoice.invoiceNumber}</h2>
+          <p>Dear ${customer.name},</p>
+          ${input.message ? `<p>${input.message}</p>` : ''}
+          <p>Please find your invoice details below:</p>
+          <table border="1" cellpadding="8" style="border-collapse: collapse;">
+            <tr><th>Description</th><th>Qty</th><th>Unit Price</th><th>Total</th></tr>
+            ${itemsHtml}
+          </table>
+          <p><strong>Subtotal:</strong> $${Number(invoice.subtotal).toFixed(2)}</p>
+          <p><strong>Tax:</strong> $${Number(invoice.taxAmount || 0).toFixed(2)}</p>
+          <p><strong>Total Due:</strong> $${Number(invoice.totalAmount).toFixed(2)}</p>
+          <p><strong>Due Date:</strong> ${invoice.dueDate ? new Date(invoice.dueDate).toLocaleDateString() : 'N/A'}</p>
+          ${invoice.notes ? `<p><strong>Notes:</strong> ${invoice.notes}</p>` : ''}
+          <p>Thank you for your business!</p>
+        `;
+        
+        const { sendEmail } = await import('./_core/email');
+        await sendEmail({
+          to: customer.email,
+          subject: `Invoice ${invoice.invoiceNumber} from SuperHumn`,
+          html: emailContent,
+        });
+        
+        // Update invoice status to sent
+        await db.updateInvoice(input.invoiceId, { status: 'sent' });
+        await createAuditLog(ctx.user.id, 'email', 'invoice', input.invoiceId, invoice.invoiceNumber);
+        
+        return { success: true };
+      }),
   }),
 
   // ============================================

@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { 
   ShoppingCart, FileText, Users, CreditCard, Search, ArrowRight,
-  Clock, CheckCircle, AlertTriangle, DollarSign
+  Clock, CheckCircle, AlertTriangle, DollarSign, Package
 } from "lucide-react";
 import { Link } from "wouter";
 
@@ -23,7 +23,7 @@ export default function SalesHub() {
           <div>
             <h1 className="text-3xl font-bold">Sales Hub</h1>
             <p className="text-muted-foreground">
-              Orders, Invoices, Customers, and Payments in one view
+              Products, Orders, Invoices, Customers, and Payments in one view
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -40,15 +40,17 @@ export default function SalesHub() {
         </div>
 
         {/* Stats Row */}
-        <div className="grid grid-cols-4 gap-4">
+        <div className="grid grid-cols-5 gap-3">
+          <StatsCard title="Products" type="products" />
           <StatsCard title="Open Orders" type="orders" />
           <StatsCard title="Pending Invoices" type="invoices" />
           <StatsCard title="Total Customers" type="customers" />
           <StatsCard title="Revenue MTD" type="revenue" />
         </div>
 
-        {/* Four Column Layout */}
-        <div className="grid grid-cols-4 gap-4">
+        {/* Five Column Layout */}
+        <div className="grid grid-cols-5 gap-3">
+          <ProductsColumn searchTerm={searchTerm} />
           <OrdersColumn searchTerm={searchTerm} />
           <InvoicesColumn searchTerm={searchTerm} />
           <CustomersColumn searchTerm={searchTerm} />
@@ -60,6 +62,7 @@ export default function SalesHub() {
 }
 
 function StatsCard({ title, type }: { title: string; type: string }) {
+  const { data: products } = trpc.products.list.useQuery();
   const { data: orders } = trpc.orders.list.useQuery();
   const { data: invoices } = trpc.invoices.list.useQuery();
   const { data: customers } = trpc.customers.list.useQuery();
@@ -68,7 +71,10 @@ function StatsCard({ title, type }: { title: string; type: string }) {
   let value: string | number = 0;
   let icon = ShoppingCart;
   
-  if (type === "orders") {
+  if (type === "products") {
+    value = products?.length || 0;
+    icon = Package;
+  } else if (type === "orders") {
     value = orders?.filter((o: any) => o.status !== "completed" && o.status !== "cancelled").length || 0;
     icon = ShoppingCart;
   } else if (type === "invoices") {
@@ -100,6 +106,61 @@ function StatsCard({ title, type }: { title: string; type: string }) {
           </div>
           <Icon className="h-6 w-6 text-muted-foreground/50" />
         </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function ProductsColumn({ searchTerm }: { searchTerm: string }) {
+  const { data: products, isLoading } = trpc.products.list.useQuery();
+  
+  const filtered = products?.filter((product: any) => 
+    product.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    product.sku?.toLowerCase().includes(searchTerm.toLowerCase())
+  ) || [];
+
+  return (
+    <Card className="h-[600px] flex flex-col">
+      <CardHeader className="pb-2">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Package className="h-4 w-4" />
+            <CardTitle className="text-sm">Products</CardTitle>
+          </div>
+          <Link href="/operations/products">
+            <Button variant="ghost" size="sm" className="h-7 text-xs">
+              View All <ArrowRight className="h-3 w-3 ml-1" />
+            </Button>
+          </Link>
+        </div>
+      </CardHeader>
+      <CardContent className="flex-1 overflow-hidden p-0">
+        <ScrollArea className="h-full px-4 pb-4">
+          {isLoading ? (
+            <div className="text-center py-4 text-muted-foreground text-sm">Loading...</div>
+          ) : filtered.length === 0 ? (
+            <div className="text-center py-4 text-muted-foreground text-sm">No products</div>
+          ) : (
+            <div className="space-y-2">
+              {filtered.slice(0, 20).map((product: any) => (
+                <div key={product.id} className="p-2 rounded border border-border text-xs">
+                  <div className="flex justify-between items-start">
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium truncate">{product.name}</p>
+                      <p className="text-muted-foreground truncate">{product.sku || "-"}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="font-bold">${Number(product.price || 0).toFixed(2)}</p>
+                      <Badge variant={product.status === "active" ? "secondary" : "outline"} className="text-xs">
+                        {product.status || "active"}
+                      </Badge>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </ScrollArea>
       </CardContent>
     </Card>
   );

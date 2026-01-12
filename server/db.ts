@@ -375,17 +375,41 @@ export async function getInvoices(filters?: { companyId?: number; status?: strin
   const db = await getDb();
   if (!db) return [];
   
-  let query = db.select().from(invoices);
   const conditions = [];
   
   if (filters?.companyId) conditions.push(eq(invoices.companyId, filters.companyId));
   if (filters?.status) conditions.push(eq(invoices.status, filters.status as any));
   if (filters?.customerId) conditions.push(eq(invoices.customerId, filters.customerId));
   
+  const baseQuery = db.select({
+    id: invoices.id,
+    companyId: invoices.companyId,
+    invoiceNumber: invoices.invoiceNumber,
+    customerId: invoices.customerId,
+    type: invoices.type,
+    status: invoices.status,
+    issueDate: invoices.issueDate,
+    dueDate: invoices.dueDate,
+    subtotal: invoices.subtotal,
+    taxAmount: invoices.taxAmount,
+    discountAmount: invoices.discountAmount,
+    totalAmount: invoices.totalAmount,
+    paidAmount: invoices.paidAmount,
+    currency: invoices.currency,
+    notes: invoices.notes,
+    terms: invoices.terms,
+    createdAt: invoices.createdAt,
+    customer: {
+      id: customers.id,
+      name: customers.name,
+      email: customers.email,
+    },
+  }).from(invoices).leftJoin(customers, eq(invoices.customerId, customers.id));
+  
   if (conditions.length > 0) {
-    return db.select().from(invoices).where(and(...conditions)).orderBy(desc(invoices.createdAt));
+    return baseQuery.where(and(...conditions)).orderBy(desc(invoices.createdAt));
   }
-  return db.select().from(invoices).orderBy(desc(invoices.createdAt));
+  return baseQuery.orderBy(desc(invoices.createdAt));
 }
 
 export async function getInvoiceById(id: number) {

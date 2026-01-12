@@ -463,3 +463,11 @@
 - [x] Create Sales Hub with Orders, Invoices, Customers, Payments as 4 columns
 - [x] Update navigation to use Sales Hub
 - [x] Remove separate Sales and Finance menu sections where redundant
+
+
+## Products & Invoice Enhancement
+- [x] Move Products (finished goods) to Sales Hub as 5th column
+- [x] Add product selection when creating invoices
+- [x] Calculate invoice totals from selected products
+- [x] Add email invoice to customer functionality
+- [x] Remove Products from Operations menu
