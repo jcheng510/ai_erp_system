@@ -449,3 +449,11 @@
 - [x] Combine Work Orders with Core Operations
 - [x] Simplify Operations menu to fewer top-level items
 - [x] Update navigation with consolidated structure
+
+
+## Hub-Based Page Redesign
+- [x] Manufacturing Hub - Multi-column view with Inventory, BOM, Work Orders, Locations as panels
+- [x] Procurement Hub - Multi-column view with POs, Vendors, Raw Materials, Receiving as panels
+- [x] Logistics Hub - Multi-column view with Shipments, Transfers, Tracking as panels
+- [x] Update navigation to use hub structure
+- [x] Remove redundant separate pages

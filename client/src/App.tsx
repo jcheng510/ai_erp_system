@@ -43,6 +43,9 @@ import CoreOperations from "./pages/operations/CoreOperations";
 import EmailInbox from "./pages/operations/EmailInbox";
 import Logistics from "./pages/operations/Logistics";
 import Procurement from "./pages/operations/Procurement";
+import ManufacturingHub from "./pages/operations/ManufacturingHub";
+import ProcurementHub from "./pages/operations/ProcurementHub";
+import LogisticsHub from "./pages/operations/LogisticsHub";
 
 // Freight
 import FreightDashboard from "./pages/freight/FreightDashboard";
@@ -126,6 +129,9 @@ function Router() {
         <Route path="/operations/email-inbox" component={EmailInbox} />
         <Route path="/operations/logistics" component={Logistics} />
         <Route path="/operations/procurement" component={Procurement} />
+        <Route path="/operations/manufacturing-hub" component={ManufacturingHub} />
+        <Route path="/operations/procurement-hub" component={ProcurementHub} />
+        <Route path="/operations/logistics-hub" component={LogisticsHub} />
 
         {/* Freight */}
         <Route path="/freight" component={FreightDashboard} />
