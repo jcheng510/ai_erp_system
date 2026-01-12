@@ -76,6 +76,11 @@ import Team from "./pages/settings/Team";
 import CopackerPortal from "./pages/portal/CopackerPortal";
 import VendorPortal from "./pages/portal/VendorPortal";
 
+// Data Room
+import DataRooms from "./pages/DataRooms";
+import DataRoomDetail from "./pages/DataRoomDetail";
+import DataRoomPublic from "./pages/DataRoomPublic";
+
 function Router() {
   return (
     <DashboardLayout>
@@ -148,6 +153,10 @@ function Router() {
         <Route path="/portal/copacker" component={CopackerPortal} />
         <Route path="/portal/vendor" component={VendorPortal} />
 
+        {/* Data Room */}
+        <Route path="/datarooms" component={DataRooms} />
+        <Route path="/dataroom/:id" component={DataRoomDetail} />
+
         {/* Fallback */}
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
@@ -162,7 +171,12 @@ function App() {
       <ThemeProvider defaultTheme="light">
         <TooltipProvider>
           <Toaster />
-          <Router />
+          <Switch>
+            {/* Public Data Room Access (outside dashboard) */}
+            <Route path="/share/:code" component={DataRoomPublic} />
+            {/* All other routes go through dashboard */}
+            <Route component={Router} />
+          </Switch>
         </TooltipProvider>
       </ThemeProvider>
     </ErrorBoundary>

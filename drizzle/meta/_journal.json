@@ -113,6 +113,20 @@
       "when": 1768183991544,
       "tag": "0015_lethal_shockwave",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "5",
+      "when": 1768190658562,
+      "tag": "0016_salty_deathstrike",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "5",
+      "when": 1768191754769,
+      "tag": "0017_dazzling_owl",
+      "breakpoints": true
     }
   ]
 }

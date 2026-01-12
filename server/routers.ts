@@ -5204,6 +5204,83 @@ Provide your forecast in JSON format with the following structure:
         }
       }),
 
+    // Process attachments with OCR
+    processAttachments: protectedProcedure
+      .input(z.object({ emailId: z.number() }))
+      .mutation(async ({ input }) => {
+        const email = await db.getInboundEmailById(input.emailId);
+        if (!email) throw new TRPCError({ code: "NOT_FOUND" });
+
+        const attachments = await db.getEmailAttachments(input.emailId);
+        if (attachments.length === 0) {
+          return { success: true, processed: 0, results: [] };
+        }
+
+        const { processEmailAttachments, categorizeByAttachments } = await import("./_core/attachmentOcr");
+        
+        const results = await processEmailAttachments(
+          attachments.map(a => ({
+            id: a.id,
+            filename: a.filename,
+            mimeType: a.mimeType,
+            storageUrl: a.storageUrl,
+          }))
+        );
+
+        // Update attachments with OCR results
+        const processedResults: any[] = [];
+        for (const [attachmentId, result] of Array.from(results.entries())) {
+          await db.updateEmailAttachment(attachmentId, {
+            ocrText: result.extractedText,
+            ocrData: JSON.stringify(result.structuredData),
+            ocrConfidence: result.confidence.toString(),
+          });
+
+          // Create parsed document from attachment if high confidence
+          if (result.confidence >= 0.7 && result.type !== 'unknown') {
+            const data = result.structuredData;
+            await db.createParsedDocument({
+              emailId: input.emailId,
+              attachmentId,
+              documentType: result.type as any,
+              confidence: result.confidence.toString(),
+              vendorName: data.vendorName || null,
+              vendorEmail: data.vendorEmail || null,
+              documentNumber: data.documentNumber || data.invoiceNumber || null,
+              documentDate: data.documentDate ? new Date(data.documentDate) : null,
+              totalAmount: data.totalAmount?.toString() || null,
+              currency: data.currency || 'USD',
+              trackingNumber: data.trackingNumber || null,
+              carrierName: data.carrier || null,
+              lineItems: data.lineItems || null,
+              rawExtractedData: result as any,
+            });
+          }
+
+          processedResults.push({
+            attachmentId,
+            type: result.type,
+            confidence: result.confidence,
+            hasLineItems: (result.structuredData.lineItems?.length || 0) > 0,
+          });
+        }
+
+        // Update email category based on attachments if not already categorized
+        const attachmentCategory = categorizeByAttachments(Array.from(results.values()));
+        if (attachmentCategory && (!email.category || email.category === 'general')) {
+          await db.updateEmailCategory(input.emailId, {
+            category: attachmentCategory.category as any,
+            categoryConfidence: attachmentCategory.confidence.toString(),
+          });
+        }
+
+        return {
+          success: true,
+          processed: results.size,
+          results: processedResults,
+        };
+      }),
+
     // Check if IMAP inbox is configured
     isInboxConfigured: protectedProcedure
       .query(async () => {
@@ -5437,6 +5514,874 @@ Provide your forecast in JSON format with the following structure:
           errors,
         };
       }),
+  }),
+
+  // ============================================
+  // DATA ROOM
+  // ============================================
+  dataRoom: router({
+    // List all data rooms for the current user
+    list: protectedProcedure.query(async ({ ctx }) => {
+      return db.getDataRooms(ctx.user.id);
+    }),
+
+    // Get a single data room by ID
+    getById: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input, ctx }) => {
+        const room = await db.getDataRoomById(input.id);
+        if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
+        if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
+        }
+        return room;
+      }),
+
+    // Create a new data room
+    create: protectedProcedure
+      .input(z.object({
+        name: z.string().min(1),
+        description: z.string().optional(),
+        slug: z.string().min(1).regex(/^[a-z0-9-]+$/),
+        isPublic: z.boolean().default(false),
+        password: z.string().optional(),
+        requiresNda: z.boolean().default(false),
+        ndaText: z.string().optional(),
+        allowDownload: z.boolean().default(true),
+        allowPrint: z.boolean().default(true),
+        googleDriveFolderId: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        // Check if slug is unique
+        const existing = await db.getDataRoomBySlug(input.slug);
+        if (existing) {
+          throw new TRPCError({ code: 'CONFLICT', message: 'Slug already in use' });
+        }
+
+        // Hash password if provided
+        let hashedPassword = null;
+        if (input.password) {
+          const crypto = await import('crypto');
+          hashedPassword = crypto.createHash('sha256').update(input.password).digest('hex');
+        }
+
+        const { id } = await db.createDataRoom({
+          ...input,
+          password: hashedPassword,
+          ownerId: ctx.user.id,
+        });
+
+        return { id, slug: input.slug };
+      }),
+
+    // Update a data room
+    update: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        name: z.string().optional(),
+        description: z.string().optional(),
+        isPublic: z.boolean().optional(),
+        password: z.string().nullable().optional(),
+        requiresNda: z.boolean().optional(),
+        ndaText: z.string().optional(),
+        allowDownload: z.boolean().optional(),
+        allowPrint: z.boolean().optional(),
+        welcomeMessage: z.string().optional(),
+        status: z.enum(['active', 'archived', 'draft']).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const room = await db.getDataRoomById(input.id);
+        if (!room) throw new TRPCError({ code: 'NOT_FOUND' });
+        if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
+          throw new TRPCError({ code: 'FORBIDDEN' });
+        }
+
+        const { id, password, ...updateData } = input;
+        let hashedPassword = undefined;
+        if (password !== undefined) {
+          if (password === null) {
+            hashedPassword = null;
+          } else {
+            const crypto = await import('crypto');
+            hashedPassword = crypto.createHash('sha256').update(password).digest('hex');
+          }
+        }
+
+        await db.updateDataRoom(id, {
+          ...updateData,
+          ...(hashedPassword !== undefined && { password: hashedPassword }),
+        });
+
+        return { success: true };
+      }),
+
+    // Delete a data room
+    delete: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const room = await db.getDataRoomById(input.id);
+        if (!room) throw new TRPCError({ code: 'NOT_FOUND' });
+        if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
+          throw new TRPCError({ code: 'FORBIDDEN' });
+        }
+        await db.deleteDataRoom(input.id);
+        return { success: true };
+      }),
+
+    // Folder operations
+    folders: router({
+      list: protectedProcedure
+        .input(z.object({ dataRoomId: z.number(), parentId: z.number().nullable().optional() }))
+        .query(async ({ input }) => {
+          return db.getDataRoomFolders(input.dataRoomId, input.parentId);
+        }),
+
+      create: protectedProcedure
+        .input(z.object({
+          dataRoomId: z.number(),
+          parentId: z.number().nullable().optional(),
+          name: z.string().min(1),
+          description: z.string().optional(),
+          googleDriveFolderId: z.string().optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const { id } = await db.createDataRoomFolder(input);
+          return { id };
+        }),
+
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          description: z.string().optional(),
+          sortOrder: z.number().optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const { id, ...data } = input;
+          await db.updateDataRoomFolder(id, data);
+          return { success: true };
+        }),
+
+      delete: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input }) => {
+          await db.deleteDataRoomFolder(input.id);
+          return { success: true };
+        }),
+    }),
+
+    // Document operations
+    documents: router({
+      list: protectedProcedure
+        .input(z.object({ dataRoomId: z.number(), folderId: z.number().nullable().optional() }))
+        .query(async ({ input }) => {
+          return db.getDataRoomDocuments(input.dataRoomId, input.folderId);
+        }),
+
+      getById: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(async ({ input }) => {
+          return db.getDataRoomDocumentById(input.id);
+        }),
+
+      create: protectedProcedure
+        .input(z.object({
+          dataRoomId: z.number(),
+          folderId: z.number().nullable().optional(),
+          name: z.string().min(1),
+          description: z.string().optional(),
+          fileType: z.string(),
+          mimeType: z.string().optional(),
+          fileSize: z.number().optional(),
+          pageCount: z.number().optional(),
+          storageType: z.enum(['s3', 'google_drive']).default('s3'),
+          storageUrl: z.string().optional(),
+          storageKey: z.string().optional(),
+          googleDriveFileId: z.string().optional(),
+          googleDriveWebViewLink: z.string().optional(),
+          thumbnailUrl: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id } = await db.createDataRoomDocument({
+            ...input,
+            uploadedBy: ctx.user.id,
+          });
+          return { id };
+        }),
+
+      upload: protectedProcedure
+        .input(z.object({
+          dataRoomId: z.number(),
+          folderId: z.number().nullable().optional(),
+          name: z.string(),
+          fileType: z.string(),
+          mimeType: z.string(),
+          fileSize: z.number(),
+          base64Content: z.string(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          // Upload to S3
+          const buffer = Buffer.from(input.base64Content, 'base64');
+          const key = `dataroom/${input.dataRoomId}/${nanoid()}-${input.name}`;
+          const { url } = await storagePut(key, buffer, input.mimeType);
+
+          // Create document record
+          const { id } = await db.createDataRoomDocument({
+            dataRoomId: input.dataRoomId,
+            folderId: input.folderId,
+            name: input.name,
+            fileType: input.fileType,
+            mimeType: input.mimeType,
+            fileSize: input.fileSize,
+            storageType: 's3',
+            storageUrl: url,
+            storageKey: key,
+            uploadedBy: ctx.user.id,
+          });
+
+          return { id, url };
+        }),
+
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          description: z.string().optional(),
+          sortOrder: z.number().optional(),
+          isHidden: z.boolean().optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const { id, ...data } = input;
+          await db.updateDataRoomDocument(id, data);
+          return { success: true };
+        }),
+
+      delete: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input }) => {
+          await db.deleteDataRoomDocument(input.id);
+          return { success: true };
+        }),
+    }),
+
+    // Shareable links
+    links: router({
+      list: protectedProcedure
+        .input(z.object({ dataRoomId: z.number() }))
+        .query(async ({ input }) => {
+          return db.getDataRoomLinks(input.dataRoomId);
+        }),
+
+      create: protectedProcedure
+        .input(z.object({
+          dataRoomId: z.number(),
+          name: z.string().optional(),
+          password: z.string().optional(),
+          expiresAt: z.date().optional(),
+          maxViews: z.number().optional(),
+          allowDownload: z.boolean().default(true),
+          allowPrint: z.boolean().default(true),
+          requireEmail: z.boolean().default(true),
+          requireName: z.boolean().default(false),
+          requireCompany: z.boolean().default(false),
+          restrictedFolderIds: z.array(z.number()).optional(),
+          restrictedDocumentIds: z.array(z.number()).optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const linkCode = nanoid(12);
+          let hashedPassword = null;
+          if (input.password) {
+            const crypto = await import('crypto');
+            hashedPassword = crypto.createHash('sha256').update(input.password).digest('hex');
+          }
+
+          const { id } = await db.createDataRoomLink({
+            ...input,
+            linkCode,
+            password: hashedPassword,
+            createdBy: ctx.user.id,
+          });
+
+          return { id, linkCode };
+        }),
+
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          isActive: z.boolean().optional(),
+          expiresAt: z.date().nullable().optional(),
+          maxViews: z.number().nullable().optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const { id, ...data } = input;
+          await db.updateDataRoomLink(id, data);
+          return { success: true };
+        }),
+
+      delete: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input }) => {
+          await db.deleteDataRoomLink(input.id);
+          return { success: true };
+        }),
+    }),
+
+    // Visitors and analytics
+    visitors: router({
+      list: protectedProcedure
+        .input(z.object({ dataRoomId: z.number() }))
+        .query(async ({ input }) => {
+          return db.getDataRoomVisitors(input.dataRoomId);
+        }),
+
+      getViews: protectedProcedure
+        .input(z.object({ visitorId: z.number() }))
+        .query(async ({ input }) => {
+          return db.getVisitorDocumentViews(input.visitorId);
+        }),
+
+      getTimeline: protectedProcedure
+        .input(z.object({ visitorId: z.number() }))
+        .query(async ({ input }) => {
+          return db.getVisitorTimeline(input.visitorId);
+        }),
+    }),
+
+    // Analytics
+    analytics: router({
+      getOverview: protectedProcedure
+        .input(z.object({ dataRoomId: z.number() }))
+        .query(async ({ input }) => {
+          return db.getDataRoomAnalytics(input.dataRoomId);
+        }),
+
+      getDocumentStats: protectedProcedure
+        .input(z.object({ documentId: z.number() }))
+        .query(async ({ input }) => {
+          return db.getDocumentAnalytics(input.documentId);
+        }),
+    }),
+
+    // Invitations
+    invitations: router({
+      list: protectedProcedure
+        .input(z.object({ dataRoomId: z.number() }))
+        .query(async ({ input }) => {
+          return db.getDataRoomInvitations(input.dataRoomId);
+        }),
+
+      create: protectedProcedure
+        .input(z.object({
+          dataRoomId: z.number(),
+          email: z.string().email(),
+          name: z.string().optional(),
+          role: z.enum(['viewer', 'editor', 'admin']).default('viewer'),
+          allowDownload: z.boolean().default(true),
+          allowPrint: z.boolean().default(true),
+          message: z.string().optional(),
+          expiresAt: z.date().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const inviteCode = nanoid(16);
+          const { id } = await db.createDataRoomInvitation({
+            ...input,
+            inviteCode,
+            invitedBy: ctx.user.id,
+          });
+
+          // TODO: Send invitation email
+
+          return { id, inviteCode };
+        }),
+
+      revoke: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input }) => {
+          await db.updateDataRoomInvitation(input.id, { status: 'expired' });
+          return { success: true };
+        }),
+    }),
+
+    // Public access endpoints (no auth required)
+    public: router({
+      // Access data room via link
+      accessByLink: publicProcedure
+        .input(z.object({
+          linkCode: z.string(),
+          password: z.string().optional(),
+          visitorInfo: z.object({
+            email: z.string().email().optional(),
+            name: z.string().optional(),
+            company: z.string().optional(),
+          }).optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const link = await db.getDataRoomLinkByCode(input.linkCode);
+          if (!link) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'Invalid link' });
+          }
+
+          if (!link.isActive) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Link is no longer active' });
+          }
+
+          if (link.expiresAt && new Date(link.expiresAt) < new Date()) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Link has expired' });
+          }
+
+          if (link.maxViews && link.viewCount >= link.maxViews) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Link view limit reached' });
+          }
+
+          // Check password
+          if (link.password) {
+            if (!input.password) {
+              return { requiresPassword: true, dataRoomId: null, visitorId: null };
+            }
+            const crypto = await import('crypto');
+            const hashedPassword = crypto.createHash('sha256').update(input.password).digest('hex');
+            if (hashedPassword !== link.password) {
+              throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Invalid password' });
+            }
+          }
+
+          // Check required info
+          if (link.requireEmail && !input.visitorInfo?.email) {
+            return { requiresInfo: true, requiredFields: ['email'], dataRoomId: null, visitorId: null };
+          }
+          if (link.requireName && !input.visitorInfo?.name) {
+            return { requiresInfo: true, requiredFields: ['name'], dataRoomId: null, visitorId: null };
+          }
+          if (link.requireCompany && !input.visitorInfo?.company) {
+            return { requiresInfo: true, requiredFields: ['company'], dataRoomId: null, visitorId: null };
+          }
+
+          // Create or update visitor
+          let visitor = input.visitorInfo?.email 
+            ? await db.getVisitorByEmail(link.dataRoomId, input.visitorInfo.email)
+            : null;
+
+          if (!visitor && input.visitorInfo?.email) {
+            const { id } = await db.createDataRoomVisitor({
+              dataRoomId: link.dataRoomId,
+              linkId: link.id,
+              email: input.visitorInfo.email,
+              name: input.visitorInfo.name,
+              company: input.visitorInfo.company,
+              ipAddress: ctx.req.ip || null,
+              userAgent: ctx.req.headers['user-agent'] || null,
+            });
+            visitor = await db.getDataRoomVisitors(link.dataRoomId).then(v => v.find(x => x.id === id) || null);
+          }
+
+          // Increment view count
+          await db.incrementLinkViewCount(link.id);
+
+          // Update visitor last viewed
+          if (visitor) {
+            await db.updateDataRoomVisitor(visitor.id, {
+              lastViewedAt: new Date(),
+              totalViews: (visitor.totalViews || 0) + 1,
+            });
+          }
+
+          return {
+            dataRoomId: link.dataRoomId,
+            visitorId: visitor?.id || null,
+            allowDownload: link.allowDownload,
+            allowPrint: link.allowPrint,
+            restrictedFolderIds: link.restrictedFolderIds as number[] | null,
+            restrictedDocumentIds: link.restrictedDocumentIds as number[] | null,
+          };
+        }),
+
+      // Get data room content (public access via valid link)
+      getContent: publicProcedure
+        .input(z.object({
+          dataRoomId: z.number(),
+          visitorId: z.number().optional(),
+          folderId: z.number().nullable().optional(),
+        }))
+        .query(async ({ input }) => {
+          const room = await db.getDataRoomById(input.dataRoomId);
+          if (!room) throw new TRPCError({ code: 'NOT_FOUND' });
+
+          const folders = await db.getDataRoomFolders(input.dataRoomId, input.folderId);
+          const documents = await db.getDataRoomDocuments(input.dataRoomId, input.folderId);
+
+          return {
+            room: {
+              name: room.name,
+              description: room.description,
+              welcomeMessage: room.welcomeMessage,
+              logoUrl: room.logoUrl,
+              brandColor: room.brandColor,
+              requiresNda: room.requiresNda,
+              ndaText: room.ndaText,
+            },
+            folders: folders.filter(f => !f.googleDriveFolderId || true), // Include all
+            documents: documents.filter(d => !d.isHidden),
+          };
+        }),
+
+      // Record document view
+      recordView: publicProcedure
+        .input(z.object({
+          documentId: z.number(),
+          visitorId: z.number(),
+          linkId: z.number().optional(),
+          duration: z.number().optional(),
+          pagesViewed: z.array(z.number()).optional(),
+          downloaded: z.boolean().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id } = await db.createDocumentView({
+            documentId: input.documentId,
+            visitorId: input.visitorId,
+            linkId: input.linkId,
+            duration: input.duration,
+            pagesViewed: input.pagesViewed,
+            downloaded: input.downloaded,
+            deviceType: ctx.req.headers['user-agent']?.includes('Mobile') ? 'mobile' : 'desktop',
+          });
+          return { id };
+        }),
+    }),
+  }),
+
+  // ============================================
+  // IMAP CREDENTIALS
+  // ============================================
+  imapCredentials: router({
+    list: protectedProcedure.query(async ({ ctx }) => {
+      const credentials = await db.getImapCredentials(ctx.user.id);
+      // Don't return encrypted passwords
+      return credentials.map(c => ({ ...c, encryptedPassword: '********' }));
+    }),
+
+    create: protectedProcedure
+      .input(z.object({
+        name: z.string().min(1),
+        host: z.string().min(1),
+        port: z.number().default(993),
+        secure: z.boolean().default(true),
+        email: z.string().email(),
+        password: z.string().min(1),
+        folder: z.string().default('INBOX'),
+        unseenOnly: z.boolean().default(true),
+        markAsSeen: z.boolean().default(false),
+        pollingEnabled: z.boolean().default(false),
+        pollingIntervalMinutes: z.number().min(5).default(15),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        // Encrypt password
+        const crypto = await import('crypto');
+        const key = process.env.JWT_SECRET || 'default-key';
+        const cipher = crypto.createCipheriv('aes-256-cbc', 
+          crypto.createHash('sha256').update(key).digest().slice(0, 32),
+          Buffer.alloc(16, 0)
+        );
+        let encrypted = cipher.update(input.password, 'utf8', 'hex');
+        encrypted += cipher.final('hex');
+
+        const { id } = await db.createImapCredential({
+          ...input,
+          userId: ctx.user.id,
+          encryptedPassword: encrypted,
+        });
+
+        return { id };
+      }),
+
+    update: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        name: z.string().optional(),
+        folder: z.string().optional(),
+        unseenOnly: z.boolean().optional(),
+        markAsSeen: z.boolean().optional(),
+        pollingEnabled: z.boolean().optional(),
+        pollingIntervalMinutes: z.number().min(5).optional(),
+        isActive: z.boolean().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const credential = await db.getImapCredentialById(input.id);
+        if (!credential || credential.userId !== ctx.user.id) {
+          throw new TRPCError({ code: 'NOT_FOUND' });
+        }
+        const { id, ...data } = input;
+        await db.updateImapCredential(id, data);
+        return { success: true };
+      }),
+
+    delete: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const credential = await db.getImapCredentialById(input.id);
+        if (!credential || credential.userId !== ctx.user.id) {
+          throw new TRPCError({ code: 'NOT_FOUND' });
+        }
+        await db.deleteImapCredential(input.id);
+        return { success: true };
+      }),
+
+    // Get decrypted credentials for scanning (internal use)
+    getDecrypted: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input, ctx }) => {
+        const credential = await db.getImapCredentialById(input.id);
+        if (!credential || credential.userId !== ctx.user.id) {
+          throw new TRPCError({ code: 'NOT_FOUND' });
+        }
+
+        // Decrypt password
+        const crypto = await import('crypto');
+        const key = process.env.JWT_SECRET || 'default-key';
+        const decipher = crypto.createDecipheriv('aes-256-cbc',
+          crypto.createHash('sha256').update(key).digest().slice(0, 32),
+          Buffer.alloc(16, 0)
+        );
+        let decrypted = decipher.update(credential.encryptedPassword, 'hex', 'utf8');
+        decrypted += decipher.final('utf8');
+
+        return {
+          ...credential,
+          password: decrypted,
+        };
+      }),
+  }),
+
+  // ============================================
+  // EMAIL CREDENTIALS & SCHEDULED SCANNING
+  // ============================================
+  emailCredentials: router({
+    list: protectedProcedure.query(async ({ ctx }) => {
+      const credentials = await db.getEmailCredentials(ctx.user.id);
+      // Don't return passwords
+      return credentials.map(c => ({ ...c, imapPassword: c.imapPassword ? '********' : null }));
+    }),
+
+    getById: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input, ctx }) => {
+        const credential = await db.getEmailCredentialById(input.id);
+        if (!credential || credential.userId !== ctx.user.id) {
+          throw new TRPCError({ code: 'NOT_FOUND' });
+        }
+        return { ...credential, imapPassword: credential.imapPassword ? '********' : null };
+      }),
+
+    create: protectedProcedure
+      .input(z.object({
+        name: z.string().min(1),
+        provider: z.enum(['gmail', 'outlook', 'yahoo', 'icloud', 'custom']),
+        email: z.string().email(),
+        imapHost: z.string().optional(),
+        imapPort: z.number().optional(),
+        imapSecure: z.boolean().optional(),
+        imapUsername: z.string().optional(),
+        imapPassword: z.string().optional(),
+        scanFolder: z.string().optional(),
+        scanUnreadOnly: z.boolean().optional(),
+        markAsRead: z.boolean().optional(),
+        maxEmailsPerScan: z.number().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        // Encrypt password if provided
+        let encryptedPassword = input.imapPassword;
+        if (input.imapPassword) {
+          const crypto = await import('crypto');
+          const key = process.env.JWT_SECRET || 'default-key';
+          const cipher = crypto.createCipheriv('aes-256-cbc',
+            crypto.createHash('sha256').update(key).digest().slice(0, 32),
+            Buffer.alloc(16, 0)
+          );
+          encryptedPassword = cipher.update(input.imapPassword, 'utf8', 'hex');
+          encryptedPassword += cipher.final('hex');
+        }
+
+        const { id } = await db.createEmailCredential({
+          ...input,
+          userId: ctx.user.id,
+          imapPassword: encryptedPassword,
+        });
+
+        return { id };
+      }),
+
+    update: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        name: z.string().optional(),
+        imapHost: z.string().optional(),
+        imapPort: z.number().optional(),
+        imapSecure: z.boolean().optional(),
+        imapUsername: z.string().optional(),
+        imapPassword: z.string().optional(),
+        scanFolder: z.string().optional(),
+        scanUnreadOnly: z.boolean().optional(),
+        markAsRead: z.boolean().optional(),
+        maxEmailsPerScan: z.number().optional(),
+        isActive: z.boolean().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const credential = await db.getEmailCredentialById(input.id);
+        if (!credential || credential.userId !== ctx.user.id) {
+          throw new TRPCError({ code: 'NOT_FOUND' });
+        }
+
+        const { id, imapPassword, ...data } = input;
+        let updateData: any = data;
+
+        // Encrypt new password if provided
+        if (imapPassword) {
+          const crypto = await import('crypto');
+          const key = process.env.JWT_SECRET || 'default-key';
+          const cipher = crypto.createCipheriv('aes-256-cbc',
+            crypto.createHash('sha256').update(key).digest().slice(0, 32),
+            Buffer.alloc(16, 0)
+          );
+          let encrypted = cipher.update(imapPassword, 'utf8', 'hex');
+          encrypted += cipher.final('hex');
+          updateData.imapPassword = encrypted;
+        }
+
+        await db.updateEmailCredential(id, updateData);
+        return { success: true };
+      }),
+
+    delete: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const credential = await db.getEmailCredentialById(input.id);
+        if (!credential || credential.userId !== ctx.user.id) {
+          throw new TRPCError({ code: 'NOT_FOUND' });
+        }
+        await db.deleteEmailCredential(input.id);
+        return { success: true };
+      }),
+
+    testConnection: protectedProcedure
+      .input(z.object({
+        id: z.number().optional(),
+        provider: z.enum(['gmail', 'outlook', 'yahoo', 'icloud', 'custom']),
+        imapHost: z.string().optional(),
+        imapPort: z.number().optional(),
+        imapSecure: z.boolean().optional(),
+        imapUsername: z.string().optional(),
+        imapPassword: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        let config: any = input;
+
+        // If ID provided, get stored credentials
+        if (input.id) {
+          const credential = await db.getEmailCredentialById(input.id);
+          if (!credential || credential.userId !== ctx.user.id) {
+            throw new TRPCError({ code: 'NOT_FOUND' });
+          }
+
+          // Decrypt password
+          if (credential.imapPassword) {
+            const crypto = await import('crypto');
+            const key = process.env.JWT_SECRET || 'default-key';
+            const decipher = crypto.createDecipheriv('aes-256-cbc',
+              crypto.createHash('sha256').update(key).digest().slice(0, 32),
+              Buffer.alloc(16, 0)
+            );
+            let decrypted = decipher.update(credential.imapPassword, 'hex', 'utf8');
+            decrypted += decipher.final('utf8');
+            config = { ...credential, imapPassword: decrypted };
+          }
+        }
+
+        // Test connection using the inbox scanner
+        const { testImapConnection } = await import('./_core/emailInboxScanner');
+        const result = await testImapConnection({
+          host: config.imapHost || '',
+          port: config.imapPort || 993,
+          secure: config.imapSecure ?? true,
+          auth: {
+            user: config.imapUsername || '',
+            pass: config.imapPassword || '',
+          },
+        });
+
+        return result;
+      }),
+
+    // Scheduled scans
+    schedules: router({
+      list: protectedProcedure
+        .input(z.object({ credentialId: z.number().optional() }))
+        .query(async ({ input, ctx }) => {
+          // Get user's credentials first
+          const credentials = await db.getEmailCredentials(ctx.user.id);
+          const credentialIds = credentials.map(c => c.id);
+
+          if (input.credentialId && !credentialIds.includes(input.credentialId)) {
+            throw new TRPCError({ code: 'FORBIDDEN' });
+          }
+
+          return db.getScheduledScans(input.credentialId);
+        }),
+
+      create: protectedProcedure
+        .input(z.object({
+          credentialId: z.number(),
+          intervalMinutes: z.number().min(5).default(15),
+          isEnabled: z.boolean().default(true),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const credential = await db.getEmailCredentialById(input.credentialId);
+          if (!credential || credential.userId !== ctx.user.id) {
+            throw new TRPCError({ code: 'NOT_FOUND' });
+          }
+
+          const { id } = await db.createScheduledScan(input);
+          return { id };
+        }),
+
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          isEnabled: z.boolean().optional(),
+          intervalMinutes: z.number().min(5).optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const { id, intervalMinutes, ...data } = input;
+          const updateData: any = { ...data };
+
+          if (intervalMinutes) {
+            updateData.intervalMinutes = intervalMinutes;
+            updateData.nextRunAt = new Date(Date.now() + intervalMinutes * 60 * 1000);
+          }
+
+          await db.updateScheduledScan(id, updateData);
+          return { success: true };
+        }),
+
+      delete: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input }) => {
+          await db.deleteScheduledScan(input.id);
+          return { success: true };
+        }),
+    }),
+
+    // Scan logs
+    logs: router({
+      list: protectedProcedure
+        .input(z.object({ credentialId: z.number(), limit: z.number().optional() }))
+        .query(async ({ input, ctx }) => {
+          const credential = await db.getEmailCredentialById(input.credentialId);
+          if (!credential || credential.userId !== ctx.user.id) {
+            throw new TRPCError({ code: 'NOT_FOUND' });
+          }
+          return db.getScanLogs(input.credentialId, input.limit);
+        }),
+    }),
   }),
 });
 

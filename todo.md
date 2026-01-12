@@ -380,3 +380,38 @@
 - [x] UI for configuring email inbox connection
 - [x] UI for viewing scan progress and results
 - [x] Manual "Scan Inbox" button to trigger full inbox scan
+
+## Data Room Feature (DocSend-like)
+- [x] Database schema for data rooms, folders, documents, permissions
+- [x] Google Drive integration to sync folders and files
+- [x] Password-protected data room pages at /dataroom
+- [x] Granular view permissions (per folder, per document, per user)
+- [x] Shareable links with access controls (password, expiry, download restrictions)
+- [x] Viewer analytics and engagement tracking
+- [x] View timelines showing who viewed what and when
+- [x] Custom info capture on first access (name, email, company)
+- [x] Data room invitations system
+- [x] Folder hierarchy navigation UI
+- [x] Document viewer with PDF/image preview
+- [x] Download tracking and restrictions
+- [x] Email notifications for new views
+
+## Email Enhancement - IMAP Credentials Storage
+- [x] Database table for storing IMAP credentials securely
+- [x] Encrypt passwords before storage
+- [x] UI to save/manage email connection settings
+- [x] Auto-load saved credentials in scan dialog
+
+## Email Enhancement - Scheduled Polling
+- [x] Background job for periodic inbox scanning
+- [x] Configurable polling interval (default 15 minutes)
+- [x] Track last scan timestamp per account
+- [x] Only fetch new emails since last scan
+- [x] Notification when new emails are imported
+
+## Email Enhancement - Attachment OCR Processing
+- [x] Extract text from PDF attachments
+- [x] OCR for image attachments (receipts, invoices)
+- [x] Parse extracted text for invoice/receipt data
+- [x] Link parsed data to parent email
+- [x] UI to view extracted attachment content

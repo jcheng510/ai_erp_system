@@ -62,6 +62,7 @@ import {
   PackageCheck,
   Brain,
   Plug,
+  FolderLock,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -150,6 +151,12 @@ const menuGroups = [
     items: [
       { icon: Warehouse, label: "Copacker Portal", path: "/portal/copacker" },
       { icon: Building2, label: "Vendor Portal", path: "/portal/vendor" },
+    ],
+  },
+  {
+    label: "Data Rooms",
+    items: [
+      { icon: FolderLock, label: "All Data Rooms", path: "/datarooms" },
     ],
   },
   {

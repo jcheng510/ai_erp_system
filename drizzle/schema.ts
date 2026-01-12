@@ -2102,3 +2102,361 @@ export type InsertParsedDocument = typeof parsedDocuments.$inferInsert;
 
 export type ParsedDocumentLineItem = typeof parsedDocumentLineItems.$inferSelect;
 export type InsertParsedDocumentLineItem = typeof parsedDocumentLineItems.$inferInsert;
+
+
+// ============================================
+// DATA ROOM (DocSend-like)
+// ============================================
+
+// Data Rooms - top level container
+export const dataRooms = mysqlTable("data_rooms", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  slug: varchar("slug", { length: 128 }).notNull().unique(), // URL-friendly identifier
+  ownerId: int("ownerId").notNull(), // User who created the room
+  
+  // Access settings
+  isPublic: boolean("isPublic").default(false).notNull(),
+  password: varchar("password", { length: 255 }), // Hashed password for protected rooms
+  requiresNda: boolean("requiresNda").default(false).notNull(),
+  ndaText: text("ndaText"),
+  
+  // Customization
+  logoUrl: varchar("logoUrl", { length: 512 }),
+  brandColor: varchar("brandColor", { length: 7 }), // Hex color
+  welcomeMessage: text("welcomeMessage"),
+  
+  // Settings
+  allowDownload: boolean("allowDownload").default(true).notNull(),
+  allowPrint: boolean("allowPrint").default(true).notNull(),
+  expiresAt: timestamp("expiresAt"),
+  watermarkEnabled: boolean("watermarkEnabled").default(false).notNull(),
+  
+  // Google Drive sync
+  googleDriveFolderId: varchar("googleDriveFolderId", { length: 255 }),
+  lastSyncedAt: timestamp("lastSyncedAt"),
+  
+  status: mysqlEnum("status", ["active", "archived", "draft"]).default("active").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type DataRoom = typeof dataRooms.$inferSelect;
+export type InsertDataRoom = typeof dataRooms.$inferInsert;
+
+// Data Room Folders - hierarchical folder structure
+export const dataRoomFolders = mysqlTable("data_room_folders", {
+  id: int("id").autoincrement().primaryKey(),
+  dataRoomId: int("dataRoomId").notNull(),
+  parentId: int("parentId"), // null for root folders
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  sortOrder: int("sortOrder").default(0).notNull(),
+  
+  // Google Drive sync
+  googleDriveFolderId: varchar("googleDriveFolderId", { length: 255 }),
+  
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type DataRoomFolder = typeof dataRoomFolders.$inferSelect;
+export type InsertDataRoomFolder = typeof dataRoomFolders.$inferInsert;
+
+// Data Room Documents - files within folders
+export const dataRoomDocuments = mysqlTable("data_room_documents", {
+  id: int("id").autoincrement().primaryKey(),
+  dataRoomId: int("dataRoomId").notNull(),
+  folderId: int("folderId"), // null for root level documents
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  
+  // File info
+  fileType: varchar("fileType", { length: 64 }).notNull(), // pdf, doc, xls, ppt, image, etc.
+  mimeType: varchar("mimeType", { length: 128 }),
+  fileSize: bigint("fileSize", { mode: "number" }),
+  pageCount: int("pageCount"),
+  
+  // Storage - either S3 or Google Drive
+  storageType: mysqlEnum("storageType", ["s3", "google_drive"]).default("s3").notNull(),
+  storageUrl: varchar("storageUrl", { length: 512 }),
+  storageKey: varchar("storageKey", { length: 255 }),
+  googleDriveFileId: varchar("googleDriveFileId", { length: 255 }),
+  googleDriveWebViewLink: varchar("googleDriveWebViewLink", { length: 512 }),
+  
+  // Thumbnail
+  thumbnailUrl: varchar("thumbnailUrl", { length: 512 }),
+  
+  sortOrder: int("sortOrder").default(0).notNull(),
+  isHidden: boolean("isHidden").default(false).notNull(),
+  
+  // Version tracking
+  version: int("version").default(1).notNull(),
+  originalDocumentId: int("originalDocumentId"), // For version history
+  
+  uploadedBy: int("uploadedBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type DataRoomDocument = typeof dataRoomDocuments.$inferSelect;
+export type InsertDataRoomDocument = typeof dataRoomDocuments.$inferInsert;
+
+// Shareable Links - unique access links for data rooms
+export const dataRoomLinks = mysqlTable("data_room_links", {
+  id: int("id").autoincrement().primaryKey(),
+  dataRoomId: int("dataRoomId").notNull(),
+  linkCode: varchar("linkCode", { length: 64 }).notNull().unique(),
+  name: varchar("name", { length: 255 }), // Optional name for the link
+  
+  // Access controls
+  password: varchar("password", { length: 255 }), // Link-specific password (hashed)
+  expiresAt: timestamp("expiresAt"),
+  maxViews: int("maxViews"), // null = unlimited
+  viewCount: int("viewCount").default(0).notNull(),
+  
+  // Permissions
+  allowDownload: boolean("allowDownload").default(true).notNull(),
+  allowPrint: boolean("allowPrint").default(true).notNull(),
+  
+  // Restrict to specific folders/documents
+  restrictedFolderIds: json("restrictedFolderIds"), // Array of folder IDs
+  restrictedDocumentIds: json("restrictedDocumentIds"), // Array of document IDs
+  
+  // Info capture settings
+  requireEmail: boolean("requireEmail").default(true).notNull(),
+  requireName: boolean("requireName").default(false).notNull(),
+  requireCompany: boolean("requireCompany").default(false).notNull(),
+  requirePhone: boolean("requirePhone").default(false).notNull(),
+  customFields: json("customFields"), // Array of custom field definitions
+  
+  isActive: boolean("isActive").default(true).notNull(),
+  createdBy: int("createdBy").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type DataRoomLink = typeof dataRoomLinks.$inferSelect;
+export type InsertDataRoomLink = typeof dataRoomLinks.$inferInsert;
+
+// Data Room Visitors - people who accessed via links
+export const dataRoomVisitors = mysqlTable("data_room_visitors", {
+  id: int("id").autoincrement().primaryKey(),
+  dataRoomId: int("dataRoomId").notNull(),
+  linkId: int("linkId"), // Which link they used
+  
+  // Captured info
+  email: varchar("email", { length: 320 }),
+  name: varchar("name", { length: 255 }),
+  company: varchar("company", { length: 255 }),
+  phone: varchar("phone", { length: 32 }),
+  customFieldData: json("customFieldData"), // Answers to custom fields
+  
+  // NDA
+  ndaAcceptedAt: timestamp("ndaAcceptedAt"),
+  ndaIpAddress: varchar("ndaIpAddress", { length: 45 }),
+  
+  // Tracking
+  ipAddress: varchar("ipAddress", { length: 45 }),
+  userAgent: text("userAgent"),
+  referrer: varchar("referrer", { length: 512 }),
+  
+  // Engagement summary
+  totalViews: int("totalViews").default(0).notNull(),
+  totalTimeSpent: int("totalTimeSpent").default(0).notNull(), // seconds
+  lastViewedAt: timestamp("lastViewedAt"),
+  
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type DataRoomVisitor = typeof dataRoomVisitors.$inferSelect;
+export type InsertDataRoomVisitor = typeof dataRoomVisitors.$inferInsert;
+
+// Document Views - detailed view analytics
+export const documentViews = mysqlTable("document_views", {
+  id: int("id").autoincrement().primaryKey(),
+  documentId: int("documentId").notNull(),
+  visitorId: int("visitorId").notNull(),
+  linkId: int("linkId"),
+  
+  // View details
+  startedAt: timestamp("startedAt").defaultNow().notNull(),
+  endedAt: timestamp("endedAt"),
+  duration: int("duration"), // seconds
+  
+  // Page-level tracking
+  pagesViewed: json("pagesViewed"), // Array of page numbers viewed
+  totalPagesViewed: int("totalPagesViewed").default(0).notNull(),
+  percentViewed: decimal("percentViewed", { precision: 5, scale: 2 }),
+  
+  // Actions
+  downloaded: boolean("downloaded").default(false).notNull(),
+  downloadedAt: timestamp("downloadedAt"),
+  printed: boolean("printed").default(false).notNull(),
+  
+  // Device info
+  deviceType: varchar("deviceType", { length: 32 }), // desktop, mobile, tablet
+  browser: varchar("browser", { length: 64 }),
+  os: varchar("os", { length: 64 }),
+  
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type DocumentView = typeof documentViews.$inferSelect;
+export type InsertDocumentView = typeof documentViews.$inferInsert;
+
+// Data Room Invitations - direct invitations to specific users
+export const dataRoomInvitations = mysqlTable("data_room_invitations", {
+  id: int("id").autoincrement().primaryKey(),
+  dataRoomId: int("dataRoomId").notNull(),
+  email: varchar("email", { length: 320 }).notNull(),
+  name: varchar("name", { length: 255 }),
+  
+  // Permissions
+  role: mysqlEnum("role", ["viewer", "editor", "admin"]).default("viewer").notNull(),
+  allowDownload: boolean("allowDownload").default(true).notNull(),
+  allowPrint: boolean("allowPrint").default(true).notNull(),
+  
+  // Restrict to specific folders/documents
+  restrictedFolderIds: json("restrictedFolderIds"),
+  restrictedDocumentIds: json("restrictedDocumentIds"),
+  
+  // Invitation status
+  inviteCode: varchar("inviteCode", { length: 64 }).notNull().unique(),
+  status: mysqlEnum("status", ["pending", "accepted", "declined", "expired"]).default("pending").notNull(),
+  expiresAt: timestamp("expiresAt"),
+  acceptedAt: timestamp("acceptedAt"),
+  
+  // Link to visitor record once accepted
+  visitorId: int("visitorId"),
+  
+  message: text("message"), // Personal message with invitation
+  invitedBy: int("invitedBy").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type DataRoomInvitation = typeof dataRoomInvitations.$inferSelect;
+export type InsertDataRoomInvitation = typeof dataRoomInvitations.$inferInsert;
+
+// ============================================
+// EMAIL IMAP CREDENTIALS
+// ============================================
+
+export const imapCredentials = mysqlTable("imap_credentials", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  name: varchar("name", { length: 255 }).notNull(), // Friendly name like "Work Gmail"
+  
+  // Connection settings
+  host: varchar("host", { length: 255 }).notNull(),
+  port: int("port").default(993).notNull(),
+  secure: boolean("secure").default(true).notNull(),
+  
+  // Credentials (password is encrypted)
+  email: varchar("email", { length: 320 }).notNull(),
+  encryptedPassword: text("encryptedPassword").notNull(),
+  
+  // Scan settings
+  folder: varchar("folder", { length: 128 }).default("INBOX").notNull(),
+  unseenOnly: boolean("unseenOnly").default(true).notNull(),
+  markAsSeen: boolean("markAsSeen").default(false).notNull(),
+  
+  // Polling settings
+  pollingEnabled: boolean("pollingEnabled").default(false).notNull(),
+  pollingIntervalMinutes: int("pollingIntervalMinutes").default(15).notNull(),
+  lastPolledAt: timestamp("lastPolledAt"),
+  lastMessageUid: int("lastMessageUid"), // Track last processed message
+  
+  // Status
+  isActive: boolean("isActive").default(true).notNull(),
+  lastError: text("lastError"),
+  lastSuccessAt: timestamp("lastSuccessAt"),
+  
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ImapCredential = typeof imapCredentials.$inferSelect;
+export type InsertImapCredential = typeof imapCredentials.$inferInsert;
+
+
+// ============================================
+// EMAIL CREDENTIALS & SCHEDULED SCANNING
+// ============================================
+
+export const emailCredentials = mysqlTable("emailCredentials", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  userId: int("userId").notNull(),
+  name: varchar("name", { length: 255 }).notNull(), // e.g., "Main Inbox", "Invoices Inbox"
+  provider: mysqlEnum("provider", ["gmail", "outlook", "yahoo", "icloud", "custom"]).notNull(),
+  email: varchar("email", { length: 320 }).notNull(),
+  // IMAP settings (encrypted in production)
+  imapHost: varchar("imapHost", { length: 255 }),
+  imapPort: int("imapPort").default(993),
+  imapSecure: boolean("imapSecure").default(true),
+  imapUsername: varchar("imapUsername", { length: 255 }),
+  imapPassword: text("imapPassword"), // Should be encrypted
+  // OAuth tokens (for Gmail/Outlook)
+  accessToken: text("accessToken"),
+  refreshToken: text("refreshToken"),
+  tokenExpiresAt: timestamp("tokenExpiresAt"),
+  // Scan settings
+  scanFolder: varchar("scanFolder", { length: 255 }).default("INBOX"),
+  scanUnreadOnly: boolean("scanUnreadOnly").default(true),
+  markAsRead: boolean("markAsRead").default(false),
+  maxEmailsPerScan: int("maxEmailsPerScan").default(50),
+  // Status
+  isActive: boolean("isActive").default(true).notNull(),
+  lastScanAt: timestamp("lastScanAt"),
+  lastScanStatus: mysqlEnum("lastScanStatus", ["success", "failed", "partial"]),
+  lastScanError: text("lastScanError"),
+  emailsScanned: int("emailsScanned").default(0),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EmailCredential = typeof emailCredentials.$inferSelect;
+export type InsertEmailCredential = typeof emailCredentials.$inferInsert;
+
+export const scheduledEmailScans = mysqlTable("scheduledEmailScans", {
+  id: int("id").autoincrement().primaryKey(),
+  credentialId: int("credentialId").notNull(),
+  companyId: int("companyId"),
+  // Schedule settings
+  isEnabled: boolean("isEnabled").default(true).notNull(),
+  intervalMinutes: int("intervalMinutes").default(15).notNull(), // How often to scan
+  // Execution tracking
+  lastRunAt: timestamp("lastRunAt"),
+  nextRunAt: timestamp("nextRunAt"),
+  lastRunStatus: mysqlEnum("lastRunStatus", ["success", "failed", "running"]),
+  lastRunError: text("lastRunError"),
+  lastRunEmailsFound: int("lastRunEmailsFound").default(0),
+  totalRuns: int("totalRuns").default(0),
+  totalEmailsProcessed: int("totalEmailsProcessed").default(0),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ScheduledEmailScan = typeof scheduledEmailScans.$inferSelect;
+export type InsertScheduledEmailScan = typeof scheduledEmailScans.$inferInsert;
+
+export const emailScanLogs = mysqlTable("emailScanLogs", {
+  id: int("id").autoincrement().primaryKey(),
+  credentialId: int("credentialId").notNull(),
+  scheduledScanId: int("scheduledScanId"),
+  startedAt: timestamp("startedAt").defaultNow().notNull(),
+  completedAt: timestamp("completedAt"),
+  status: mysqlEnum("status", ["running", "success", "failed", "partial"]).default("running").notNull(),
+  emailsFound: int("emailsFound").default(0),
+  emailsProcessed: int("emailsProcessed").default(0),
+  emailsCategorized: int("emailsCategorized").default(0),
+  errorMessage: text("errorMessage"),
+  details: text("details"), // JSON with detailed breakdown
+});
+
+export type EmailScanLog = typeof emailScanLogs.$inferSelect;
+export type InsertEmailScanLog = typeof emailScanLogs.$inferInsert;

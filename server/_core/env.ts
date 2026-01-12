@@ -15,4 +15,9 @@ export const ENV = {
   imapPort: process.env.IMAP_PORT ?? "993",
   imapUser: process.env.IMAP_USER ?? "",
   imapPassword: process.env.IMAP_PASSWORD ?? "",
+  // Google OAuth configuration
+  googleClientId: process.env.GOOGLE_CLIENT_ID ?? "",
+  googleClientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
+  googleRedirectUri: process.env.GOOGLE_REDIRECT_URI ?? "",
+  appUrl: process.env.APP_URL ?? "http://localhost:3000",
 };
