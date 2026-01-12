@@ -359,3 +359,12 @@
 - [ ] Document review and approval workflow
 - [ ] Manual email forwarding endpoint for processing
 - [ ] Unit tests for email parsing functionality
+
+## Email Auto-Categorization Enhancement
+- [x] Enhance AI parser to detect email category from subject/body/attachments
+- [x] Categories: Receipt, Purchase Order, Invoice, Shipping Confirmation, Freight Quote, General
+- [x] Add confidence score for categorization
+- [x] Update inbound emails table with category field
+- [x] Display category badges in Email Inbox UI
+- [x] Add category filter to email list
+- [ ] Auto-route emails to appropriate workflows based on category

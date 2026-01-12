@@ -4307,21 +4307,35 @@ export async function createInboundEmail(input: InsertInboundEmail) {
 
 export async function getInboundEmails(options?: {
   status?: string;
+  category?: string;
+  priority?: string;
   limit?: number;
   offset?: number;
 }) {
   const db = await getDb();
   if (!db) return [];
   
+  const conditions = [];
+  
   if (options?.status) {
-    return db.select().from(inboundEmails)
-      .where(eq(inboundEmails.parsingStatus, options.status as any))
-      .orderBy(desc(inboundEmails.receivedAt))
-      .limit(options?.limit || 100)
-      .offset(options?.offset || 0);
+    conditions.push(eq(inboundEmails.parsingStatus, options.status as any));
   }
   
-  return db.select().from(inboundEmails)
+  if (options?.category) {
+    conditions.push(eq(inboundEmails.category, options.category as any));
+  }
+  
+  if (options?.priority) {
+    conditions.push(eq(inboundEmails.priority, options.priority as any));
+  }
+  
+  let query = db.select().from(inboundEmails);
+  
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as any;
+  }
+  
+  return query
     .orderBy(desc(inboundEmails.receivedAt))
     .limit(options?.limit || 100)
     .offset(options?.offset || 0);
@@ -4610,4 +4624,56 @@ export async function getEmailScanningStats() {
   }
   
   return stats;
+}
+
+// Update email categorization
+export async function updateEmailCategorization(
+  emailId: number,
+  categorization: {
+    category: string;
+    categoryConfidence: string;
+    categoryKeywords: string[];
+    suggestedAction: string | null;
+    priority: string;
+    subcategory: string | null;
+  }
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  await db.update(inboundEmails).set({
+    category: categorization.category as any,
+    categoryConfidence: categorization.categoryConfidence,
+    categoryKeywords: categorization.categoryKeywords,
+    suggestedAction: categorization.suggestedAction,
+    priority: categorization.priority as any,
+    subcategory: categorization.subcategory,
+  }).where(eq(inboundEmails.id, emailId));
+}
+
+// Get email category statistics
+export async function getEmailCategoryStats() {
+  const db = await getDb();
+  if (!db) return { categories: [], priorities: [] };
+  
+  const categoryStats = await db.select({
+    category: inboundEmails.category,
+    count: sql<number>`COUNT(*)`
+  }).from(inboundEmails).groupBy(inboundEmails.category);
+  
+  const priorityStats = await db.select({
+    priority: inboundEmails.priority,
+    count: sql<number>`COUNT(*)`
+  }).from(inboundEmails).groupBy(inboundEmails.priority);
+  
+  return {
+    categories: categoryStats.map(row => ({
+      category: row.category || "general",
+      count: Number(row.count)
+    })),
+    priorities: priorityStats.map(row => ({
+      priority: row.priority || "medium",
+      count: Number(row.count)
+    }))
+  };
 }

@@ -106,6 +106,13 @@
       "when": 1768167866084,
       "tag": "0014_cool_dragon_man",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "5",
+      "when": 1768183991544,
+      "tag": "0015_lethal_shockwave",
+      "breakpoints": true
     }
   ]
 }

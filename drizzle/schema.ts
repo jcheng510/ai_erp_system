@@ -838,6 +838,25 @@ export const parsedDocumentTypeEnum = mysqlEnum("parsed_document_type", [
   "other",
 ]);
 
+// Email category enum for automatic classification
+export const emailCategoryEnum = mysqlEnum("email_category", [
+  "receipt",
+  "purchase_order",
+  "invoice",
+  "shipping_confirmation",
+  "freight_quote",
+  "delivery_notification",
+  "order_confirmation",
+  "payment_confirmation",
+  "general",
+]);
+
+export const emailPriorityEnum = mysqlEnum("email_priority", [
+  "high",
+  "medium",
+  "low",
+]);
+
 export const inboundEmails = mysqlTable("inbound_emails", {
   id: int("id").autoincrement().primaryKey(),
   messageId: varchar("messageId", { length: 255 }).unique(),
@@ -851,6 +870,13 @@ export const inboundEmails = mysqlTable("inbound_emails", {
   parsingStatus: emailParsingStatusEnum.default("pending").notNull(),
   parsedAt: timestamp("parsedAt"),
   errorMessage: text("errorMessage"),
+  // Auto-categorization fields
+  category: emailCategoryEnum.default("general"),
+  categoryConfidence: decimal("categoryConfidence", { precision: 5, scale: 2 }),
+  categoryKeywords: json("categoryKeywords"), // Array of keywords that influenced categorization
+  suggestedAction: varchar("suggestedAction", { length: 255 }),
+  priority: emailPriorityEnum.default("medium"),
+  subcategory: varchar("subcategory", { length: 100 }),
   rawHeaders: json("rawHeaders"),
   metadata: json("metadata"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),

@@ -4861,15 +4861,23 @@ Provide your forecast in JSON format with the following structure:
   // EMAIL SCANNING & DOCUMENT PARSING
   // ============================================
   emailScanning: router({
-    // List inbound emails
+    // List inbound emails with category filtering
     list: protectedProcedure
       .input(z.object({
         status: z.string().optional(),
+        category: z.string().optional(),
+        priority: z.string().optional(),
         limit: z.number().optional(),
         offset: z.number().optional(),
       }).optional())
       .query(async ({ input }) => {
         return db.getInboundEmails(input);
+      }),
+
+    // Get category statistics
+    getCategoryStats: protectedProcedure
+      .query(async () => {
+        return db.getEmailCategoryStats();
       }),
 
     // Get single email with attachments and parsed documents
@@ -4897,7 +4905,11 @@ Provide your forecast in JSON format with the following structure:
       .mutation(async ({ input, ctx }) => {
         const { parseEmailContent } = await import("./_core/emailParser");
         
-        // Create inbound email record
+        // First, quick categorize for immediate feedback
+        const { quickCategorize, categorizeEmail } = await import("./_core/emailParser");
+        const quickCategory = quickCategorize(input.subject, input.fromEmail);
+        
+        // Create inbound email record with initial category
         const { id: emailId } = await db.createInboundEmail({
           messageId: `manual-${Date.now()}-${Math.random().toString(36).slice(2)}`,
           fromEmail: input.fromEmail,
@@ -4908,10 +4920,15 @@ Provide your forecast in JSON format with the following structure:
           bodyHtml: input.bodyHtml || null,
           receivedAt: new Date(),
           parsingStatus: "processing",
+          category: quickCategory.category,
+          categoryConfidence: quickCategory.confidence.toString(),
+          categoryKeywords: quickCategory.keywords,
+          suggestedAction: quickCategory.suggestedAction || null,
+          priority: quickCategory.priority,
         });
 
         try {
-          // Parse email content with AI
+          // Parse email content with AI (includes full categorization)
           const result = await parseEmailContent(
             input.subject,
             input.bodyText,
@@ -4991,6 +5008,18 @@ Provide your forecast in JSON format with the following structure:
             createdDocs.push({ id: docId, type: doc.documentType, vendorId, purchaseOrderId, shipmentId });
           }
 
+          // Update with AI categorization if available (more accurate than quick categorize)
+          if (result.categorization) {
+            await db.updateEmailCategorization(emailId, {
+              category: result.categorization.category,
+              categoryConfidence: result.categorization.confidence.toString(),
+              categoryKeywords: result.categorization.keywords,
+              suggestedAction: result.categorization.suggestedAction || null,
+              priority: result.categorization.priority,
+              subcategory: result.categorization.subcategory || null,
+            });
+          }
+
           await db.updateInboundEmailStatus(emailId, "parsed");
           
           // Create audit log
@@ -4999,7 +5028,7 @@ Provide your forecast in JSON format with the following structure:
             action: "create",
             entityType: "inbound_email",
             entityId: emailId,
-            newValues: { documentsFound: createdDocs.length },
+            newValues: { documentsFound: createdDocs.length, category: result.categorization?.category },
           });
 
           return { emailId, success: true, documents: createdDocs };
