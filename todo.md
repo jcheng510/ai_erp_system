@@ -613,3 +613,9 @@
 - [x] Production Order inline cards with transformation visualization (Input Materials → Output)
 - [x] Shipment UI with one-click receive for incoming transfers
 - [x] Lot/batch inheritance display in expanded item views
+
+## AICommandBar AI Agent Integration
+- [x] Update AICommandBar to use aiAgent.tasks.create mutation instead of ai.query
+- [x] Fix backend generate_po to accept rawMaterialName (not just rawMaterialId)
+- [x] Handle missing vendor gracefully (return needs_vendor status and prompt user)
+- [x] Change aiAgent.tasks.create to protectedProcedure for non-admin users

@@ -2596,9 +2596,9 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
       
       pendingApprovals: protectedProcedure.query(() => db.getPendingApprovalTasks()),
       
-      create: adminProcedure
+      create: protectedProcedure
         .input(z.object({
-          taskType: z.enum(['generate_po', 'send_rfq', 'send_quote_request', 'send_email', 'update_inventory', 'create_shipment', 'generate_invoice', 'reconcile_payment', 'reorder_materials', 'vendor_followup']),
+          taskType: z.enum(['generate_po', 'send_rfq', 'send_quote_request', 'send_email', 'update_inventory', 'create_shipment', 'generate_invoice', 'reconcile_payment', 'reorder_materials', 'vendor_followup', 'create_work_order', 'query']),
           priority: z.enum(['low', 'medium', 'high', 'urgent']).default('medium'),
           taskData: z.string(), // JSON string with task-specific data
           aiReasoning: z.string().optional(),
@@ -2680,8 +2680,45 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
               case 'generate_po': {
                 // Create PO with line items for raw materials
                 const poNumber = generateNumber('PO');
-                const vendor = await db.getVendorById(taskData.vendorId);
-                const material = taskData.rawMaterialId ? await db.getRawMaterialById(taskData.rawMaterialId) : null;
+                
+                // Resolve material by ID or name
+                let material = null;
+                if (taskData.rawMaterialId) {
+                  material = await db.getRawMaterialById(taskData.rawMaterialId);
+                } else if (taskData.rawMaterialName) {
+                  const allMaterials = await db.getRawMaterials();
+                  material = allMaterials.find(m =>
+                    m.name?.toLowerCase().includes(taskData.rawMaterialName.toLowerCase()) ||
+                    m.sku?.toLowerCase() === taskData.rawMaterialName.toLowerCase()
+                  ) || null;
+                }
+                
+                // Resolve vendor - use provided ID, material's preferred vendor, or create draft without vendor
+                let vendor = null;
+                let vendorId = taskData.vendorId;
+                
+                if (vendorId) {
+                  vendor = await db.getVendorById(vendorId);
+                } else if (material?.preferredVendorId) {
+                  vendor = await db.getVendorById(material.preferredVendorId);
+                  vendorId = material.preferredVendorId;
+                }
+                
+                // If no vendor found, return needs_vendor status
+                if (!vendorId) {
+                  await db.updateAiAgentTask(task.id, {
+                    status: 'needs_vendor',
+                    executedAt: new Date(),
+                  });
+                  await db.createAiAgentLog({
+                    taskId: task.id,
+                    action: 'execution_needs_input',
+                    status: 'warning',
+                    message: `PO generation requires vendor selection for ${material?.name || taskData.rawMaterialName || 'material'}`,
+                    details: JSON.stringify({ materialId: material?.id, materialName: material?.name || taskData.rawMaterialName }),
+                  });
+                  return { success: false, status: 'needs_vendor', message: 'Please select a vendor for this PO' };
+                }
                 
                 // Calculate expected date based on vendor lead time
                 const leadDays = vendor?.defaultLeadTimeDays || material?.leadTimeDays || 14;
@@ -2695,7 +2732,7 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
                 
                 const po = await db.createPurchaseOrder({
                   poNumber,
-                  vendorId: taskData.vendorId,
+                  vendorId: vendorId,
                   orderDate: new Date(),
                   expectedDate,
                   notes: taskData.notes || `AI-generated PO for ${material?.name || 'materials'}`,

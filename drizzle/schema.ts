@@ -2782,7 +2782,9 @@ export const aiAgentTasks = mysqlTable("aiAgentTasks", {
     "generate_invoice",
     "reconcile_payment",
     "reorder_materials",
-    "vendor_followup"
+    "vendor_followup",
+    "create_work_order",
+    "query"
   ]).notNull(),
   status: mysqlEnum("status", [
     "pending_approval",
