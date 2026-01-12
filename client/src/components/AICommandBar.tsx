@@ -10,7 +10,7 @@ import { Streamdown } from "streamdown";
 import {
   Bot, Search, Loader2, Sparkles, ArrowRight, Command,
   FileText, Package, Users, DollarSign, Truck, ClipboardList,
-  Send, X, CheckCircle, Clock
+  Send, X, CheckCircle, Clock, Building, AlertCircle
 } from "lucide-react";
 import { useLocation } from "wouter";
 
@@ -439,12 +439,39 @@ function parseIntent(query: string): ParsedIntent {
   };
 }
 
+// Vendor suggestion interface
+interface VendorSuggestion {
+  material: {
+    id: number;
+    name: string;
+    sku: string | null;
+    unit: string | null;
+    unitCost: string | null;
+  } | null;
+  preferredVendor: {
+    id: number;
+    name: string;
+    email: string | null;
+  } | null;
+  suggestedVendor: {
+    id: number;
+    name: string;
+    email: string | null;
+    poCount: number;
+    lastOrderDate: Date | null;
+  } | null;
+  lastPurchasePrice: string | null;
+  recentPOCount: number;
+}
+
 export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps) {
   const [query, setQuery] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [response, setResponse] = useState<string | null>(null);
   const [taskCreated, setTaskCreated] = useState<{ id: number; status: string } | null>(null);
   const [showSuggestions, setShowSuggestions] = useState(true);
+  const [vendorSuggestion, setVendorSuggestion] = useState<VendorSuggestion | null>(null);
+  const [debouncedMaterialName, setDebouncedMaterialName] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const [, setLocation] = useLocation();
   const utils = trpc.useUtils();
@@ -479,6 +506,32 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
     },
   });
 
+  // Query for vendor suggestion based on material name
+  const vendorSuggestionQuery = trpc.rawMaterials.getPreferredVendor.useQuery(
+    { materialName: debouncedMaterialName || undefined },
+    { 
+      enabled: !!debouncedMaterialName && debouncedMaterialName.length > 2,
+      staleTime: 30000, // Cache for 30 seconds
+    }
+  );
+
+  // Update vendor suggestion when query returns
+  useEffect(() => {
+    if (vendorSuggestionQuery.data) {
+      setVendorSuggestion(vendorSuggestionQuery.data as VendorSuggestion);
+    }
+  }, [vendorSuggestionQuery.data]);
+
+  // Debounce material name extraction from query
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const materialName = extractMaterialName(query);
+      setDebouncedMaterialName(materialName);
+    }, 500); // 500ms debounce
+    
+    return () => clearTimeout(timer);
+  }, [query]);
+
   useEffect(() => {
     if (open && inputRef.current) {
       setTimeout(() => inputRef.current?.focus(), 100);
@@ -488,6 +541,8 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
       setResponse(null);
       setTaskCreated(null);
       setShowSuggestions(true);
+      setVendorSuggestion(null);
+      setDebouncedMaterialName(null);
     }
   }, [open]);
 
@@ -529,23 +584,46 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
     
     // For actionable tasks, create an AI Agent task
     try {
+      // Include vendor suggestion if available
+      const taskDataWithVendor = {
+        ...intent.taskData,
+        originalQuery: q,
+        context: context ? {
+          type: context.type,
+          id: context.id,
+          name: context.name
+        } : null,
+        // Add vendor suggestion data if available
+        ...(vendorSuggestion?.material && {
+          materialId: vendorSuggestion.material.id,
+          materialName: vendorSuggestion.material.name,
+          materialSku: vendorSuggestion.material.sku,
+          materialUnit: vendorSuggestion.material.unit,
+        }),
+        ...(vendorSuggestion?.suggestedVendor && {
+          suggestedVendorId: vendorSuggestion.suggestedVendor.id,
+          suggestedVendorName: vendorSuggestion.suggestedVendor.name,
+          suggestedVendorEmail: vendorSuggestion.suggestedVendor.email,
+          vendorPOCount: vendorSuggestion.suggestedVendor.poCount,
+        }),
+        ...(vendorSuggestion?.preferredVendor && {
+          preferredVendorId: vendorSuggestion.preferredVendor.id,
+          preferredVendorName: vendorSuggestion.preferredVendor.name,
+        }),
+        ...(vendorSuggestion?.lastPurchasePrice && {
+          lastPurchasePrice: vendorSuggestion.lastPurchasePrice,
+        }),
+      };
+      
       await createTask.mutateAsync({
         taskType: taskType,
         priority: "medium",
-        taskData: JSON.stringify({
-          ...intent.taskData,
-          originalQuery: q,
-          context: context ? {
-            type: context.type,
-            id: context.id,
-            name: context.name
-          } : null
-        })
+        taskData: JSON.stringify(taskDataWithVendor)
       });
     } catch (error) {
       // Error handled by mutation onError
     }
-  }, [context, aiQuery, createTask]);
+  }, [context, aiQuery, createTask, vendorSuggestion]);
 
   const filteredActions = quickActions.filter(action => 
     !context || action.context.some(c => context.type.toLowerCase().includes(c))
@@ -589,6 +667,55 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
             {context.name && (
               <span className="text-sm text-muted-foreground">{context.name}</span>
             )}
+          </div>
+        )}
+
+        {/* Vendor Suggestion Display */}
+        {vendorSuggestion?.material && !isLoading && !taskCreated && !response && (
+          <div className="px-4 py-3 bg-blue-50 border-b border-blue-100">
+            <div className="flex items-start gap-3">
+              <Package className="h-5 w-5 text-blue-600 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-medium text-blue-900">{vendorSuggestion.material.name}</span>
+                  {vendorSuggestion.material.sku && (
+                    <Badge variant="outline" className="text-xs">{vendorSuggestion.material.sku}</Badge>
+                  )}
+                </div>
+                
+                {/* Vendor Suggestion */}
+                {vendorSuggestion.suggestedVendor ? (
+                  <div className="mt-2 flex items-center gap-2 text-sm">
+                    <Building className="h-4 w-4 text-green-600" />
+                    <span className="text-green-700 font-medium">
+                      Suggested: {vendorSuggestion.suggestedVendor.name}
+                    </span>
+                    <span className="text-muted-foreground">
+                      ({vendorSuggestion.suggestedVendor.poCount} past POs)
+                    </span>
+                  </div>
+                ) : vendorSuggestion.preferredVendor ? (
+                  <div className="mt-2 flex items-center gap-2 text-sm">
+                    <Building className="h-4 w-4 text-blue-600" />
+                    <span className="text-blue-700 font-medium">
+                      Preferred: {vendorSuggestion.preferredVendor.name}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="mt-2 flex items-center gap-2 text-sm text-amber-600">
+                    <AlertCircle className="h-4 w-4" />
+                    <span>No vendor history - will need vendor selection</span>
+                  </div>
+                )}
+
+                {/* Last Purchase Price */}
+                {vendorSuggestion.lastPurchasePrice && (
+                  <div className="mt-1 text-sm text-muted-foreground">
+                    Last price: ${parseFloat(vendorSuggestion.lastPurchasePrice).toFixed(2)}/{vendorSuggestion.material.unit || 'unit'}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         )}
 

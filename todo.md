@@ -625,3 +625,8 @@
 - [x] Parse relative dates (next Friday, in 2 weeks, tomorrow, next month)
 - [x] Parse absolute dates (March 15th, 2026-03-15, 3/15/26)
 - [x] Integrate parsers into intent detection for PO generation
+
+## Vendor Suggestion for AICommandBar
+- [ ] Create backend procedure to get preferred vendor for material based on PO history
+- [ ] Integrate vendor suggestion into AICommandBar when material name is parsed
+- [ ] Show suggested vendor in task preview before submission

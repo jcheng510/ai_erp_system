@@ -4463,6 +4463,143 @@ Provide a brief status summary, any missing documents, and next steps.`;
         await db.deleteRawMaterial(input.id);
         return { success: true };
       }),
+
+    // Get preferred vendor for a material based on PO history
+    getPreferredVendor: protectedProcedure
+      .input(z.object({ 
+        materialName: z.string().optional(),
+        materialId: z.number().optional(),
+      }))
+      .query(async ({ input }) => {
+        // First, find the material
+        let material = null;
+        if (input.materialId) {
+          material = await db.getRawMaterialById(input.materialId);
+        } else if (input.materialName) {
+          const allMaterials = await db.getRawMaterials();
+          material = allMaterials.find(m => 
+            m.name?.toLowerCase().includes(input.materialName!.toLowerCase()) ||
+            m.sku?.toLowerCase() === input.materialName!.toLowerCase()
+          ) || null;
+        }
+        
+        if (!material) {
+          return { material: null, preferredVendor: null, recentPOs: [], suggestion: null };
+        }
+        
+        // Check if material has a preferred vendor set
+        let preferredVendor = null;
+        if (material.preferredVendorId) {
+          preferredVendor = await db.getVendorById(material.preferredVendorId);
+        }
+        
+        // Get recent POs for this material to find most used vendor
+        const allPOs = await db.getPurchaseOrders({});
+        
+        // Get all PO items by fetching items for each PO
+        const allPOItems: Array<{
+          id: number;
+          purchaseOrderId: number;
+          description: string;
+          unitPrice: string;
+          totalAmount: string;
+        }> = [];
+        
+        for (const po of allPOs) {
+          const items = await db.getPurchaseOrderItems(po.id);
+          allPOItems.push(...items);
+        }
+        
+        // Find PO items that reference this material (using purchaseOrderId and description)
+        const materialPOItems = allPOItems.filter(item => 
+          item.description?.toLowerCase().includes(material!.name?.toLowerCase() || '')
+        );
+        
+        // Count vendors by frequency and recency
+        const vendorStats: Record<number, { count: number; lastDate: Date | null; totalValue: number }> = {};
+        
+        for (const item of materialPOItems) {
+          const po = allPOs.find(p => p.id === item.purchaseOrderId);
+          if (po && po.vendorId) {
+            if (!vendorStats[po.vendorId]) {
+              vendorStats[po.vendorId] = { count: 0, lastDate: null, totalValue: 0 };
+            }
+            vendorStats[po.vendorId].count++;
+            vendorStats[po.vendorId].totalValue += parseFloat(item.totalAmount || '0');
+            const poDate = po.orderDate ? new Date(po.orderDate) : null;
+            if (poDate && (!vendorStats[po.vendorId].lastDate || poDate > vendorStats[po.vendorId].lastDate!)) {
+              vendorStats[po.vendorId].lastDate = poDate;
+            }
+          }
+        }
+        
+        // Find the best vendor (most frequent, with recency as tiebreaker)
+        let suggestedVendorId: number | null = null;
+        let maxScore = 0;
+        
+        for (const [vendorId, stats] of Object.entries(vendorStats)) {
+          // Score = count * 10 + recency bonus (up to 5 points for orders in last 90 days)
+          const recencyBonus = stats.lastDate 
+            ? Math.max(0, 5 - Math.floor((Date.now() - stats.lastDate.getTime()) / (1000 * 60 * 60 * 24 * 30)))
+            : 0;
+          const score = stats.count * 10 + recencyBonus;
+          
+          if (score > maxScore) {
+            maxScore = score;
+            suggestedVendorId = parseInt(vendorId);
+          }
+        }
+        
+        // Get suggested vendor details
+        let suggestedVendor = null;
+        if (suggestedVendorId) {
+          suggestedVendor = await db.getVendorById(suggestedVendorId);
+        }
+        
+        // Get recent POs for context
+        const recentPOs = allPOs
+          .filter(po => materialPOItems.some(item => item.purchaseOrderId === po.id))
+          .sort((a, b) => {
+            const dateA = a.orderDate ? new Date(a.orderDate).getTime() : 0;
+            const dateB = b.orderDate ? new Date(b.orderDate).getTime() : 0;
+            return dateB - dateA;
+          })
+          .slice(0, 5);
+        
+        // Get last purchase price
+        const lastPOItem = materialPOItems
+          .sort((a, b) => {
+            const poA = allPOs.find(p => p.id === a.purchaseOrderId);
+            const poB = allPOs.find(p => p.id === b.purchaseOrderId);
+            const dateA = poA?.orderDate ? new Date(poA.orderDate).getTime() : 0;
+            const dateB = poB?.orderDate ? new Date(poB.orderDate).getTime() : 0;
+            return dateB - dateA;
+          })[0];
+        
+        return {
+          material: {
+            id: material.id,
+            name: material.name,
+            sku: material.sku,
+            unit: material.unit,
+            unitCost: material.unitCost,
+          },
+          preferredVendor: preferredVendor ? {
+            id: preferredVendor.id,
+            name: preferredVendor.name,
+            email: preferredVendor.email,
+          } : null,
+          suggestedVendor: suggestedVendor ? {
+            id: suggestedVendor.id,
+            name: suggestedVendor.name,
+            email: suggestedVendor.email,
+            poCount: vendorStats[suggestedVendor.id]?.count || 0,
+            lastOrderDate: vendorStats[suggestedVendor.id]?.lastDate || null,
+          } : null,
+          lastPurchasePrice: lastPOItem?.unitPrice || material.unitCost || null,
+          recentPOCount: materialPOItems.length,
+        };
+      }),
   }),
 
   // Work Orders
