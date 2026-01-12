@@ -11,6 +11,7 @@ import {
   FolderOpen, FileText, File, Download, Eye, Lock, 
   ChevronRight, Folder, ArrowLeft, Shield
 } from "lucide-react";
+import { useRef } from "react";
 import { useParams } from "wouter";
 
 export default function DataRoomPublic() {
@@ -207,50 +208,18 @@ export default function DataRoomPublic() {
     );
   }
 
-  // NDA Gate
+  // NDA Gate with E-Signature
   if (content?.room.requiresNda && !ndaAccepted) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 flex items-center justify-center p-4">
-        <Card className="w-full max-w-2xl">
-          <CardHeader>
-            <CardTitle>Non-Disclosure Agreement</CardTitle>
-            <CardDescription>
-              Please read and accept the NDA to access this data room
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <ScrollArea className="h-64 border rounded-lg p-4">
-              <div className="prose prose-sm">
-                {content.room.ndaText || (
-                  <p>
-                    By accessing this data room, you agree to keep all information
-                    contained herein strictly confidential. You may not share, copy,
-                    or distribute any documents or information without prior written
-                    consent from the data room owner.
-                  </p>
-                )}
-              </div>
-            </ScrollArea>
-            <div className="flex items-center space-x-2">
-              <Checkbox
-                id="nda"
-                checked={ndaAccepted}
-                onCheckedChange={(checked) => setNdaAccepted(checked as boolean)}
-              />
-              <Label htmlFor="nda" className="text-sm">
-                I have read and agree to the Non-Disclosure Agreement
-              </Label>
-            </div>
-            <Button
-              className="w-full"
-              disabled={!ndaAccepted}
-              onClick={() => setShowNda(false)}
-            >
-              Continue to Data Room
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
+      <NdaSigningGate
+        dataRoomId={dataRoomId!}
+        visitorId={visitorId}
+        visitorEmail={visitorInfo.email}
+        visitorName={visitorInfo.name}
+        visitorCompany={visitorInfo.company}
+        ndaText={content.room.ndaText}
+        onSigned={() => setNdaAccepted(true)}
+      />
     );
   }
 
@@ -405,6 +374,337 @@ export default function DataRoomPublic() {
           Powered by Superhumn Data Room
         </div>
       </footer>
+    </div>
+  );
+}
+
+// NDA Signing Gate Component
+function NdaSigningGate({
+  dataRoomId,
+  visitorId,
+  visitorEmail,
+  visitorName,
+  visitorCompany,
+  ndaText,
+  onSigned,
+}: {
+  dataRoomId: number;
+  visitorId: number | null;
+  visitorEmail: string;
+  visitorName: string;
+  visitorCompany: string;
+  ndaText: string | null;
+  onSigned: () => void;
+}) {
+  const [step, setStep] = useState<'view' | 'sign'>('view');
+  const [signerName, setSignerName] = useState(visitorName);
+  const [signerEmail, setSignerEmail] = useState(visitorEmail);
+  const [signerTitle, setSignerTitle] = useState('');
+  const [signerCompany, setSignerCompany] = useState(visitorCompany);
+  const [signatureType, setSignatureType] = useState<'typed' | 'drawn'>('typed');
+  const [typedSignature, setTypedSignature] = useState('');
+  const [consentChecked, setConsentChecked] = useState(false);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [isDrawing, setIsDrawing] = useState(false);
+
+  const { data: activeNda } = trpc.nda.documents.getActive.useQuery({ dataRoomId });
+  const { data: existingSignature } = trpc.nda.signatures.checkSigned.useQuery(
+    { dataRoomId, email: signerEmail },
+    { enabled: !!signerEmail }
+  );
+
+  const signMutation = trpc.nda.signatures.sign.useMutation({
+    onSuccess: () => {
+      toast.success('NDA signed successfully');
+      onSigned();
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  // Check if already signed
+  useEffect(() => {
+    if (existingSignature?.signed) {
+      onSigned();
+    }
+  }, [existingSignature, onSigned]);
+
+  // Canvas drawing handlers
+  const startDrawing = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    
+    setIsDrawing(true);
+    const rect = canvas.getBoundingClientRect();
+    ctx.beginPath();
+    ctx.moveTo(e.clientX - rect.left, e.clientY - rect.top);
+  };
+
+  const draw = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!isDrawing) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    
+    const rect = canvas.getBoundingClientRect();
+    ctx.lineTo(e.clientX - rect.left, e.clientY - rect.top);
+    ctx.stroke();
+  };
+
+  const stopDrawing = () => {
+    setIsDrawing(false);
+  };
+
+  const clearCanvas = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  };
+
+  const handleSign = async () => {
+    if (!activeNda) {
+      toast.error('No NDA document found');
+      return;
+    }
+
+    let signatureData = '';
+    if (signatureType === 'typed') {
+      signatureData = typedSignature;
+    } else {
+      const canvas = canvasRef.current;
+      if (canvas) {
+        signatureData = canvas.toDataURL('image/png');
+      }
+    }
+
+    if (!signatureData) {
+      toast.error('Please provide your signature');
+      return;
+    }
+
+    signMutation.mutate({
+      ndaDocumentId: activeNda.id,
+      dataRoomId,
+      visitorId: visitorId || undefined,
+      signerName,
+      signerEmail,
+      signerTitle: signerTitle || undefined,
+      signerCompany: signerCompany || undefined,
+      signatureType,
+      signatureData,
+      consentCheckbox: consentChecked,
+    });
+  };
+
+  // Initialize canvas
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (canvas) {
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = 2;
+        ctx.lineCap = 'round';
+      }
+    }
+  }, [signatureType]);
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 flex items-center justify-center p-4">
+      <Card className="w-full max-w-2xl">
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <Shield className="h-6 w-6 text-primary" />
+            <CardTitle>Non-Disclosure Agreement</CardTitle>
+          </div>
+          <CardDescription>
+            {step === 'view'
+              ? 'Please review the NDA before signing'
+              : 'Complete your signature to proceed'}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {step === 'view' ? (
+            <>
+              {/* NDA Document Preview */}
+              {activeNda ? (
+                <div className="border rounded-lg overflow-hidden">
+                  <div className="bg-muted p-3 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <FileText className="h-5 w-5 text-red-500" />
+                      <span className="font-medium">{activeNda.name}</span>
+                      <span className="text-sm text-muted-foreground">v{activeNda.version}</span>
+                    </div>
+                    <Button variant="outline" size="sm" asChild>
+                      <a href={activeNda.storageUrl} target="_blank" rel="noopener noreferrer">
+                        <Eye className="h-4 w-4 mr-2" />
+                        View Full Document
+                      </a>
+                    </Button>
+                  </div>
+                  <iframe
+                    src={activeNda.storageUrl}
+                    className="w-full h-96 border-0"
+                    title="NDA Document"
+                  />
+                </div>
+              ) : (
+                <ScrollArea className="h-64 border rounded-lg p-4">
+                  <div className="prose prose-sm">
+                    {ndaText || (
+                      <p>
+                        By accessing this data room, you agree to keep all information
+                        contained herein strictly confidential. You may not share, copy,
+                        or distribute any documents or information without prior written
+                        consent from the data room owner.
+                      </p>
+                    )}
+                  </div>
+                </ScrollArea>
+              )}
+
+              <Button className="w-full" onClick={() => setStep('sign')}>
+                Proceed to Sign
+              </Button>
+            </>
+          ) : (
+            <>
+              {/* Signer Information */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Full Name *</Label>
+                  <Input
+                    value={signerName}
+                    onChange={(e) => setSignerName(e.target.value)}
+                    placeholder="John Smith"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Email *</Label>
+                  <Input
+                    type="email"
+                    value={signerEmail}
+                    onChange={(e) => setSignerEmail(e.target.value)}
+                    placeholder="john@company.com"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Title</Label>
+                  <Input
+                    value={signerTitle}
+                    onChange={(e) => setSignerTitle(e.target.value)}
+                    placeholder="CEO"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Company</Label>
+                  <Input
+                    value={signerCompany}
+                    onChange={(e) => setSignerCompany(e.target.value)}
+                    placeholder="Acme Inc."
+                  />
+                </div>
+              </div>
+
+              {/* Signature Type Selection */}
+              <div className="space-y-2">
+                <Label>Signature Method</Label>
+                <div className="flex gap-2">
+                  <Button
+                    variant={signatureType === 'typed' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setSignatureType('typed')}
+                  >
+                    Type Signature
+                  </Button>
+                  <Button
+                    variant={signatureType === 'drawn' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setSignatureType('drawn')}
+                  >
+                    Draw Signature
+                  </Button>
+                </div>
+              </div>
+
+              {/* Signature Input */}
+              {signatureType === 'typed' ? (
+                <div className="space-y-2">
+                  <Label>Type your full legal name as signature</Label>
+                  <Input
+                    value={typedSignature}
+                    onChange={(e) => setTypedSignature(e.target.value)}
+                    placeholder="John Smith"
+                    className="font-signature text-2xl h-16"
+                    style={{ fontFamily: 'cursive' }}
+                  />
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label>Draw your signature</Label>
+                    <Button variant="ghost" size="sm" onClick={clearCanvas}>
+                      Clear
+                    </Button>
+                  </div>
+                  <div className="border rounded-lg bg-white">
+                    <canvas
+                      ref={canvasRef}
+                      width={500}
+                      height={150}
+                      className="w-full cursor-crosshair"
+                      onMouseDown={startDrawing}
+                      onMouseMove={draw}
+                      onMouseUp={stopDrawing}
+                      onMouseLeave={stopDrawing}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Consent Checkbox */}
+              <div className="flex items-start space-x-2 pt-4 border-t">
+                <Checkbox
+                  id="consent"
+                  checked={consentChecked}
+                  onCheckedChange={(checked) => setConsentChecked(checked as boolean)}
+                />
+                <Label htmlFor="consent" className="text-sm leading-relaxed">
+                  I have read and understood the Non-Disclosure Agreement. By signing below,
+                  I agree to be legally bound by its terms and conditions. I understand that
+                  this electronic signature has the same legal effect as a handwritten signature.
+                </Label>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex gap-2 pt-4">
+                <Button variant="outline" onClick={() => setStep('view')}>
+                  Back
+                </Button>
+                <Button
+                  className="flex-1"
+                  onClick={handleSign}
+                  disabled={
+                    !signerName ||
+                    !signerEmail ||
+                    !consentChecked ||
+                    (signatureType === 'typed' && !typedSignature) ||
+                    signMutation.isPending
+                  }
+                >
+                  {signMutation.isPending ? 'Signing...' : 'Sign & Continue'}
+                </Button>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

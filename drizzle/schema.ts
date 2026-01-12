@@ -2460,3 +2460,106 @@ export const emailScanLogs = mysqlTable("emailScanLogs", {
 
 export type EmailScanLog = typeof emailScanLogs.$inferSelect;
 export type InsertEmailScanLog = typeof emailScanLogs.$inferInsert;
+
+
+// ============================================
+// NDA E-SIGNATURES
+// ============================================
+
+// NDA Documents - uploaded NDA PDFs for data rooms
+export const ndaDocuments = mysqlTable("nda_documents", {
+  id: int("id").autoincrement().primaryKey(),
+  dataRoomId: int("dataRoomId").notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  version: varchar("version", { length: 32 }).default("1.0").notNull(),
+  
+  // File storage
+  storageKey: varchar("storageKey", { length: 512 }).notNull(),
+  storageUrl: varchar("storageUrl", { length: 1024 }).notNull(),
+  mimeType: varchar("mimeType", { length: 128 }).default("application/pdf").notNull(),
+  fileSize: bigint("fileSize", { mode: "number" }),
+  pageCount: int("pageCount"),
+  
+  // Settings
+  isActive: boolean("isActive").default(true).notNull(),
+  requiresSignature: boolean("requiresSignature").default(true).notNull(),
+  allowTypedSignature: boolean("allowTypedSignature").default(true).notNull(),
+  allowDrawnSignature: boolean("allowDrawnSignature").default(true).notNull(),
+  
+  // Metadata
+  uploadedBy: int("uploadedBy").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type NdaDocument = typeof ndaDocuments.$inferSelect;
+export type InsertNdaDocument = typeof ndaDocuments.$inferInsert;
+
+// NDA Signatures - signed NDA records
+export const ndaSignatures = mysqlTable("nda_signatures", {
+  id: int("id").autoincrement().primaryKey(),
+  ndaDocumentId: int("ndaDocumentId").notNull(),
+  dataRoomId: int("dataRoomId").notNull(),
+  visitorId: int("visitorId"), // Link to data room visitor
+  linkId: int("linkId"), // Which link they used
+  
+  // Signer information
+  signerName: varchar("signerName", { length: 255 }).notNull(),
+  signerEmail: varchar("signerEmail", { length: 320 }).notNull(),
+  signerTitle: varchar("signerTitle", { length: 255 }),
+  signerCompany: varchar("signerCompany", { length: 255 }),
+  
+  // Signature data
+  signatureType: mysqlEnum("signatureType", ["typed", "drawn"]).notNull(),
+  signatureData: text("signatureData").notNull(), // Base64 image for drawn, or typed name
+  signatureImageUrl: varchar("signatureImageUrl", { length: 1024 }), // S3 URL for drawn signature
+  
+  // Signed document
+  signedDocumentKey: varchar("signedDocumentKey", { length: 512 }), // S3 key for signed PDF
+  signedDocumentUrl: varchar("signedDocumentUrl", { length: 1024 }), // S3 URL for signed PDF
+  
+  // Verification & audit
+  signedAt: timestamp("signedAt").defaultNow().notNull(),
+  ipAddress: varchar("ipAddress", { length: 45 }).notNull(),
+  userAgent: text("userAgent"),
+  
+  // Legal compliance
+  agreementText: text("agreementText"), // Snapshot of NDA text at signing time
+  consentCheckbox: boolean("consentCheckbox").default(true).notNull(),
+  
+  // Status
+  status: mysqlEnum("status", ["pending", "signed", "revoked", "expired"]).default("signed").notNull(),
+  revokedAt: timestamp("revokedAt"),
+  revokedReason: text("revokedReason"),
+  
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type NdaSignature = typeof ndaSignatures.$inferSelect;
+export type InsertNdaSignature = typeof ndaSignatures.$inferInsert;
+
+// NDA Signature Audit Log - detailed audit trail
+export const ndaSignatureAuditLog = mysqlTable("nda_signature_audit_log", {
+  id: int("id").autoincrement().primaryKey(),
+  signatureId: int("signatureId").notNull(),
+  action: mysqlEnum("action", [
+    "viewed_nda",
+    "started_signing",
+    "completed_signature",
+    "downloaded_signed_copy",
+    "signature_revoked",
+    "access_granted",
+    "access_denied"
+  ]).notNull(),
+  
+  // Context
+  ipAddress: varchar("ipAddress", { length: 45 }),
+  userAgent: text("userAgent"),
+  details: json("details"), // Additional context
+  
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type NdaSignatureAuditLog = typeof ndaSignatureAuditLog.$inferSelect;
+export type InsertNdaSignatureAuditLog = typeof ndaSignatureAuditLog.$inferInsert;

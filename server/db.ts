@@ -38,6 +38,8 @@ import {
   inboundEmails, emailAttachments, parsedDocuments, parsedDocumentLineItems,
   // Data room
   dataRooms, dataRoomFolders, dataRoomDocuments, dataRoomLinks, dataRoomVisitors, documentViews, dataRoomInvitations,
+  // NDA e-signatures
+  ndaDocuments, ndaSignatures, ndaSignatureAuditLog,
   // IMAP credentials
   imapCredentials,
   // Email credentials and scheduled scans
@@ -65,6 +67,8 @@ import {
   InsertInboundEmail, InsertEmailAttachment, InsertParsedDocument, InsertParsedDocumentLineItem,
   // Data room types
   InsertDataRoom, InsertDataRoomFolder, InsertDataRoomDocument, InsertDataRoomLink, InsertDataRoomVisitor, InsertDocumentView, InsertDataRoomInvitation,
+  // NDA types
+  InsertNdaDocument, InsertNdaSignature, InsertNdaSignatureAuditLog,
   InsertImapCredential
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
@@ -5336,9 +5340,9 @@ export async function getScanLogs(credentialId: number, limit = 20) {
 
 // Update email attachment with OCR results
 export async function updateEmailAttachment(id: number, data: Partial<{
-  ocrText: string;
-  ocrData: string;
-  ocrConfidence: string;
+  extractedText: string;
+  metadata: any;
+  isProcessed: boolean;
 }>) {
   const db = await getDb();
   if (!db) return;
@@ -5358,4 +5362,196 @@ export async function updateEmailCategory(id: number, data: {
   if (!db) return;
   
   await db.update(inboundEmails).set(data).where(eq(inboundEmails.id, id));
+}
+
+
+// ============================================
+// NDA E-SIGNATURES
+// ============================================
+
+// NDA Documents
+export async function getNdaDocuments(dataRoomId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  
+  return db.select().from(ndaDocuments)
+    .where(eq(ndaDocuments.dataRoomId, dataRoomId))
+    .orderBy(desc(ndaDocuments.createdAt));
+}
+
+export async function getActiveNdaDocument(dataRoomId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  
+  const [result] = await db.select().from(ndaDocuments)
+    .where(and(
+      eq(ndaDocuments.dataRoomId, dataRoomId),
+      eq(ndaDocuments.isActive, true)
+    ))
+    .orderBy(desc(ndaDocuments.createdAt))
+    .limit(1);
+  
+  return result || null;
+}
+
+export async function getNdaDocumentById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  
+  const [result] = await db.select().from(ndaDocuments).where(eq(ndaDocuments.id, id));
+  return result || null;
+}
+
+export async function createNdaDocument(data: {
+  dataRoomId: number;
+  name: string;
+  version?: string;
+  storageKey: string;
+  storageUrl: string;
+  mimeType?: string;
+  fileSize?: number;
+  pageCount?: number;
+  requiresSignature?: boolean;
+  allowTypedSignature?: boolean;
+  allowDrawnSignature?: boolean;
+  uploadedBy: number;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  // Deactivate previous NDA documents for this data room
+  await db.update(ndaDocuments)
+    .set({ isActive: false })
+    .where(eq(ndaDocuments.dataRoomId, data.dataRoomId));
+  
+  const [result] = await db.insert(ndaDocuments).values({
+    ...data,
+    isActive: true,
+  });
+  return { id: result.insertId };
+}
+
+export async function updateNdaDocument(id: number, data: Partial<{
+  name: string;
+  version: string;
+  isActive: boolean;
+  requiresSignature: boolean;
+  allowTypedSignature: boolean;
+  allowDrawnSignature: boolean;
+}>) {
+  const db = await getDb();
+  if (!db) return;
+  
+  await db.update(ndaDocuments).set(data).where(eq(ndaDocuments.id, id));
+}
+
+export async function deleteNdaDocument(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  
+  await db.delete(ndaDocuments).where(eq(ndaDocuments.id, id));
+}
+
+// NDA Signatures
+export async function getNdaSignatures(dataRoomId: number, options?: { visitorId?: number; status?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  
+  const conditions = [eq(ndaSignatures.dataRoomId, dataRoomId)];
+  if (options?.visitorId) conditions.push(eq(ndaSignatures.visitorId, options.visitorId));
+  if (options?.status) conditions.push(eq(ndaSignatures.status, options.status as any));
+  
+  return db.select().from(ndaSignatures)
+    .where(and(...conditions))
+    .orderBy(desc(ndaSignatures.signedAt));
+}
+
+export async function getNdaSignatureById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  
+  const [result] = await db.select().from(ndaSignatures).where(eq(ndaSignatures.id, id));
+  return result || null;
+}
+
+export async function getVisitorNdaSignature(dataRoomId: number, visitorEmail: string) {
+  const db = await getDb();
+  if (!db) return null;
+  
+  const [result] = await db.select().from(ndaSignatures)
+    .where(and(
+      eq(ndaSignatures.dataRoomId, dataRoomId),
+      eq(ndaSignatures.signerEmail, visitorEmail),
+      eq(ndaSignatures.status, 'signed')
+    ))
+    .orderBy(desc(ndaSignatures.signedAt))
+    .limit(1);
+  
+  return result || null;
+}
+
+export async function createNdaSignature(data: {
+  ndaDocumentId: number;
+  dataRoomId: number;
+  visitorId?: number;
+  linkId?: number;
+  signerName: string;
+  signerEmail: string;
+  signerTitle?: string;
+  signerCompany?: string;
+  signatureType: 'typed' | 'drawn';
+  signatureData: string;
+  signatureImageUrl?: string;
+  signedDocumentKey?: string;
+  signedDocumentUrl?: string;
+  ipAddress: string;
+  userAgent?: string;
+  agreementText?: string;
+  consentCheckbox?: boolean;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  const [result] = await db.insert(ndaSignatures).values({
+    ...data,
+    status: 'signed',
+  });
+  return { id: result.insertId };
+}
+
+export async function updateNdaSignature(id: number, data: Partial<{
+  signedDocumentKey: string;
+  signedDocumentUrl: string;
+  status: 'pending' | 'signed' | 'revoked' | 'expired';
+  revokedAt: Date;
+  revokedReason: string;
+}>) {
+  const db = await getDb();
+  if (!db) return;
+  
+  await db.update(ndaSignatures).set(data).where(eq(ndaSignatures.id, id));
+}
+
+// NDA Audit Log
+export async function createNdaAuditLog(data: {
+  signatureId: number;
+  action: 'viewed_nda' | 'started_signing' | 'completed_signature' | 'downloaded_signed_copy' | 'signature_revoked' | 'access_granted' | 'access_denied';
+  ipAddress?: string;
+  userAgent?: string;
+  details?: any;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  const [result] = await db.insert(ndaSignatureAuditLog).values(data);
+  return { id: result.insertId };
+}
+
+export async function getNdaAuditLogs(signatureId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  
+  return db.select().from(ndaSignatureAuditLog)
+    .where(eq(ndaSignatureAuditLog.signatureId, signatureId))
+    .orderBy(desc(ndaSignatureAuditLog.createdAt));
 }

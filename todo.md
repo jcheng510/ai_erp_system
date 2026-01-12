@@ -415,3 +415,14 @@
 - [x] Parse extracted text for invoice/receipt data
 - [x] Link parsed data to parent email
 - [x] UI to view extracted attachment content
+
+
+## NDA E-Signature Feature
+- [x] Add NDA document upload (PDF) to data rooms
+- [x] Store NDA documents in S3 with data room association
+- [x] Create signature capture UI (typed name, drawn signature, date)
+- [x] Store signed NDA records with timestamp, IP, and signature image
+- [x] Block data room access until NDA is signed
+- [x] Allow viewing/downloading signed NDAs from admin panel
+- [x] Send email notification when NDA is signed
+- [x] Add signature verification and audit trail

@@ -266,6 +266,10 @@ export default function DataRoomDetail() {
               <Users className="h-4 w-4 mr-2" />
               Visitors
             </TabsTrigger>
+            <TabsTrigger value="nda">
+              <FileText className="h-4 w-4 mr-2" />
+              NDA
+            </TabsTrigger>
             <TabsTrigger value="settings">
               <Settings className="h-4 w-4 mr-2" />
               Settings
@@ -714,6 +718,11 @@ export default function DataRoomDetail() {
             </Card>
           </TabsContent>
 
+          {/* NDA Tab */}
+          <TabsContent value="nda" className="mt-4">
+            <NdaManagement dataRoomId={roomId} requiresNda={room?.requiresNda || false} />
+          </TabsContent>
+
           {/* Settings Tab */}
           <TabsContent value="settings" className="mt-4">
             <Card>
@@ -780,5 +789,333 @@ export default function DataRoomDetail() {
         </Tabs>
       </div>
     </DashboardLayout>
+  );
+}
+
+// NDA Management Component
+function NdaManagement({ dataRoomId, requiresNda }: { dataRoomId: number; requiresNda: boolean }) {
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [ndaName, setNdaName] = useState("");
+  const [ndaVersion, setNdaVersion] = useState("1.0");
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const { data: ndaDocuments, refetch: refetchNda } = trpc.nda.documents.list.useQuery({ dataRoomId });
+  const { data: signatures, refetch: refetchSignatures } = trpc.nda.signatures.list.useQuery({ dataRoomId });
+
+  const uploadNdaMutation = trpc.nda.documents.upload.useMutation({
+    onSuccess: () => {
+      toast.success("NDA document uploaded");
+      setUploadOpen(false);
+      setSelectedFile(null);
+      setNdaName("");
+      refetchNda();
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const deleteNdaMutation = trpc.nda.documents.delete.useMutation({
+    onSuccess: () => {
+      toast.success("NDA document deleted");
+      refetchNda();
+    },
+  });
+
+  const revokeSignatureMutation = trpc.nda.signatures.revoke.useMutation({
+    onSuccess: () => {
+      toast.success("Signature revoked");
+      refetchSignatures();
+    },
+  });
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.type !== 'application/pdf') {
+        toast.error("Please upload a PDF file");
+        return;
+      }
+      setSelectedFile(file);
+      if (!ndaName) {
+        setNdaName(file.name.replace('.pdf', ''));
+      }
+    }
+  };
+
+  const handleUpload = async () => {
+    if (!selectedFile) return;
+
+    // Convert file to base64 and upload to S3
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const base64 = (reader.result as string).split(',')[1];
+      const key = `nda/${dataRoomId}/${Date.now()}-${selectedFile.name}`;
+      
+      // Upload to S3 via storage API
+      try {
+        const response = await fetch('/api/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            key,
+            data: base64,
+            contentType: 'application/pdf',
+          }),
+        });
+        
+        if (!response.ok) throw new Error('Upload failed');
+        const { url } = await response.json();
+
+        uploadNdaMutation.mutate({
+          dataRoomId,
+          name: ndaName || selectedFile.name,
+          version: ndaVersion,
+          storageKey: key,
+          storageUrl: url,
+          mimeType: 'application/pdf',
+          fileSize: selectedFile.size,
+        });
+      } catch (error) {
+        toast.error("Failed to upload file");
+      }
+    };
+    reader.readAsDataURL(selectedFile);
+  };
+
+  const activeNda = ndaDocuments?.find(d => d.isActive);
+
+  return (
+    <div className="space-y-6">
+      {/* NDA Status Card */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <FileText className="h-5 w-5" />
+                NDA Document
+              </CardTitle>
+              <CardDescription>
+                Upload and manage NDA documents for this data room
+              </CardDescription>
+            </div>
+            <Badge variant={requiresNda ? "default" : "outline"}>
+              {requiresNda ? "NDA Required" : "NDA Optional"}
+            </Badge>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {activeNda ? (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between p-4 border rounded-lg">
+                <div className="flex items-center gap-4">
+                  <div className="h-12 w-12 bg-red-100 rounded-lg flex items-center justify-center">
+                    <FileText className="h-6 w-6 text-red-600" />
+                  </div>
+                  <div>
+                    <div className="font-medium">{activeNda.name}</div>
+                    <div className="text-sm text-muted-foreground">
+                      Version {activeNda.version} • Uploaded {new Date(activeNda.createdAt).toLocaleDateString()}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" size="sm" asChild>
+                    <a href={activeNda.storageUrl} target="_blank" rel="noopener noreferrer">
+                      <Eye className="h-4 w-4 mr-2" />
+                      View
+                    </a>
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setUploadOpen(true)}
+                  >
+                    <Upload className="h-4 w-4 mr-2" />
+                    Replace
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => deleteNdaMutation.mutate({ id: activeNda.id })}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="text-center py-8">
+              <FileText className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-50" />
+              <p className="text-muted-foreground mb-4">No NDA document uploaded</p>
+              <Button onClick={() => setUploadOpen(true)}>
+                <Upload className="h-4 w-4 mr-2" />
+                Upload NDA Document
+              </Button>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Signatures Card */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Lock className="h-5 w-5" />
+            Signatures ({signatures?.length || 0})
+          </CardTitle>
+          <CardDescription>
+            View all signed NDAs for this data room
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {!signatures?.length ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <Lock className="h-12 w-12 mx-auto mb-4 opacity-50" />
+              <p>No signatures yet</p>
+              <p className="text-sm">Signatures will appear here when visitors sign the NDA</p>
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Signer</TableHead>
+                  <TableHead>Company</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Signed At</TableHead>
+                  <TableHead>IP Address</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {signatures.map((sig) => (
+                  <TableRow key={sig.id}>
+                    <TableCell>
+                      <div>
+                        <div className="font-medium">{sig.signerName}</div>
+                        <div className="text-sm text-muted-foreground">{sig.signerEmail}</div>
+                      </div>
+                    </TableCell>
+                    <TableCell>{sig.signerCompany || "-"}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline">
+                        {sig.signatureType === 'drawn' ? 'Drawn' : 'Typed'}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      {new Date(sig.signedAt).toLocaleString()}
+                    </TableCell>
+                    <TableCell className="font-mono text-sm">
+                      {sig.ipAddress}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={sig.status === 'signed' ? 'default' : 'destructive'}>
+                        {sig.status}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="sm">
+                            <MoreVertical className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          {sig.signatureImageUrl && (
+                            <DropdownMenuItem asChild>
+                              <a href={sig.signatureImageUrl} target="_blank" rel="noopener noreferrer">
+                                <Eye className="h-4 w-4 mr-2" />
+                                View Signature
+                              </a>
+                            </DropdownMenuItem>
+                          )}
+                          {sig.status === 'signed' && (
+                            <DropdownMenuItem
+                              className="text-destructive"
+                              onClick={() => revokeSignatureMutation.mutate({ id: sig.id })}
+                            >
+                              <Trash2 className="h-4 w-4 mr-2" />
+                              Revoke Signature
+                            </DropdownMenuItem>
+                          )}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Upload Dialog */}
+      <Dialog open={uploadOpen} onOpenChange={setUploadOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Upload NDA Document</DialogTitle>
+            <DialogDescription>
+              Upload a PDF document that visitors must sign before accessing the data room
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div
+              className="border-2 border-dashed rounded-lg p-8 text-center cursor-pointer hover:border-primary transition-colors"
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".pdf"
+                className="hidden"
+                onChange={handleFileSelect}
+              />
+              {selectedFile ? (
+                <div className="flex items-center justify-center gap-2">
+                  <FileText className="h-8 w-8 text-red-600" />
+                  <span className="font-medium">{selectedFile.name}</span>
+                </div>
+              ) : (
+                <>
+                  <Upload className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
+                  <p className="text-muted-foreground">Click to upload PDF</p>
+                  <p className="text-sm text-muted-foreground">or drag and drop</p>
+                </>
+              )}
+            </div>
+            <div className="space-y-2">
+              <Label>Document Name</Label>
+              <Input
+                value={ndaName}
+                onChange={(e) => setNdaName(e.target.value)}
+                placeholder="Non-Disclosure Agreement"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Version</Label>
+              <Input
+                value={ndaVersion}
+                onChange={(e) => setNdaVersion(e.target.value)}
+                placeholder="1.0"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setUploadOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleUpload}
+              disabled={!selectedFile || uploadNdaMutation.isPending}
+            >
+              {uploadNdaMutation.isPending ? "Uploading..." : "Upload NDA"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
   );
 }

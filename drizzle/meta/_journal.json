@@ -127,6 +127,13 @@
       "when": 1768191754769,
       "tag": "0017_dazzling_owl",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "5",
+      "when": 1768192779186,
+      "tag": "0018_exotic_eddie_brock",
+      "breakpoints": true
     }
   ]
 }

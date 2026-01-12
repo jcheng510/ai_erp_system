@@ -184,7 +184,7 @@ Return your analysis in the specified JSON format.`
     });
 
     const content = response.choices[0]?.message?.content;
-    if (!content) {
+    if (!content || typeof content !== 'string') {
       throw new Error('No response from LLM');
     }
 
@@ -216,7 +216,7 @@ Return your analysis in the specified JSON format.`
         invoiceNumber: parsed.invoiceNumber,
         notes: parsed.notes,
       },
-      rawOcrOutput: content,
+      rawOcrOutput: content as string,
     };
   } catch (error) {
     console.error('OCR processing error:', error);
@@ -236,7 +236,7 @@ export async function processEmailAttachments(
   attachments: Array<{
     id: number;
     filename: string;
-    mimeType: string;
+    mimeType: string | null;
     storageUrl: string | null;
   }>
 ): Promise<Map<number, ExtractedAttachmentData>> {
@@ -244,7 +244,7 @@ export async function processEmailAttachments(
   
   // Filter to only processable attachments
   const processable = attachments.filter(a => 
-    a.storageUrl && (
+    a.storageUrl && a.mimeType && (
       a.mimeType.startsWith('image/') ||
       a.mimeType === 'application/pdf'
     )
@@ -258,7 +258,7 @@ export async function processEmailAttachments(
       batch.map(async (attachment) => {
         const result = await processAttachment(
           attachment.storageUrl!,
-          attachment.mimeType,
+          attachment.mimeType!,
           attachment.filename
         );
         return { id: attachment.id, result };
