@@ -61,6 +61,7 @@ export interface SpreadsheetTableProps<T extends { id: number | string }> {
   actions?: { key: string; label: string; icon?: React.ReactNode }[];
   isLoading?: boolean;
   emptyMessage?: string;
+  emptyAction?: React.ReactNode; // Custom action component for empty state
   showSearch?: boolean;
   showFilters?: boolean;
   showExport?: boolean;
@@ -109,6 +110,7 @@ export function SpreadsheetTable<T extends { id: number | string }>({
   actions = [],
   isLoading = false,
   emptyMessage = "No data found",
+  emptyAction,
   showSearch = true,
   showFilters = false,
   showExport = false,
@@ -266,8 +268,15 @@ export function SpreadsheetTable<T extends { id: number | string }>({
     a.click();
   };
 
+  // Helper to get nested value from object using dot notation
+  const getNestedValue = (obj: any, path: string): any => {
+    return path.split('.').reduce((acc, part) => acc?.[part], obj);
+  };
+
   const renderCell = (row: T, col: Column<T>) => {
-    const value = (row as any)[col.key];
+    const value = typeof col.key === 'string' && col.key.includes('.') 
+      ? getNestedValue(row, col.key) 
+      : (row as any)[col.key];
     const isEditing = editingCell?.rowId === row.id && editingCell?.key === col.key;
 
     if (col.render) {
@@ -349,6 +358,10 @@ export function SpreadsheetTable<T extends { id: number | string }>({
           </DropdownMenu>
         );
       default:
+        // Handle object values - don't try to render them directly
+        if (value && typeof value === 'object') {
+          return <span>-</span>;
+        }
         return <span>{col.format ? col.format(value) : value?.toString() || "-"}</span>;
     }
   };
@@ -499,8 +512,11 @@ export function SpreadsheetTable<T extends { id: number | string }>({
               </tr>
             ) : filteredData.length === 0 ? (
               <tr>
-                <td colSpan={totalColumns} className="text-center py-8 text-muted-foreground">
-                  {emptyMessage}
+                <td colSpan={totalColumns} className="text-center py-12 text-muted-foreground">
+                  <div className="flex flex-col items-center gap-3">
+                    <p>{emptyMessage}</p>
+                    {emptyAction}
+                  </div>
                 </td>
               </tr>
             ) : (

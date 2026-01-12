@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import SpreadsheetTable, { Column } from "@/components/SpreadsheetTable";
+import { QuickCreateButton } from "@/components/QuickCreateDialog";
 import { 
   Package, Warehouse, ClipboardList, MapPin, Search, Plus, 
   AlertTriangle, CheckCircle, Clock, Play, Pause, X, ChevronRight
@@ -291,16 +292,16 @@ export default function ManufacturingHub() {
     { key: "version", header: "Version", type: "text" },
     { key: "componentCount", header: "Components", type: "number" },
     { key: "isActive", header: "Status", type: "badge", 
-      render: (val) => val ? "Active" : "Inactive" },
+      render: (row, val) => val ? "Active" : "Inactive" },
   ];
 
   const workOrderColumns: Column<any>[] = [
-    { key: "id", header: "WO #", type: "text", sortable: true, render: (val) => `WO-${val}` },
-    { key: "product.name", header: "Product", type: "text", sortable: true },
+    { key: "id", header: "WO #", type: "text", sortable: true, render: (row, val) => `WO-${val}` },
+    { key: "productName", header: "Product", type: "text", sortable: true },
     { key: "quantity", header: "Qty", type: "number", sortable: true },
     { key: "completedQuantity", header: "Done", type: "number" },
     { key: "status", header: "Status", type: "badge", sortable: true,
-      render: (val) => workOrderStatuses.find(s => s.value === val)?.label || val },
+      render: (row, val) => workOrderStatuses.find(s => s.value === val)?.label || val },
     { key: "dueDate", header: "Due", type: "date", sortable: true },
   ];
 
@@ -310,7 +311,7 @@ export default function ManufacturingHub() {
     { key: "type", header: "Type", type: "text" },
     { key: "capacity", header: "Capacity", type: "number" },
     { key: "isActive", header: "Status", type: "badge",
-      render: (val) => val ? "Active" : "Inactive" },
+      render: (row, val) => val ? "Active" : "Inactive" },
   ];
 
   // Selection state for bulk actions
@@ -502,6 +503,14 @@ export default function ManufacturingHub() {
                   data={boms || []}
                   columns={bomColumns}
                   isLoading={bomsLoading}
+                  emptyMessage="No bills of materials found. Create a BOM to define product recipes."
+                  emptyAction={
+                    <QuickCreateButton
+                      entityType="bom"
+                      label="Create First BOM"
+                      variant="default"
+                    />
+                  }
                   showSearch
                   expandedRowId={expandedBomId}
                   onExpandChange={setExpandedBomId}
@@ -524,6 +533,14 @@ export default function ManufacturingHub() {
                   data={workOrders || []}
                   columns={workOrderColumns}
                   isLoading={workOrdersLoading}
+                  emptyMessage="No work orders found. Create a work order to schedule production."
+                  emptyAction={
+                    <QuickCreateButton
+                      entityType="workOrder"
+                      label="Create First Work Order"
+                      variant="default"
+                    />
+                  }
                   showSearch
                   expandedRowId={expandedWorkOrderId}
                   onExpandChange={setExpandedWorkOrderId}

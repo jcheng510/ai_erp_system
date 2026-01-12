@@ -659,3 +659,13 @@
 - [x] Prompt user for missing required information (quantity, vendor, date)
 - [x] Show draft preview of PO/RFQ before submitting for approval
 - [x] Allow editing draft before final submission
+
+## Quick Creation from Dropdowns and Pages
+- [x] Create reusable QuickCreateDialog component
+- [x] Add quick vendor creation to AICommandBar vendor dropdown
+- [x] Add quick vendor creation to Procurement Hub
+- [x] Add quick material creation to AICommandBar material dropdown
+- [x] Add quick material creation to Procurement Hub
+- [x] Add quick BOM creation to Manufacturing Hub
+- [x] Add quick work order creation to Manufacturing Hub
+- [x] Add empty state prompts with create buttons on all hub pages

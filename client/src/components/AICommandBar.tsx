@@ -13,6 +13,7 @@ import {
   Send, X, CheckCircle, Clock, Building, AlertCircle
 } from "lucide-react";
 import { useLocation } from "wouter";
+import { QuickCreateDialog } from "@/components/QuickCreateDialog";
 
 interface AICommandBarProps {
   open: boolean;
@@ -491,6 +492,8 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
   const [selectedMaterial, setSelectedMaterial] = useState<{ id: number; name: string; sku: string | null; unit: string | null } | null>(null);
   const [editingQuantity, setEditingQuantity] = useState<string>("");
   const [editingDate, setEditingDate] = useState<string>("");
+  const [showQuickCreateVendor, setShowQuickCreateVendor] = useState(false);
+  const [showQuickCreateMaterial, setShowQuickCreateMaterial] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const [, setLocation] = useLocation();
   const utils = trpc.useUtils();
@@ -956,8 +959,19 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
                         </div>
                       )}
                       {showMaterialDropdown && materialSearch.length > 0 && filteredMaterials.length === 0 && (
-                        <div className="absolute z-50 w-full mt-1 bg-white border rounded-md shadow-lg p-3 text-sm text-muted-foreground">
-                          No materials found matching "{materialSearch}"
+                        <div className="absolute z-50 w-full mt-1 bg-white border rounded-md shadow-lg p-3">
+                          <p className="text-sm text-muted-foreground mb-2">No materials found matching "{materialSearch}"</p>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="w-full"
+                            onClick={() => {
+                              setShowMaterialDropdown(false);
+                              setShowQuickCreateMaterial(true);
+                            }}
+                          >
+                            <Package className="h-4 w-4 mr-1" /> Create "{materialSearch}" as new material
+                          </Button>
                         </div>
                       )}
                     </div>
@@ -970,25 +984,35 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
                     <Building className="h-4 w-4" /> Vendor
                     {!draftData.vendor && <span className="text-amber-500 text-xs">(Optional - can be assigned later)</span>}
                   </label>
-                  <select
-                    value={draftData.vendor?.id || ''}
-                    onChange={(e) => {
-                      const vendorId = e.target.value ? Number(e.target.value) : null;
-                      const vendor = vendorId ? vendorsQuery.data?.find(v => v.id === vendorId) : null;
-                      setDraftData({
-                        ...draftData,
-                        vendor: vendor ? { id: vendor.id, name: vendor.name, email: vendor.email || null } : null
-                      });
-                    }}
-                    className="w-full px-3 py-2 border rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="">Select a vendor (optional)...</option>
-                    {vendorsQuery.data?.map((vendor) => (
-                      <option key={vendor.id} value={vendor.id}>
-                        {vendor.name}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="flex gap-2">
+                    <select
+                      value={draftData.vendor?.id || ''}
+                      onChange={(e) => {
+                        const vendorId = e.target.value ? Number(e.target.value) : null;
+                        const vendor = vendorId ? vendorsQuery.data?.find(v => v.id === vendorId) : null;
+                        setDraftData({
+                          ...draftData,
+                          vendor: vendor ? { id: vendor.id, name: vendor.name, email: vendor.email || null } : null
+                        });
+                      }}
+                      className="flex-1 px-3 py-2 border rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="">Select a vendor (optional)...</option>
+                      {vendorsQuery.data?.map((vendor) => (
+                        <option key={vendor.id} value={vendor.id}>
+                          {vendor.name}
+                        </option>
+                      ))}
+                    </select>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setShowQuickCreateVendor(true)}
+                      title="Create new vendor"
+                    >
+                      <Building className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
 
                 {/* Quantity */}
@@ -1152,6 +1176,41 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
           )}
         </ScrollArea>
       </DialogContent>
+
+      {/* Quick Create Dialogs */}
+      <QuickCreateDialog
+        open={showQuickCreateVendor}
+        onOpenChange={setShowQuickCreateVendor}
+        entityType="vendor"
+        onCreated={(vendor) => {
+          // Auto-select the newly created vendor in the draft
+          if (draftData) {
+            setDraftData({
+              ...draftData,
+              vendor: { id: vendor.id, name: vendor.name, email: vendor.email || null }
+            });
+          }
+          utils.vendors.list.invalidate();
+        }}
+      />
+      <QuickCreateDialog
+        open={showQuickCreateMaterial}
+        onOpenChange={setShowQuickCreateMaterial}
+        entityType="material"
+        defaultValues={{ name: materialSearch }}
+        onCreated={(material) => {
+          // Auto-select the newly created material in the draft
+          if (draftData) {
+            setDraftData({
+              ...draftData,
+              material: { id: material.id, name: material.name, sku: material.sku || null, unit: material.unit || null },
+              unit: material.unit || draftData.unit
+            });
+          }
+          setMaterialSearch("");
+          utils.rawMaterials.list.invalidate();
+        }}
+      />
     </Dialog>
   );
 }

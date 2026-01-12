@@ -28,6 +28,7 @@ import {
   TabsTrigger,
 } from "@/components/ui/tabs";
 import { SpreadsheetTable, Column } from "@/components/SpreadsheetTable";
+import { QuickCreateButton } from "@/components/QuickCreateDialog";
 import { 
   ShoppingCart, 
   Users, 
@@ -1467,7 +1468,15 @@ export default function ProcurementHub() {
                   data={vendors || []}
                   columns={vendorColumns}
                   isLoading={vendorsLoading}
-                  emptyMessage="No vendors found"
+                  emptyMessage="No vendors found. Add your first vendor to start managing suppliers."
+                  emptyAction={
+                    <QuickCreateButton
+                      entityType="vendor"
+                      label="Create First Vendor"
+                      variant="default"
+                      onCreated={() => refetchVendors()}
+                    />
+                  }
                   showSearch
                   showExport
                   onAdd={() => setIsVendorDialogOpen(true)}
@@ -1496,7 +1505,15 @@ export default function ProcurementHub() {
                   data={rawMaterials || []}
                   columns={materialColumns}
                   isLoading={materialsLoading}
-                  emptyMessage="No raw materials found"
+                  emptyMessage="No raw materials found. Add materials to track inventory and create purchase orders."
+                  emptyAction={
+                    <QuickCreateButton
+                      entityType="material"
+                      label="Create First Material"
+                      variant="default"
+                      onCreated={() => refetchMaterials()}
+                    />
+                  }
                   showSearch
                   showExport
                   onAdd={() => setIsMaterialDialogOpen(true)}

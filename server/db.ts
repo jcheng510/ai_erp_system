@@ -2464,8 +2464,39 @@ export async function calculateBomCosts(bomId: number) {
 export async function getWorkOrders(filters?: { status?: string; warehouseId?: number }) {
   const db = await getDb();
   if (!db) return [];
-  let query = db.select().from(workOrders).orderBy(desc(workOrders.createdAt));
-  return query;
+  const result = await db.select({
+    id: workOrders.id,
+    companyId: workOrders.companyId,
+    workOrderNumber: workOrders.workOrderNumber,
+    bomId: workOrders.bomId,
+    productId: workOrders.productId,
+    warehouseId: workOrders.warehouseId,
+    quantity: workOrders.quantity,
+    completedQuantity: workOrders.completedQuantity,
+    unit: workOrders.unit,
+    status: workOrders.status,
+    priority: workOrders.priority,
+    scheduledStartDate: workOrders.scheduledStartDate,
+    scheduledEndDate: workOrders.scheduledEndDate,
+    actualStartDate: workOrders.actualStartDate,
+    actualEndDate: workOrders.actualEndDate,
+    notes: workOrders.notes,
+    createdBy: workOrders.createdBy,
+    assignedTo: workOrders.assignedTo,
+    createdAt: workOrders.createdAt,
+    updatedAt: workOrders.updatedAt,
+    productName: products.name,
+    productSku: products.sku,
+  })
+    .from(workOrders)
+    .leftJoin(products, eq(workOrders.productId, products.id))
+    .orderBy(desc(workOrders.createdAt));
+  
+  // Transform to include nested product object for compatibility
+  return result.map(row => ({
+    ...row,
+    product: row.productName ? { name: row.productName, sku: row.productSku } : null,
+  }));
 }
 
 export async function getWorkOrderById(id: number) {
