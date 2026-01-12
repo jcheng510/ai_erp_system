@@ -648,3 +648,8 @@
 - [x] Implement best quote selection and PO conversion workflow
 - [x] Add quote ranking by price, lead time, and overall score
 - [x] Write comprehensive tests (20 tests passing, 278 total)
+
+## Bug Fix: AI Command Bar Vendor Selection
+- [x] Allow vendor selection when no preferred vendor is found for a material
+- [x] Add vendor dropdown to AI Command Bar for PO generation
+- [x] Allow proceeding with draft PO even without vendor selection

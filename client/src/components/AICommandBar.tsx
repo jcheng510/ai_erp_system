@@ -472,6 +472,8 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
   const [showSuggestions, setShowSuggestions] = useState(true);
   const [vendorSuggestion, setVendorSuggestion] = useState<VendorSuggestion | null>(null);
   const [debouncedMaterialName, setDebouncedMaterialName] = useState<string | null>(null);
+  const [selectedVendorId, setSelectedVendorId] = useState<number | null>(null);
+  const [showVendorDropdown, setShowVendorDropdown] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const [, setLocation] = useLocation();
   const utils = trpc.useUtils();
@@ -505,6 +507,12 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
       setIsLoading(false);
     },
   });
+
+  // Query all vendors for manual selection
+  const vendorsQuery = trpc.vendors.list.useQuery(
+    {},
+    { enabled: showVendorDropdown }
+  );
 
   // Query for vendor suggestion based on material name
   const vendorSuggestionQuery = trpc.rawMaterials.getPreferredVendor.useQuery(
@@ -543,6 +551,8 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
       setShowSuggestions(true);
       setVendorSuggestion(null);
       setDebouncedMaterialName(null);
+      setSelectedVendorId(null);
+      setShowVendorDropdown(false);
     }
   }, [open]);
 
@@ -584,6 +594,11 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
     
     // For actionable tasks, create an AI Agent task
     try {
+      // Get selected vendor info if manually selected
+      const selectedVendor = selectedVendorId 
+        ? vendorsQuery.data?.find(v => v.id === selectedVendorId)
+        : null;
+      
       // Include vendor suggestion if available
       const taskDataWithVendor = {
         ...intent.taskData,
@@ -600,19 +615,27 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
           materialSku: vendorSuggestion.material.sku,
           materialUnit: vendorSuggestion.material.unit,
         }),
-        ...(vendorSuggestion?.suggestedVendor && {
+        // Use manually selected vendor if provided, otherwise use suggested vendor
+        ...(selectedVendor ? {
+          vendorId: selectedVendor.id,
+          vendorName: selectedVendor.name,
+          vendorEmail: selectedVendor.email,
+          manuallySelected: true,
+        } : vendorSuggestion?.suggestedVendor ? {
           suggestedVendorId: vendorSuggestion.suggestedVendor.id,
           suggestedVendorName: vendorSuggestion.suggestedVendor.name,
           suggestedVendorEmail: vendorSuggestion.suggestedVendor.email,
           vendorPOCount: vendorSuggestion.suggestedVendor.poCount,
-        }),
-        ...(vendorSuggestion?.preferredVendor && {
+        } : {}),
+        ...(vendorSuggestion?.preferredVendor && !selectedVendor && {
           preferredVendorId: vendorSuggestion.preferredVendor.id,
           preferredVendorName: vendorSuggestion.preferredVendor.name,
         }),
         ...(vendorSuggestion?.lastPurchasePrice && {
           lastPurchasePrice: vendorSuggestion.lastPurchasePrice,
         }),
+        // Flag if no vendor is selected and none was suggested
+        needsVendorSelection: !selectedVendor && !vendorSuggestion?.suggestedVendor && !vendorSuggestion?.preferredVendor,
       };
       
       await createTask.mutateAsync({
@@ -702,9 +725,50 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
                     </span>
                   </div>
                 ) : (
-                  <div className="mt-2 flex items-center gap-2 text-sm text-amber-600">
-                    <AlertCircle className="h-4 w-4" />
-                    <span>No vendor history - will need vendor selection</span>
+                  <div className="mt-2 space-y-2">
+                    <div className="flex items-center gap-2 text-sm text-amber-600">
+                      <AlertCircle className="h-4 w-4" />
+                      <span>No vendor history found</span>
+                    </div>
+                    {/* Vendor Selection Dropdown */}
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={selectedVendorId || ''}
+                        onChange={(e) => {
+                          setSelectedVendorId(e.target.value ? Number(e.target.value) : null);
+                        }}
+                        onFocus={() => setShowVendorDropdown(true)}
+                        className="flex-1 px-3 py-1.5 text-sm border rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      >
+                        <option value="">Select a vendor...</option>
+                        {vendorsQuery.data?.map((vendor) => (
+                          <option key={vendor.id} value={vendor.id}>
+                            {vendor.name}
+                          </option>
+                        ))}
+                      </select>
+                      {selectedVendorId && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setSelectedVendorId(null)}
+                          className="h-8 w-8 p-0"
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      )}
+                    </div>
+                    {selectedVendorId && (
+                      <div className="flex items-center gap-2 text-sm text-green-600">
+                        <CheckCircle className="h-4 w-4" />
+                        <span>Vendor selected: {vendorsQuery.data?.find(v => v.id === selectedVendorId)?.name}</span>
+                      </div>
+                    )}
+                    {!selectedVendorId && (
+                      <p className="text-xs text-muted-foreground">
+                        You can proceed without selecting a vendor - the PO will be created as a draft.
+                      </p>
+                    )}
                   </div>
                 )}
 
