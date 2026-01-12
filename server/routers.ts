@@ -2598,7 +2598,7 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
       
       create: protectedProcedure
         .input(z.object({
-          taskType: z.enum(['generate_po', 'send_rfq', 'send_quote_request', 'send_email', 'update_inventory', 'create_shipment', 'generate_invoice', 'reconcile_payment', 'reorder_materials', 'vendor_followup', 'create_work_order', 'query']),
+          taskType: z.enum(['generate_po', 'send_rfq', 'send_quote_request', 'send_email', 'update_inventory', 'create_shipment', 'generate_invoice', 'reconcile_payment', 'reorder_materials', 'vendor_followup', 'create_work_order', 'query', 'reply_email', 'approve_po', 'approve_invoice', 'create_vendor', 'create_material', 'create_product', 'create_bom', 'create_customer']),
           priority: z.enum(['low', 'medium', 'high', 'urgent']).default('medium'),
           taskData: z.string(), // JSON string with task-specific data
           aiReasoning: z.string().optional(),
@@ -2872,6 +2872,124 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
                   });
                 }
                 result = { updated: true };
+                break;
+              }
+              
+              case 'reply_email': {
+                // AI-generated email reply
+                const replyResult = await sendEmail({
+                  to: taskData.to,
+                  subject: taskData.subject || `Re: ${taskData.originalSubject || 'Your inquiry'}`,
+                  html: taskData.body || taskData.content,
+                });
+                result = { emailSent: replyResult.success, messageId: replyResult.messageId, to: taskData.to };
+                break;
+              }
+              
+              case 'approve_po': {
+                // Auto-approve PO
+                const po = await db.getPurchaseOrderById(taskData.purchaseOrderId);
+                if (!po) throw new Error('Purchase order not found');
+                await db.updatePurchaseOrder(taskData.purchaseOrderId, {
+                  status: 'confirmed',
+                });
+                result = { approved: true, poId: taskData.purchaseOrderId, poNumber: po.poNumber };
+                break;
+              }
+              
+              case 'approve_invoice': {
+                // Auto-approve invoice
+                const invoice = await db.getInvoiceById(taskData.invoiceId);
+                if (!invoice) throw new Error('Invoice not found');
+                await db.updateInvoice(taskData.invoiceId, {
+                  status: 'sent',
+                });
+                result = { approved: true, invoiceId: taskData.invoiceId, invoiceNumber: invoice.invoiceNumber };
+                break;
+              }
+              
+              case 'create_vendor': {
+                // Create new vendor
+                const vendor = await db.createVendor({
+                  name: taskData.name,
+                  email: taskData.email || undefined,
+                  phone: taskData.phone || undefined,
+                  address: taskData.address || undefined,
+                  defaultLeadTimeDays: taskData.leadTimeDays || undefined,
+                  status: 'active',
+                });
+                result = { created: true, vendorId: vendor.id, vendorName: taskData.name };
+                break;
+              }
+              
+              case 'create_material': {
+                // Create new raw material
+                const material = await db.createRawMaterial({
+                  name: taskData.name,
+                  sku: taskData.sku || undefined,
+                  unit: taskData.unit || 'units',
+                  category: taskData.category || undefined,
+                  unitCost: taskData.unitCost || undefined,
+                  description: taskData.description || undefined,
+                });
+                result = { created: true, materialId: material.id, materialName: taskData.name };
+                break;
+              }
+              
+              case 'create_product': {
+                // Create new product
+                const product = await db.createProduct({
+                  name: taskData.name,
+                  sku: taskData.sku || undefined,
+                  category: taskData.category || undefined,
+                  unitPrice: taskData.price || taskData.unitPrice || undefined,
+                  description: taskData.description || undefined,
+                });
+                result = { created: true, productId: product.id, productName: taskData.name };
+                break;
+              }
+              
+              case 'create_bom': {
+                // Create new BOM
+                const bom = await db.createBom({
+                  productId: taskData.productId,
+                  name: taskData.name,
+                  batchSize: taskData.batchSize || undefined,
+                  batchUnit: taskData.batchUnit || undefined,
+                  notes: taskData.notes || undefined,
+                });
+                result = { created: true, bomId: bom.id, bomName: taskData.name };
+                break;
+              }
+              
+              case 'create_customer': {
+                // Create new customer
+                const customer = await db.createCustomer({
+                  name: taskData.name,
+                  email: taskData.email || undefined,
+                  phone: taskData.phone || undefined,
+                  address: taskData.address || undefined,
+                  type: taskData.type || 'business',
+                });
+                result = { created: true, customerId: customer.id, customerName: taskData.name };
+                break;
+              }
+              
+              case 'create_work_order': {
+                // Create work order from BOM
+                const bom = taskData.bomId ? await db.getBomById(taskData.bomId) : null;
+                if (!bom) throw new Error('BOM not found');
+                
+                const workOrder = await db.createWorkOrder({
+                  bomId: bom.id,
+                  productId: bom.productId,
+                  quantity: taskData.quantity?.toString() || '1',
+                  status: 'draft',
+                  priority: taskData.priority || 'medium',
+                  notes: taskData.notes || `AI-generated work order for ${bom.name}`,
+                });
+                
+                result = { created: true, workOrderId: workOrder.id, workOrderNumber: workOrder.workOrderNumber };
                 break;
               }
               

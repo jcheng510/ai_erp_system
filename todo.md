@@ -669,3 +669,19 @@
 - [x] Add quick BOM creation to Manufacturing Hub
 - [x] Add quick work order creation to Manufacturing Hub
 - [x] Add empty state prompts with create buttons on all hub pages
+
+## AI Command Bar and Agent Enhancements
+- [x] Add "Create New" option at bottom of vendor dropdown in AI Command Bar
+- [x] Add "Create New" option at bottom of material dropdown in AI Command Bar
+- [x] Add "Create New" option at bottom of product dropdown in AI Command Bar (via quick actions)
+- [x] Add "Create New" option at bottom of BOM dropdown in AI Command Bar (via quick actions)
+- [x] Enhance AI agent to handle email replies automatically
+- [x] Add AI agent capability for approval workflows
+- [x] Add AI agent capability for automated task execution
+- [x] Add direct "New" button to Purchase Orders tab
+- [x] Add direct "New" button to Vendors tab
+- [x] Add direct "New" button to Raw Materials tab
+- [ ] Add direct "New" button to Inventory tab
+- [x] Add direct "New" button to BOMs tab
+- [x] Add direct "New" button to Work Orders tab
+- [ ] Add direct "New" button to Locations tab

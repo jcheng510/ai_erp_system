@@ -18,11 +18,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Loader2, Plus, Building, Package, FileText, Wrench } from "lucide-react";
+import { Loader2, Plus, Building, Package, FileText, Wrench, Box, Users } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 
-type EntityType = "vendor" | "material" | "bom" | "workOrder" | "rfq";
+type EntityType = "vendor" | "material" | "bom" | "workOrder" | "rfq" | "product" | "customer";
 
 // Product select field component
 function ProductSelectField({ value, onChange }: { value?: number; onChange: (value: number) => void }) {
@@ -171,6 +171,33 @@ const entityConfig: Record<EntityType, {
       { name: "notes", label: "Notes for Vendors", type: "textarea", placeholder: "Special requirements..." },
     ],
   },
+  product: {
+    title: "Create New Product",
+    description: "Add a new product to your catalog",
+    icon: <Box className="h-5 w-5" />,
+    fields: [
+      { name: "name", label: "Product Name", type: "text", placeholder: "e.g., Organic Chocolate Bar", required: true },
+      { name: "sku", label: "SKU", type: "text", placeholder: "PROD-001" },
+      { name: "category", label: "Category", type: "text", placeholder: "e.g., Confectionery, Beverages" },
+      { name: "unitPrice", label: "Unit Price", type: "text", placeholder: "9.99" },
+      { name: "description", label: "Description", type: "textarea", placeholder: "Product description..." },
+    ],
+  },
+  customer: {
+    title: "Create New Customer",
+    description: "Add a new customer to your CRM",
+    icon: <Users className="h-5 w-5" />,
+    fields: [
+      { name: "name", label: "Customer Name", type: "text", placeholder: "e.g., John Smith or Acme Corp", required: true },
+      { name: "email", label: "Email", type: "email", placeholder: "customer@example.com" },
+      { name: "phone", label: "Phone", type: "text", placeholder: "+1 (555) 123-4567" },
+      { name: "address", label: "Address", type: "textarea", placeholder: "123 Main St, City, State" },
+      { name: "type", label: "Customer Type", type: "select", options: [
+        { value: "individual", label: "Individual" },
+        { value: "business", label: "Business" },
+      ]},
+    ],
+  },
 };
 
 export function QuickCreateDialog({
@@ -240,6 +267,32 @@ export function QuickCreateDialog({
     },
   });
 
+  const createProduct = trpc.products.create.useMutation({
+    onSuccess: (data) => {
+      toast.success("Product created successfully");
+      utils.products.list.invalidate();
+      onCreated?.(data);
+      onOpenChange(false);
+      setFormData({});
+    },
+    onError: (error) => {
+      toast.error(`Failed to create product: ${error.message}`);
+    },
+  });
+
+  const createCustomer = trpc.customers.create.useMutation({
+    onSuccess: (data) => {
+      toast.success("Customer created successfully");
+      utils.customers.list.invalidate();
+      onCreated?.(data);
+      onOpenChange(false);
+      setFormData({});
+    },
+    onError: (error) => {
+      toast.error(`Failed to create customer: ${error.message}`);
+    },
+  });
+
   const handleSubmit = useCallback(async () => {
     setIsSubmitting(true);
     try {
@@ -293,11 +346,29 @@ export function QuickCreateDialog({
           // RFQ creation handled separately in vendor quotes
           toast.info("RFQ creation coming soon");
           break;
+        case "product":
+          await createProduct.mutateAsync({
+            name: formData.name,
+            sku: formData.sku || undefined,
+            category: formData.category || undefined,
+            unitPrice: formData.unitPrice || undefined,
+            description: formData.description || undefined,
+          });
+          break;
+        case "customer":
+          await createCustomer.mutateAsync({
+            name: formData.name,
+            email: formData.email || undefined,
+            phone: formData.phone || undefined,
+            address: formData.address || undefined,
+            type: formData.type || "business",
+          });
+          break;
       }
     } finally {
       setIsSubmitting(false);
     }
-  }, [entityType, formData, createVendor, createMaterial, createBom, createWorkOrder]);
+  }, [entityType, formData, createVendor, createMaterial, createBom, createWorkOrder, createProduct, createCustomer]);
 
   const handleFieldChange = (name: string, value: any) => {
     setFormData((prev) => ({ ...prev, [name]: value }));

@@ -10,7 +10,7 @@ import { Streamdown } from "streamdown";
 import {
   Bot, Search, Loader2, Sparkles, ArrowRight, Command,
   FileText, Package, Users, DollarSign, Truck, ClipboardList,
-  Send, X, CheckCircle, Clock, Building, AlertCircle
+  Send, X, CheckCircle, Clock, Building, AlertCircle, Box, Mail
 } from "lucide-react";
 import { useLocation } from "wouter";
 import { QuickCreateDialog } from "@/components/QuickCreateDialog";
@@ -27,7 +27,7 @@ interface AICommandBarProps {
 }
 
 // Task types that can be created via AI Command Bar
-type TaskType = "generate_po" | "send_rfq" | "send_quote_request" | "send_email" | "update_inventory" | "create_shipment" | "generate_invoice" | "reconcile_payment" | "reorder_materials" | "vendor_followup" | "create_work_order" | "query";
+type TaskType = "generate_po" | "send_rfq" | "send_quote_request" | "send_email" | "update_inventory" | "create_shipment" | "generate_invoice" | "reconcile_payment" | "reorder_materials" | "vendor_followup" | "create_work_order" | "query" | "reply_email" | "approve_po" | "approve_invoice" | "create_vendor" | "create_material" | "create_product" | "create_bom" | "create_customer";
 
 // ============================================
 // Natural Language Parsing Utilities
@@ -341,6 +341,14 @@ const quickActions = [
   { icon: Truck, label: "Draft vendor delay response", query: "Draft a professional response to this vendor about their shipment delay", context: ["vendor", "po", "shipment"], taskType: "send_email" as TaskType },
   { icon: ClipboardList, label: "Generate PO from forecast", query: "Based on demand forecast, generate purchase orders for materials running low", context: ["procurement", "forecast"], taskType: "generate_po" as TaskType },
   { icon: Users, label: "Find customer insights", query: "Analyze this customer's purchase history and suggest upsell opportunities", context: ["customer", "sales"], taskType: "query" as TaskType },
+  // Entity creation quick actions
+  { icon: Building, label: "Add new vendor", query: "Create a new vendor", context: ["procurement", "vendor"], taskType: "create_vendor" as TaskType },
+  { icon: Package, label: "Add new material", query: "Create a new raw material", context: ["procurement", "inventory"], taskType: "create_material" as TaskType },
+  { icon: Box, label: "Add new product", query: "Create a new product", context: ["products", "manufacturing"], taskType: "create_product" as TaskType },
+  { icon: Users, label: "Add new customer", query: "Create a new customer", context: ["sales", "customer"], taskType: "create_customer" as TaskType },
+  // Email and approval actions
+  { icon: Mail, label: "Reply to vendor email", query: "Draft a reply to this vendor's email", context: ["vendor", "email"], taskType: "reply_email" as TaskType },
+  { icon: CheckCircle, label: "Approve pending PO", query: "Review and approve this purchase order", context: ["po", "approval"], taskType: "approve_po" as TaskType },
 ];
 
 // Parse natural language query to determine intent
@@ -432,6 +440,85 @@ function parseIntent(query: string): ParsedIntent {
     };
   }
   
+  // Check for vendor creation intent
+  if ((lowerQuery.includes("create") || lowerQuery.includes("add") || lowerQuery.includes("new")) && 
+      (lowerQuery.includes("vendor") || lowerQuery.includes("supplier"))) {
+    return {
+      taskType: "create_vendor",
+      taskData: { description: query },
+      description: "Create new vendor"
+    };
+  }
+  
+  // Check for material creation intent
+  if ((lowerQuery.includes("create") || lowerQuery.includes("add") || lowerQuery.includes("new")) && 
+      (lowerQuery.includes("material") || lowerQuery.includes("ingredient") || lowerQuery.includes("raw material"))) {
+    return {
+      taskType: "create_material",
+      taskData: { description: query },
+      description: "Create new material"
+    };
+  }
+  
+  // Check for product creation intent
+  if ((lowerQuery.includes("create") || lowerQuery.includes("add") || lowerQuery.includes("new")) && 
+      lowerQuery.includes("product")) {
+    return {
+      taskType: "create_product",
+      taskData: { description: query },
+      description: "Create new product"
+    };
+  }
+  
+  // Check for customer creation intent
+  if ((lowerQuery.includes("create") || lowerQuery.includes("add") || lowerQuery.includes("new")) && 
+      lowerQuery.includes("customer")) {
+    return {
+      taskType: "create_customer",
+      taskData: { description: query },
+      description: "Create new customer"
+    };
+  }
+  
+  // Check for BOM creation intent
+  if ((lowerQuery.includes("create") || lowerQuery.includes("add") || lowerQuery.includes("new")) && 
+      (lowerQuery.includes("bom") || lowerQuery.includes("bill of material") || lowerQuery.includes("recipe"))) {
+    return {
+      taskType: "create_bom",
+      taskData: { description: query },
+      description: "Create new BOM"
+    };
+  }
+  
+  // Check for email reply intent
+  if (lowerQuery.includes("reply") && lowerQuery.includes("email")) {
+    return {
+      taskType: "reply_email",
+      taskData: { description: query },
+      description: "Draft email reply"
+    };
+  }
+  
+  // Check for PO approval intent
+  if ((lowerQuery.includes("approve") || lowerQuery.includes("confirm")) && 
+      (lowerQuery.includes("po") || lowerQuery.includes("purchase order"))) {
+    return {
+      taskType: "approve_po",
+      taskData: { description: query },
+      description: "Approve purchase order"
+    };
+  }
+  
+  // Check for invoice approval intent
+  if ((lowerQuery.includes("approve") || lowerQuery.includes("confirm")) && 
+      lowerQuery.includes("invoice")) {
+    return {
+      taskType: "approve_invoice",
+      taskData: { description: query },
+      description: "Approve invoice"
+    };
+  }
+  
   // Default to query
   return {
     taskType: "query",
@@ -494,6 +581,8 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
   const [editingDate, setEditingDate] = useState<string>("");
   const [showQuickCreateVendor, setShowQuickCreateVendor] = useState(false);
   const [showQuickCreateMaterial, setShowQuickCreateMaterial] = useState(false);
+  const [showQuickCreateProduct, setShowQuickCreateProduct] = useState(false);
+  const [showQuickCreateCustomer, setShowQuickCreateCustomer] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const [, setLocation] = useLocation();
   const utils = trpc.useUtils();
@@ -630,6 +719,24 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
         fullQuery = `[Context: ${context.type}${context.name ? ` - ${context.name}` : ""}${context.id ? ` (ID: ${context.id})` : ""}]\n\n${q}`;
       }
       aiQuery.mutate({ question: fullQuery });
+      return;
+    }
+    
+    // Handle entity creation tasks - open quick create dialogs
+    if (taskType === "create_vendor") {
+      setShowQuickCreateVendor(true);
+      return;
+    }
+    if (taskType === "create_material") {
+      setShowQuickCreateMaterial(true);
+      return;
+    }
+    if (taskType === "create_product") {
+      setShowQuickCreateProduct(true);
+      return;
+    }
+    if (taskType === "create_customer") {
+      setShowQuickCreateCustomer(true);
       return;
     }
     
@@ -956,6 +1063,16 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
                               {m.sku && <span className="text-xs text-muted-foreground">{m.sku}</span>}
                             </button>
                           ))}
+                          {/* Create New option at bottom */}
+                          <button
+                            className="w-full px-3 py-2 text-left hover:bg-blue-50 flex items-center gap-2 border-t text-blue-600 font-medium"
+                            onClick={() => {
+                              setShowMaterialDropdown(false);
+                              setShowQuickCreateMaterial(true);
+                            }}
+                          >
+                            <Package className="h-4 w-4" /> + Create New Material
+                          </button>
                         </div>
                       )}
                       {showMaterialDropdown && materialSearch.length > 0 && filteredMaterials.length === 0 && (
@@ -1209,6 +1326,24 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
           }
           setMaterialSearch("");
           utils.rawMaterials.list.invalidate();
+        }}
+      />
+      <QuickCreateDialog
+        open={showQuickCreateProduct}
+        onOpenChange={setShowQuickCreateProduct}
+        entityType="product"
+        onCreated={() => {
+          utils.products.list.invalidate();
+          toast.success("Product created! You can now use it in BOMs and work orders.");
+        }}
+      />
+      <QuickCreateDialog
+        open={showQuickCreateCustomer}
+        onOpenChange={setShowQuickCreateCustomer}
+        entityType="customer"
+        onCreated={() => {
+          utils.customers.list.invalidate();
+          toast.success("Customer created! You can now create orders for them.");
         }}
       />
     </Dialog>

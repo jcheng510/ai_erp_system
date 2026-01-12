@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import SpreadsheetTable, { Column } from "@/components/SpreadsheetTable";
-import { QuickCreateButton } from "@/components/QuickCreateDialog";
+import { QuickCreateButton, QuickCreateDialog } from "@/components/QuickCreateDialog";
 import { 
   Package, Warehouse, ClipboardList, MapPin, Search, Plus, 
   AlertTriangle, CheckCircle, Clock, Play, Pause, X, ChevronRight
@@ -227,6 +227,8 @@ export default function ManufacturingHub() {
   const [expandedBomId, setExpandedBomId] = useState<number | string | null>(null);
   const [expandedWorkOrderId, setExpandedWorkOrderId] = useState<number | string | null>(null);
   const [expandedLocationId, setExpandedLocationId] = useState<number | string | null>(null);
+  const [showBomDialog, setShowBomDialog] = useState(false);
+  const [showWorkOrderDialog, setShowWorkOrderDialog] = useState(false);
 
   // Queries
   const { data: inventory, isLoading: inventoryLoading, refetch: refetchInventory } = trpc.inventory.list.useQuery();
@@ -509,9 +511,12 @@ export default function ManufacturingHub() {
                       entityType="bom"
                       label="Create First BOM"
                       variant="default"
+                      onCreated={() => refetchBoms()}
                     />
                   }
                   showSearch
+                  onAdd={() => setShowBomDialog(true)}
+                  addLabel="New BOM"
                   expandedRowId={expandedBomId}
                   onExpandChange={setExpandedBomId}
                   selectedRows={selectedBoms}
@@ -539,9 +544,12 @@ export default function ManufacturingHub() {
                       entityType="workOrder"
                       label="Create First Work Order"
                       variant="default"
+                      onCreated={() => refetchWorkOrders()}
                     />
                   }
                   showSearch
+                  onAdd={() => setShowWorkOrderDialog(true)}
+                  addLabel="New Work Order"
                   expandedRowId={expandedWorkOrderId}
                   onExpandChange={setExpandedWorkOrderId}
                   selectedRows={selectedWorkOrders}
@@ -580,6 +588,20 @@ export default function ManufacturingHub() {
             </Card>
           </TabsContent>
         </Tabs>
+
+        {/* Quick Create Dialogs */}
+        <QuickCreateDialog
+          open={showBomDialog}
+          onOpenChange={setShowBomDialog}
+          entityType="bom"
+          onCreated={() => refetchBoms()}
+        />
+        <QuickCreateDialog
+          open={showWorkOrderDialog}
+          onOpenChange={setShowWorkOrderDialog}
+          entityType="workOrder"
+          onCreated={() => refetchWorkOrders()}
+        />
       </div>
   );
 }
