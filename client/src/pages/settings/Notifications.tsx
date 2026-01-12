@@ -1,4 +1,3 @@
-import DashboardLayout from "@/components/DashboardLayout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
@@ -85,17 +84,14 @@ export default function NotificationSettings() {
 
   if (isLoading) {
     return (
-      <DashboardLayout>
-        <div className="flex items-center justify-center h-64">
+      <div className="p-6 flex items-center justify-center h-64">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>
-      </DashboardLayout>
     );
   }
 
   return (
-    <DashboardLayout>
-      <div className="space-y-6">
+    <div className="p-6 space-y-6">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Notification Settings</h1>
           <p className="text-muted-foreground">
@@ -140,7 +136,7 @@ export default function NotificationSettings() {
                 return (
                   <div
                     key={type.id}
-                    className="grid grid-cols-[1fr,80px,80px,80px] gap-4 items-center"
+                    className="p-6 grid grid-cols-[1fr,80px,80px,80px] gap-4 items-center"
                   >
                     <div className="flex items-center gap-3">
                       <div className="p-2 rounded-lg bg-muted">
@@ -233,6 +229,5 @@ export default function NotificationSettings() {
           </CardContent>
         </Card>
       </div>
-    </DashboardLayout>
   );
 }

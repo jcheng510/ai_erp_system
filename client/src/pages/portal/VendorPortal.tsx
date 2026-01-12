@@ -1,5 +1,4 @@
 import { useState } from "react";
-import DashboardLayout from "@/components/DashboardLayout";
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
@@ -79,8 +78,7 @@ export default function VendorPortal() {
   // Check if user has vendor access
   if (user?.role !== "vendor" && user?.role !== "admin" && user?.role !== "ops") {
     return (
-      <DashboardLayout>
-        <div className="p-6">
+      <div className="p-6">
           <Card>
             <CardContent className="py-12 text-center">
               <p className="text-muted-foreground">
@@ -89,13 +87,11 @@ export default function VendorPortal() {
             </CardContent>
           </Card>
         </div>
-      </DashboardLayout>
     );
   }
 
   return (
-    <DashboardLayout>
-      <div className="p-6 space-y-6">
+    <div className="p-6 space-y-6">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold">Vendor Portal</h1>
@@ -360,6 +356,5 @@ export default function VendorPortal() {
           </DialogContent>
         </Dialog>
       </div>
-    </DashboardLayout>
   );
 }

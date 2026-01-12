@@ -67,7 +67,9 @@ import {
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
+import { AICommandBar } from './AICommandBar';
 import { Button } from "./ui/button";
+import { toast } from "sonner";
 import {
   Collapsible,
   CollapsibleContent,
@@ -219,6 +221,64 @@ function DashboardLayoutContent({
   const sidebarRef = useRef<HTMLDivElement>(null);
   const isMobile = useIsMobile();
   const [openGroups, setOpenGroups] = useState<string[]>(["Overview", "Finance", "Sales", "Operations"]);
+  const [aiCommandOpen, setAiCommandOpen] = useState(false);
+
+  // Global keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't trigger shortcuts when typing in inputs
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+        return;
+      }
+
+      // Cmd/Ctrl + K: Open AI Command Bar
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setAiCommandOpen(true);
+        return;
+      }
+
+      // G + key combinations for navigation (Gmail-style)
+      if (e.key === 'g') {
+        // Set a flag to wait for next key
+        const handleNextKey = (nextE: KeyboardEvent) => {
+          document.removeEventListener('keydown', handleNextKey);
+          switch (nextE.key) {
+            case 'd': setLocation('/'); break; // Go to Dashboard
+            case 'a': setLocation('/ai'); break; // Go to AI Assistant
+            case 's': setLocation('/sales/hub'); break; // Go to Sales
+            case 'm': setLocation('/operations/manufacturing-hub'); break; // Go to Manufacturing
+            case 'p': setLocation('/operations/procurement-hub'); break; // Go to Procurement
+            case 'l': setLocation('/operations/logistics-hub'); break; // Go to Logistics
+            case 'e': setLocation('/operations/email-inbox'); break; // Go to Email
+          }
+        };
+        document.addEventListener('keydown', handleNextKey, { once: true });
+        setTimeout(() => document.removeEventListener('keydown', handleNextKey), 1000);
+        return;
+      }
+
+      // ? key: Show keyboard shortcuts help
+      if (e.key === '?') {
+        toast.info(
+          'Keyboard Shortcuts:\n' +
+          '⌘K - AI Command Bar\n' +
+          'g d - Dashboard\n' +
+          'g a - AI Assistant\n' +
+          'g s - Sales Hub\n' +
+          'g m - Manufacturing\n' +
+          'g p - Procurement\n' +
+          'g l - Logistics\n' +
+          'g e - Email Inbox',
+          { duration: 5000 }
+        );
+        return;
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [setLocation]);
 
   const toggleGroup = (label: string) => {
     setOpenGroups(prev =>
@@ -397,20 +457,22 @@ function DashboardLayoutContent({
         <header className="flex h-14 items-center justify-between border-b border-border/40 bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/60 sticky top-0 z-40">
           <div className="flex items-center gap-3">
             {isMobile && <SidebarTrigger className="h-9 w-9 rounded-lg" />}
-            <div className="relative hidden sm:block">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search..."
-                className="w-64 pl-9 h-9 bg-muted/50"
-                onClick={() => setLocation("/search")}
-                readOnly
-              />
-            </div>
+            <button
+              onClick={() => setAiCommandOpen(true)}
+              className="relative hidden sm:flex items-center gap-2 w-64 h-9 px-3 bg-muted/50 hover:bg-muted rounded-md border border-border/40 text-sm text-muted-foreground transition-colors"
+            >
+              <Search className="h-4 w-4" />
+              <span className="flex-1 text-left">Search or ask AI...</span>
+              <kbd className="pointer-events-none hidden h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium opacity-100 sm:flex">
+                <span className="text-xs">⌘</span>K
+              </kbd>
+            </button>
           </div>
           <div className="flex items-center gap-2">
             <NotificationCenter />
           </div>
         </header>
+        <AICommandBar open={aiCommandOpen} onOpenChange={setAiCommandOpen} />
         <main className="flex-1 overflow-auto p-4 md:p-6">{children}</main>
       </SidebarInset>
     </>

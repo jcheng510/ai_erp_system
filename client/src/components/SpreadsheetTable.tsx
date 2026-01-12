@@ -44,6 +44,13 @@ export interface Column<T> {
   format?: (value: any) => string;
 }
 
+export interface BulkAction {
+  key: string;
+  label: string;
+  icon?: React.ReactNode;
+  variant?: "default" | "destructive";
+}
+
 export interface SpreadsheetTableProps<T extends { id: number | string }> {
   data: T[];
   columns: Column<T>[];
@@ -63,11 +70,14 @@ export interface SpreadsheetTableProps<T extends { id: number | string }> {
   stickyHeader?: boolean;
   compact?: boolean;
   maxHeight?: string;
-  // New: Expandable row detail
+  // Expandable row detail
   expandable?: boolean;
   renderExpanded?: (row: T, onClose: () => void) => ReactNode;
   expandedRowId?: number | string | null;
   onExpandChange?: (rowId: number | string | null) => void;
+  // Bulk actions
+  bulkActions?: BulkAction[];
+  onBulkAction?: (action: string, selectedIds: Set<number | string>) => void;
 }
 
 function formatCurrency(value: number | string | null | undefined): string {
@@ -112,6 +122,8 @@ export function SpreadsheetTable<T extends { id: number | string }>({
   renderExpanded,
   expandedRowId: controlledExpandedId,
   onExpandChange,
+  bulkActions = [],
+  onBulkAction,
 }: SpreadsheetTableProps<T>) {
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<string | null>(null);
@@ -346,8 +358,41 @@ export function SpreadsheetTable<T extends { id: number | string }>({
   // Calculate total columns for expanded row
   const totalColumns = columns.length + (onSelectionChange ? 1 : 0) + (expandable ? 1 : 0);
 
+  const hasSelection = selectedRows && selectedRows.size > 0;
+
   return (
     <div className="flex flex-col h-full">
+      {/* Bulk Actions Toolbar - shows when items are selected */}
+      {hasSelection && bulkActions.length > 0 && (
+        <div className="flex items-center gap-2 mb-3 p-2 bg-primary/5 border border-primary/20 rounded-lg animate-in slide-in-from-top-2">
+          <span className="text-sm font-medium">
+            {selectedRows.size} item{selectedRows.size !== 1 ? 's' : ''} selected
+          </span>
+          <div className="flex-1" />
+          {bulkActions.map((action) => (
+            <Button
+              key={action.key}
+              variant={action.variant === "destructive" ? "destructive" : "outline"}
+              size="sm"
+              onClick={() => onBulkAction?.(action.key, selectedRows)}
+              className="h-7 text-xs"
+            >
+              {action.icon}
+              {action.label}
+            </Button>
+          ))}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => onSelectionChange?.(new Set())}
+            className="h-7 text-xs"
+          >
+            <X className="h-3 w-3 mr-1" />
+            Clear
+          </Button>
+        </div>
+      )}
+
       {/* Toolbar */}
       <div className="flex items-center gap-2 mb-3 flex-wrap">
         {showSearch && (

@@ -1,5 +1,4 @@
 import { useState } from "react";
-import DashboardLayout from "@/components/DashboardLayout";
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
@@ -89,8 +88,7 @@ export default function CopackerPortal() {
   // Check if user has copacker access
   if (user?.role !== "copacker" && user?.role !== "admin" && user?.role !== "ops") {
     return (
-      <DashboardLayout>
-        <div className="p-6">
+      <div className="p-6">
           <Card>
             <CardContent className="py-12 text-center">
               <p className="text-muted-foreground">
@@ -99,13 +97,11 @@ export default function CopackerPortal() {
             </CardContent>
           </Card>
         </div>
-      </DashboardLayout>
     );
   }
 
   return (
-    <DashboardLayout>
-      <div className="p-6 space-y-6">
+    <div className="p-6 space-y-6">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold">Copacker Portal</h1>
@@ -344,6 +340,5 @@ export default function CopackerPortal() {
           </DialogContent>
         </Dialog>
       </div>
-    </DashboardLayout>
   );
 }

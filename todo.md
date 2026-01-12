@@ -496,3 +496,15 @@
 - [x] Create supplier portal for document upload
 - [x] Link uploaded documents to freight quote requests
 - [x] Send documentation to freight vendors for quotes
+
+## AI-Native UX Improvements (Jan 12, 2026)
+- [x] Fix duplicate sidebar issue in hub pages
+- [x] Remove redundant DashboardLayout wrappers from all pages
+- [x] Embed AI Command Bar in DashboardLayout header
+- [x] Add Cmd/Ctrl+K keyboard shortcut for AI Command Bar
+- [x] Add Gmail-style keyboard navigation (g+d, g+a, g+s, g+m, g+p, g+l, g+e)
+- [x] Add ? key to show keyboard shortcuts help
+- [x] Update search bar to "Search or ask AI..." with keyboard hint
+- [x] Add bulk actions toolbar to SpreadsheetTable component
+- [x] Fix TypeScript errors in ManufacturingHub, ProcurementHub, SalesHub
+- [x] Replace searchTerm prop with showSearch in SpreadsheetTable usage

@@ -1,5 +1,4 @@
 import { useState } from "react";
-import DashboardLayout from "@/components/DashboardLayout";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -357,8 +356,7 @@ export default function EmailInbox() {
   };
 
   return (
-    <DashboardLayout>
-      <div className="space-y-6">
+    <div className="p-6 space-y-6">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-3xl font-bold">Email Inbox</h1>
@@ -1233,6 +1231,5 @@ export default function EmailInbox() {
           </TabsContent>
         </Tabs>
       </div>
-    </DashboardLayout>
   );
 }

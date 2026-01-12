@@ -1,6 +1,5 @@
 import { useState, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
-import DashboardLayout from "@/components/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -89,7 +88,7 @@ function KanbanColumn({
   const columnTasks = tasks.filter(t => t.status === status);
 
   return (
-    <div className="flex-1 min-w-[280px] max-w-[320px]">
+    <div className="p-6 flex-1 min-w-[280px] max-w-[320px]">
       <div className={cn("flex items-center gap-2 mb-3 pb-2 border-b-2", color)}>
         <h3 className="font-semibold text-sm">{title}</h3>
         <Badge variant="secondary" className="text-xs">{columnTasks.length}</Badge>
@@ -204,7 +203,7 @@ function TaskDetailPanel({ task, onClose, onStatusChange }: {
   const isOverdue = task.dueDate && new Date(task.dueDate) < new Date() && task.status !== "done";
 
   return (
-    <div className="space-y-4">
+    <div className="p-6 space-y-4">
       <div className="flex items-start justify-between">
         <div>
           <h3 className="text-lg font-semibold flex items-center gap-2">
@@ -399,8 +398,7 @@ export default function Projects() {
   };
 
   return (
-    <DashboardLayout>
-      <div className="space-y-6 animate-fade-in">
+    <div className="p-6 space-y-6 animate-fade-in">
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
@@ -712,6 +710,5 @@ export default function Projects() {
           </DialogContent>
         </Dialog>
       </div>
-    </DashboardLayout>
   );
 }

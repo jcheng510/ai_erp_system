@@ -1,6 +1,5 @@
 import { useState, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
-import DashboardLayout from "@/components/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -31,7 +30,7 @@ const invoiceStatuses = [
 
 function ProductDetailPanel({ product }: { product: any }) {
   return (
-    <div className="space-y-4">
+    <div className="p-6 space-y-4">
       <div className="flex items-start justify-between">
         <div>
           <h3 className="text-lg font-semibold">{product.name}</h3>
@@ -63,7 +62,7 @@ function ProductDetailPanel({ product }: { product: any }) {
 function OrderDetailPanel({ order, onStatusChange }: { order: any; onStatusChange: (id: number, status: string) => void }) {
   const statusOption = orderStatuses.find(s => s.value === order.status);
   return (
-    <div className="space-y-4">
+    <div className="p-6 space-y-4">
       <div className="flex items-start justify-between">
         <div>
           <h3 className="text-lg font-semibold">Order #{order.orderNumber}</h3>
@@ -104,7 +103,7 @@ function OrderDetailPanel({ order, onStatusChange }: { order: any; onStatusChang
 function InvoiceDetailPanel({ invoice, onSendEmail, onDownloadPdf }: { invoice: any; onSendEmail: (inv: any) => void; onDownloadPdf: (inv: any) => void }) {
   const statusOption = invoiceStatuses.find(s => s.value === invoice.status);
   return (
-    <div className="space-y-4">
+    <div className="p-6 space-y-4">
       <div className="flex items-start justify-between">
         <div>
           <h3 className="text-lg font-semibold">Invoice #{invoice.invoiceNumber}</h3>
@@ -146,7 +145,7 @@ function InvoiceDetailPanel({ invoice, onSendEmail, onDownloadPdf }: { invoice: 
 
 function CustomerDetailPanel({ customer }: { customer: any }) {
   return (
-    <div className="space-y-4">
+    <div className="p-6 space-y-4">
       <div className="flex items-start justify-between">
         <div>
           <h3 className="text-lg font-semibold">{customer.name}</h3>
@@ -174,7 +173,7 @@ function CustomerDetailPanel({ customer }: { customer: any }) {
 
 function PaymentDetailPanel({ payment }: { payment: any }) {
   return (
-    <div className="space-y-4">
+    <div className="p-6 space-y-4">
       <div className="flex items-start justify-between">
         <div>
           <h3 className="text-lg font-semibold">Payment #{payment.id}</h3>
@@ -204,7 +203,7 @@ function PaymentDetailPanel({ payment }: { payment: any }) {
 }
 
 export default function SalesHub() {
-  const [searchTerm, setSearchTerm] = useState("");
+
   const [activeTab, setActiveTab] = useState("products");
   const [expandedProductId, setExpandedProductId] = useState<number | string | null>(null);
   const [expandedOrderId, setExpandedOrderId] = useState<number | string | null>(null);
@@ -229,7 +228,7 @@ export default function SalesHub() {
   });
 
   const generatePdf = trpc.invoices.generatePdf.useMutation({
-    onSuccess: (data) => { if (data.pdfUrl) window.open(data.pdfUrl, "_blank"); },
+    onSuccess: (data) => { if (data.pdf) window.open(data.pdf, "_blank"); },
     onError: (err: any) => toast.error(err.message),
   });
 
@@ -284,17 +283,13 @@ export default function SalesHub() {
   }), [products, orders, invoices, customers, payments]);
 
   return (
-    <DashboardLayout>
-      <div className="space-y-4">
+    <div className="p-6 space-y-4">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-3xl font-bold">Sales Hub</h1>
             <p className="text-muted-foreground">Products, Orders, Invoices, Customers, and Payments</p>
           </div>
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input placeholder="Search all..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="pl-9 w-64" />
-          </div>
+
         </div>
 
         <div className="grid grid-cols-5 gap-4">
@@ -351,35 +346,34 @@ export default function SalesHub() {
 
           <TabsContent value="products" className="mt-4">
             <Card><CardContent className="pt-6">
-              <SpreadsheetTable data={products || []} columns={productColumns} isLoading={productsLoading} searchTerm={searchTerm} expandedRowId={expandedProductId} onExpandChange={setExpandedProductId} renderExpanded={(product, onClose) => <ProductDetailPanel product={product} />} />
+              <SpreadsheetTable data={products || []} columns={productColumns} isLoading={productsLoading} showSearch expandedRowId={expandedProductId} onExpandChange={setExpandedProductId} renderExpanded={(product, onClose) => <ProductDetailPanel product={product} />} />
             </CardContent></Card>
           </TabsContent>
 
           <TabsContent value="orders" className="mt-4">
             <Card><CardContent className="pt-6">
-              <SpreadsheetTable data={orders || []} columns={orderColumns} isLoading={ordersLoading} searchTerm={searchTerm} expandedRowId={expandedOrderId} onExpandChange={setExpandedOrderId} renderExpanded={(order, onClose) => <OrderDetailPanel order={order} onStatusChange={(id, status) => updateOrderStatus.mutate({ id, status } as any)} />} />
+              <SpreadsheetTable data={orders || []} columns={orderColumns} isLoading={ordersLoading} showSearch expandedRowId={expandedOrderId} onExpandChange={setExpandedOrderId} renderExpanded={(order, onClose) => <OrderDetailPanel order={order} onStatusChange={(id, status) => updateOrderStatus.mutate({ id, status } as any)} />} />
             </CardContent></Card>
           </TabsContent>
 
           <TabsContent value="invoices" className="mt-4">
             <Card><CardContent className="pt-6">
-              <SpreadsheetTable data={invoices || []} columns={invoiceColumns} isLoading={invoicesLoading} searchTerm={searchTerm} expandedRowId={expandedInvoiceId} onExpandChange={setExpandedInvoiceId} renderExpanded={(invoice, onClose) => <InvoiceDetailPanel invoice={invoice} onSendEmail={(inv) => sendInvoiceEmail.mutate({ invoiceId: inv.id })} onDownloadPdf={(inv) => generatePdf.mutate({ invoiceId: inv.id })} />} />
+              <SpreadsheetTable data={invoices || []} columns={invoiceColumns} isLoading={invoicesLoading} showSearch expandedRowId={expandedInvoiceId} onExpandChange={setExpandedInvoiceId} renderExpanded={(invoice, onClose) => <InvoiceDetailPanel invoice={invoice} onSendEmail={(inv) => sendInvoiceEmail.mutate({ invoiceId: inv.id })} onDownloadPdf={(inv) => generatePdf.mutate({ invoiceId: inv.id })} />} />
             </CardContent></Card>
           </TabsContent>
 
           <TabsContent value="customers" className="mt-4">
             <Card><CardContent className="pt-6">
-              <SpreadsheetTable data={customers || []} columns={customerColumns} isLoading={customersLoading} searchTerm={searchTerm} expandedRowId={expandedCustomerId} onExpandChange={setExpandedCustomerId} renderExpanded={(customer, onClose) => <CustomerDetailPanel customer={customer} />} />
+              <SpreadsheetTable data={customers || []} columns={customerColumns} isLoading={customersLoading} showSearch expandedRowId={expandedCustomerId} onExpandChange={setExpandedCustomerId} renderExpanded={(customer, onClose) => <CustomerDetailPanel customer={customer} />} />
             </CardContent></Card>
           </TabsContent>
 
           <TabsContent value="payments" className="mt-4">
             <Card><CardContent className="pt-6">
-              <SpreadsheetTable data={payments || []} columns={paymentColumns} isLoading={paymentsLoading} searchTerm={searchTerm} expandedRowId={expandedPaymentId} onExpandChange={setExpandedPaymentId} renderExpanded={(payment, onClose) => <PaymentDetailPanel payment={payment} />} />
+              <SpreadsheetTable data={payments || []} columns={paymentColumns} isLoading={paymentsLoading} showSearch expandedRowId={expandedPaymentId} onExpandChange={setExpandedPaymentId} renderExpanded={(payment, onClose) => <PaymentDetailPanel payment={payment} />} />
             </CardContent></Card>
           </TabsContent>
         </Tabs>
       </div>
-    </DashboardLayout>
   );
 }

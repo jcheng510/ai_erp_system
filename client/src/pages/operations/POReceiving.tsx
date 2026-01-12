@@ -1,5 +1,4 @@
 import { useState } from "react";
-import DashboardLayout from "@/components/DashboardLayout";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -110,8 +109,7 @@ export default function POReceiving() {
   const selectedPOData = purchaseOrders?.find(po => po.id === selectedPO);
 
   return (
-    <DashboardLayout>
-      <div className="p-6 space-y-6">
+    <div className="p-6 space-y-6">
         <div>
           <h1 className="text-2xl font-bold">PO Receiving</h1>
           <p className="text-muted-foreground">Receive shipments and update raw material inventory</p>
@@ -314,6 +312,5 @@ export default function POReceiving() {
           </DialogContent>
         </Dialog>
       </div>
-    </DashboardLayout>
   );
 }

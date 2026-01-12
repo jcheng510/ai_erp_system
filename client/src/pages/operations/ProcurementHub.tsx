@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
-import DashboardLayout from "@/components/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -80,7 +79,7 @@ function PoDetailPanel({ po, onClose, onSendToSupplier, onStatusChange }: {
   const statusOption = poStatusOptions.find(s => s.value === po.status);
 
   return (
-    <div className="space-y-4">
+    <div className="p-6 space-y-4">
       {/* Header with actions */}
       <div className="flex items-start justify-between">
         <div>
@@ -203,7 +202,7 @@ function VendorDetailPanel({ vendor, onClose }: { vendor: any; onClose: () => vo
   const relatedPos = vendorPos?.filter((po: any) => po.vendorId === vendor.id) || [];
 
   return (
-    <div className="space-y-4">
+    <div className="p-6 space-y-4">
       <div className="flex items-start justify-between">
         <div>
           <h3 className="text-lg font-semibold">{vendor.name}</h3>
@@ -261,7 +260,7 @@ function MaterialDetailPanel({ material, onClose }: { material: any; onClose: ()
   const isLowStock = stockLevel < reorderPoint;
 
   return (
-    <div className="space-y-4">
+    <div className="p-6 space-y-4">
       <div className="flex items-start justify-between">
         <div>
           <h3 className="text-lg font-semibold flex items-center gap-2">
@@ -455,6 +454,7 @@ export default function ProcurementHub() {
     }
     createPo.mutate({
       vendorId: parseInt(poForm.vendorId),
+      orderDate: new Date(),
       expectedDate: poForm.expectedDate ? new Date(poForm.expectedDate) : undefined,
       notes: poForm.notes || undefined,
       subtotal: "0",
@@ -522,8 +522,7 @@ export default function ProcurementHub() {
   };
 
   return (
-    <DashboardLayout>
-      <div className="space-y-6 animate-fade-in">
+    <div className="p-6 space-y-6 animate-fade-in">
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
@@ -902,6 +901,5 @@ export default function ProcurementHub() {
           </DialogContent>
         </Dialog>
       </div>
-    </DashboardLayout>
   );
 }

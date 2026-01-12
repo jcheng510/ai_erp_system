@@ -1,5 +1,4 @@
 import { useState } from "react";
-import DashboardLayout from "@/components/DashboardLayout";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -43,17 +42,13 @@ export default function WorkOrderDetail() {
 
   if (isLoading) {
     return (
-      <DashboardLayout>
-        <div className="p-6">Loading...</div>
-      </DashboardLayout>
+      <div className="p-6">Loading...</div>
     );
   }
 
   if (!workOrder) {
     return (
-      <DashboardLayout>
-        <div className="p-6">Work order not found</div>
-      </DashboardLayout>
+      <div className="p-6">Work order not found</div>
     );
   }
 
@@ -80,8 +75,7 @@ export default function WorkOrderDetail() {
   };
 
   return (
-    <DashboardLayout>
-      <div className="p-6 space-y-6">
+    <div className="p-6 space-y-6">
         <div className="flex items-center gap-4">
           <Link href="/operations/work-orders">
             <Button variant="ghost" size="sm">
@@ -295,6 +289,5 @@ export default function WorkOrderDetail() {
           </CardContent>
         </Card>
       </div>
-    </DashboardLayout>
   );
 }

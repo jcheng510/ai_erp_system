@@ -1,6 +1,5 @@
 import { useState, useRef } from "react";
 import { trpc } from "@/lib/trpc";
-import DashboardLayout from "@/components/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -188,30 +187,25 @@ export default function DataRoomDetail() {
 
   if (roomLoading) {
     return (
-      <DashboardLayout>
-        <div className="flex items-center justify-center h-64">
+      <div className="p-6 flex items-center justify-center h-64">
           <div className="text-muted-foreground">Loading...</div>
         </div>
-      </DashboardLayout>
     );
   }
 
   if (!room) {
     return (
-      <DashboardLayout>
-        <div className="flex flex-col items-center justify-center h-64">
+      <div className="p-6 flex flex-col items-center justify-center h-64">
           <h2 className="text-xl font-semibold">Data Room Not Found</h2>
           <Button variant="link" onClick={() => setLocation("/datarooms")}>
             Back to Data Rooms
           </Button>
         </div>
-      </DashboardLayout>
     );
   }
 
   return (
-    <DashboardLayout>
-      <div className="space-y-6">
+    <div className="p-6 space-y-6">
         {/* Header */}
         <div className="flex items-center gap-4">
           <Button variant="ghost" size="icon" onClick={() => setLocation("/datarooms")}>
@@ -908,7 +902,6 @@ export default function DataRoomDetail() {
           </TabsContent>
         </Tabs>
       </div>
-    </DashboardLayout>
   );
 }
 
@@ -1007,7 +1000,7 @@ function NdaManagement({ dataRoomId, requiresNda }: { dataRoomId: number; requir
   const activeNda = ndaDocuments?.find(d => d.isActive);
 
   return (
-    <div className="space-y-6">
+    <div className="p-6 space-y-6">
       {/* NDA Status Card */}
       <Card>
         <CardHeader>

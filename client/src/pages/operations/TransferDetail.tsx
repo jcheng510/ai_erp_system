@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
-import DashboardLayout from "@/components/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -75,21 +74,17 @@ export default function TransferDetail() {
 
   if (isLoading) {
     return (
-      <DashboardLayout>
-        <div className="p-6">
+      <div className="p-6">
           <div className="text-center py-8 text-muted-foreground">Loading transfer details...</div>
         </div>
-      </DashboardLayout>
     );
   }
 
   if (!data?.transfer) {
     return (
-      <DashboardLayout>
-        <div className="p-6">
+      <div className="p-6">
           <div className="text-center py-8 text-muted-foreground">Transfer not found</div>
         </div>
-      </DashboardLayout>
     );
   }
 
@@ -157,8 +152,7 @@ export default function TransferDetail() {
   const canCancel = transfer.status !== "received" && transfer.status !== "cancelled";
 
   return (
-    <DashboardLayout>
-      <div className="p-6 space-y-6">
+    <div className="p-6 space-y-6">
         <div className="flex items-center gap-4">
           <Button variant="ghost" size="icon" onClick={() => setLocation("/operations/transfers")}>
             <ArrowLeft className="h-4 w-4" />
@@ -461,6 +455,5 @@ export default function TransferDetail() {
           </Card>
         )}
       </div>
-    </DashboardLayout>
   );
 }

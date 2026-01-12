@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
-import DashboardLayout from "@/components/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -81,8 +80,7 @@ export default function RawMaterials() {
   const categories = Array.from(new Set(materials?.map(m => m.category).filter(Boolean)));
   
   return (
-    <DashboardLayout>
-      <div className="p-6 space-y-6">
+    <div className="p-6 space-y-6">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold">Raw Materials</h1>
@@ -390,6 +388,5 @@ export default function RawMaterials() {
           </DialogContent>
         </Dialog>
       </div>
-    </DashboardLayout>
   );
 }

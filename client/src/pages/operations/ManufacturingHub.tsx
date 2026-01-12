@@ -1,6 +1,5 @@
 import { useState, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
-import DashboardLayout from "@/components/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -26,14 +25,12 @@ const workOrderStatuses = [
 
 // Detail Panel Components
 function InventoryDetailPanel({ item, onClose }: { item: any; onClose: () => void }) {
-  const { data: movements } = trpc.inventory.getMovements.useQuery({ productId: item.id });
-  
   return (
     <div className="space-y-4">
       <div className="flex items-start justify-between">
         <div>
-          <h3 className="text-lg font-semibold">{item.name || item.sku}</h3>
-          <p className="text-sm text-muted-foreground">SKU: {item.sku}</p>
+          <h3 className="text-lg font-semibold">{item.product?.name || `Inventory #${item.id}`}</h3>
+          <p className="text-sm text-muted-foreground">Product ID: {item.productId}</p>
         </div>
         <div className="text-right">
           <div className="text-2xl font-bold">{item.quantity || 0}</div>
@@ -43,50 +40,35 @@ function InventoryDetailPanel({ item, onClose }: { item: any; onClose: () => voi
       
       <div className="grid grid-cols-3 gap-4 text-sm">
         <div className="p-3 bg-muted rounded-lg">
-          <div className="text-muted-foreground">Reorder Point</div>
-          <div className="font-medium">{item.reorderPoint || 0}</div>
+          <div className="text-muted-foreground">Reorder Level</div>
+          <div className="font-medium">{item.reorderLevel || 0}</div>
         </div>
         <div className="p-3 bg-muted rounded-lg">
-          <div className="text-muted-foreground">Unit Cost</div>
-          <div className="font-medium">${item.unitCost || "0.00"}</div>
+          <div className="text-muted-foreground">Reserved</div>
+          <div className="font-medium">{item.reservedQuantity || 0}</div>
         </div>
         <div className="p-3 bg-muted rounded-lg">
-          <div className="text-muted-foreground">Location</div>
-          <div className="font-medium">{item.location || "N/A"}</div>
+          <div className="text-muted-foreground">Available</div>
+          <div className="font-medium">{(parseFloat(item.quantity) || 0) - (parseFloat(item.reservedQuantity) || 0)}</div>
         </div>
       </div>
-      
-      {movements && movements.length > 0 && (
-        <div>
-          <h4 className="font-medium mb-2">Recent Movements</h4>
-          <div className="space-y-1 text-sm">
-            {movements.slice(0, 5).map((m: any) => (
-              <div key={m.id} className="flex justify-between py-1 border-b">
-                <span>{m.type}</span>
-                <span className={m.quantity > 0 ? "text-green-600" : "text-red-600"}>
-                  {m.quantity > 0 ? "+" : ""}{m.quantity}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
 
 function BomDetailPanel({ bom, onClose }: { bom: any; onClose: () => void }) {
-  const { data: components } = trpc.bom.getComponents.useQuery({ bomId: bom.id });
+  const { data: bomDetails } = trpc.bom.get.useQuery({ id: bom.id });
+  const components = bomDetails?.components || [];
   
   return (
     <div className="space-y-4">
       <div className="flex items-start justify-between">
         <div>
           <h3 className="text-lg font-semibold">{bom.name}</h3>
-          <p className="text-sm text-muted-foreground">{bom.product?.name || "No product"}</p>
+          <p className="text-sm text-muted-foreground">{bomDetails?.product?.name || "No product"}</p>
         </div>
-        <Badge variant={bom.isActive ? "default" : "secondary"}>
-          {bom.isActive ? "Active" : "Inactive"}
+        <Badge variant={bom.status === 'active' ? "default" : "secondary"}>
+          {bom.status || "Draft"}
         </Badge>
       </div>
       
@@ -97,11 +79,11 @@ function BomDetailPanel({ bom, onClose }: { bom: any; onClose: () => void }) {
         </div>
         <div className="p-3 bg-muted rounded-lg">
           <div className="text-muted-foreground">Components</div>
-          <div className="font-medium">{components?.length || 0}</div>
+          <div className="font-medium">{components.length}</div>
         </div>
       </div>
       
-      {components && components.length > 0 && (
+      {components.length > 0 && (
         <div>
           <h4 className="font-medium mb-2">Bill of Materials</h4>
           <div className="border rounded-lg overflow-hidden">
@@ -116,7 +98,7 @@ function BomDetailPanel({ bom, onClose }: { bom: any; onClose: () => void }) {
               <tbody>
                 {components.map((c: any) => (
                   <tr key={c.id} className="border-t">
-                    <td className="p-2">{c.rawMaterial?.name || c.componentName}</td>
+                    <td className="p-2">{c.name}</td>
                     <td className="text-right p-2">{c.quantity}</td>
                     <td className="text-right p-2">{c.unit || "ea"}</td>
                   </tr>
@@ -138,7 +120,7 @@ function WorkOrderDetailPanel({ workOrder, onClose, onStatusChange }: {
   const statusOption = workOrderStatuses.find(s => s.value === workOrder.status);
   
   return (
-    <div className="space-y-4">
+    <div className="p-6 space-y-4">
       <div className="flex items-start justify-between">
         <div>
           <h3 className="text-lg font-semibold">WO-{workOrder.id}</h3>
@@ -199,7 +181,7 @@ function WorkOrderDetailPanel({ workOrder, onClose, onStatusChange }: {
 
 function LocationDetailPanel({ location, onClose }: { location: any; onClose: () => void }) {
   return (
-    <div className="space-y-4">
+    <div className="p-6 space-y-4">
       <div className="flex items-start justify-between">
         <div>
           <h3 className="text-lg font-semibold">{location.name}</h3>
@@ -306,8 +288,7 @@ export default function ManufacturingHub() {
   }), [inventory, boms, workOrders, locations]);
 
   return (
-    <DashboardLayout>
-      <div className="space-y-4">
+    <div className="p-6 space-y-4">
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
@@ -412,7 +393,7 @@ export default function ManufacturingHub() {
                   data={inventory || []}
                   columns={inventoryColumns}
                   isLoading={inventoryLoading}
-                  searchTerm={searchTerm}
+                  showSearch
                   expandedRowId={expandedInventoryId}
                   onExpandChange={setExpandedInventoryId}
                   renderExpanded={(item, onClose) => (
@@ -430,7 +411,7 @@ export default function ManufacturingHub() {
                   data={boms || []}
                   columns={bomColumns}
                   isLoading={bomsLoading}
-                  searchTerm={searchTerm}
+                  showSearch
                   expandedRowId={expandedBomId}
                   onExpandChange={setExpandedBomId}
                   renderExpanded={(bom, onClose) => (
@@ -448,7 +429,7 @@ export default function ManufacturingHub() {
                   data={workOrders || []}
                   columns={workOrderColumns}
                   isLoading={workOrdersLoading}
-                  searchTerm={searchTerm}
+                  showSearch
                   expandedRowId={expandedWorkOrderId}
                   onExpandChange={setExpandedWorkOrderId}
                   renderExpanded={(workOrder, onClose) => (
@@ -470,7 +451,7 @@ export default function ManufacturingHub() {
                   data={locations || []}
                   columns={locationColumns}
                   isLoading={locationsLoading}
-                  searchTerm={searchTerm}
+                  showSearch
                   expandedRowId={expandedLocationId}
                   onExpandChange={setExpandedLocationId}
                   renderExpanded={(location, onClose) => (
@@ -482,6 +463,5 @@ export default function ManufacturingHub() {
           </TabsContent>
         </Tabs>
       </div>
-    </DashboardLayout>
   );
 }

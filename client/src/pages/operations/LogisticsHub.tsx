@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
-import DashboardLayout from "@/components/DashboardLayout";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -96,7 +95,7 @@ function ShipmentDetailPanel({ shipment, onClose, onStatusChange }: {
   const ModeIcon = modeIcon;
 
   return (
-    <div className="space-y-4">
+    <div className="p-6 space-y-4">
       <div className="flex items-start justify-between">
         <div>
           <h3 className="text-lg font-semibold flex items-center gap-2">
@@ -172,7 +171,7 @@ function RfqDetailPanel({ rfq, onClose, onSendToCarriers }: {
   const statusOption = rfqStatusOptions.find(s => s.value === rfq.status);
 
   return (
-    <div className="space-y-4">
+    <div className="p-6 space-y-4">
       <div className="flex items-start justify-between">
         <div>
           <h3 className="text-lg font-semibold flex items-center gap-2">
@@ -242,7 +241,7 @@ function RfqDetailPanel({ rfq, onClose, onSendToCarriers }: {
 // Customs Detail Panel
 function CustomsDetailPanel({ customs, onClose }: { customs: any; onClose: () => void }) {
   return (
-    <div className="space-y-4">
+    <div className="p-6 space-y-4">
       <div className="flex items-start justify-between">
         <div>
           <h3 className="text-lg font-semibold flex items-center gap-2">
@@ -305,7 +304,7 @@ function TransferDetailPanel({ transfer, onClose, onStatusChange }: {
   const statusOption = transferStatusOptions.find(s => s.value === transfer.status);
 
   return (
-    <div className="space-y-4">
+    <div className="p-6 space-y-4">
       <div className="flex items-start justify-between">
         <div>
           <h3 className="text-lg font-semibold flex items-center gap-2">
@@ -455,8 +454,7 @@ export default function LogisticsHub() {
   };
 
   return (
-    <DashboardLayout>
-      <div className="space-y-6 animate-fade-in">
+    <div className="p-6 space-y-6 animate-fade-in">
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
@@ -625,6 +623,5 @@ export default function LogisticsHub() {
           </TabsContent>
         </Tabs>
       </div>
-    </DashboardLayout>
   );
 }

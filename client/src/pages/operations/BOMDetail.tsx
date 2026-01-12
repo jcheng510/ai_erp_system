@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
-import DashboardLayout from "@/components/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -144,23 +143,19 @@ export default function BOMDetail() {
   
   if (isLoading) {
     return (
-      <DashboardLayout>
-        <div className="p-6">Loading...</div>
-      </DashboardLayout>
+      <div className="p-6">Loading...</div>
     );
   }
   
   if (!bom) {
     return (
-      <DashboardLayout>
-        <div className="p-6">
+      <div className="p-6">
           <p>BOM not found</p>
           <Button onClick={() => navigate("/operations/bom")} className="mt-4">
             <ArrowLeft className="h-4 w-4 mr-2" />
             Back to BOMs
           </Button>
         </div>
-      </DashboardLayout>
     );
   }
   
@@ -170,8 +165,7 @@ export default function BOMDetail() {
   const totalCost = parseFloat(bom.totalCost?.toString() || "0");
   
   return (
-    <DashboardLayout>
-      <div className="p-6 space-y-6">
+    <div className="p-6 space-y-6">
         {/* Header */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
@@ -506,7 +500,7 @@ export default function BOMDetail() {
                       const compCost = parseFloat(comp.totalCost?.toString() || "0");
                       const percentage = totalCost > 0 ? (compCost / materialCost) * 100 : 0;
                       return (
-                        <div key={comp.id} className="flex items-center gap-4">
+                        <div key={comp.id} className="p-6 flex items-center gap-4">
                           <div className="w-48 truncate">{comp.name}</div>
                           <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
                             <div
@@ -678,6 +672,5 @@ export default function BOMDetail() {
           </TabsContent>
         </Tabs>
       </div>
-    </DashboardLayout>
   );
 }

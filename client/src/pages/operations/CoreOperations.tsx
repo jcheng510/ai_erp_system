@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
-import DashboardLayout from "@/components/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -224,7 +223,7 @@ export default function CoreOperations() {
     const Icon = nodeIcons[node.type];
 
     return (
-      <div key={nodeKey}>
+      <div className="p-6" key={nodeKey}>
         <div
           className={cn(
             "flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer hover:bg-accent/50 transition-colors",
@@ -276,8 +275,7 @@ export default function CoreOperations() {
   };
 
   return (
-    <DashboardLayout>
-      <div className="flex flex-col h-[calc(100vh-4rem)]">
+    <div className="p-6 flex flex-col h-[calc(100vh-4rem)]">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b">
           <div>
@@ -410,7 +408,6 @@ export default function CoreOperations() {
           </div>
         </div>
       </div>
-    </DashboardLayout>
   );
 }
 
@@ -448,7 +445,7 @@ function DetailPane({ node }: { node: TreeNode }) {
       case "sales_order":
         if (!salesOrderDetail) return <div className="text-muted-foreground">Loading...</div>;
         return (
-          <div className="space-y-4">
+          <div className="p-6 space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="text-xs text-muted-foreground">Order Number</label>
@@ -510,7 +507,7 @@ function DetailPane({ node }: { node: TreeNode }) {
       case "purchase_order":
         if (!purchaseOrderDetail) return <div className="text-muted-foreground">Loading...</div>;
         return (
-          <div className="space-y-4">
+          <div className="p-6 space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="text-xs text-muted-foreground">PO Number</label>
@@ -545,7 +542,7 @@ function DetailPane({ node }: { node: TreeNode }) {
       case "work_order":
         if (!workOrderDetail) return <div className="text-muted-foreground">Loading...</div>;
         return (
-          <div className="space-y-4">
+          <div className="p-6 space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="text-xs text-muted-foreground">Work Order Number</label>
@@ -580,7 +577,7 @@ function DetailPane({ node }: { node: TreeNode }) {
       case "inventory_lot":
         if (!lotDetail) return <div className="text-muted-foreground">Loading...</div>;
         return (
-          <div className="space-y-4">
+          <div className="p-6 space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="text-xs text-muted-foreground">Lot Code</label>
@@ -618,7 +615,7 @@ function DetailPane({ node }: { node: TreeNode }) {
   };
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
+    <div className="p-6 flex-1 flex flex-col overflow-hidden">
       {/* Detail Header */}
       <div className="p-4 border-b flex items-center gap-3">
         <Icon className="h-6 w-6 text-muted-foreground" />
