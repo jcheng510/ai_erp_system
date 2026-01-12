@@ -110,50 +110,8 @@
     {
       "idx": 15,
       "version": "5",
-      "when": 1768183991544,
-      "tag": "0015_lethal_shockwave",
-      "breakpoints": true
-    },
-    {
-      "idx": 16,
-      "version": "5",
-      "when": 1768190658562,
-      "tag": "0016_salty_deathstrike",
-      "breakpoints": true
-    },
-    {
-      "idx": 17,
-      "version": "5",
-      "when": 1768191754769,
-      "tag": "0017_dazzling_owl",
-      "breakpoints": true
-    },
-    {
-      "idx": 18,
-      "version": "5",
-      "when": 1768192779186,
-      "tag": "0018_exotic_eddie_brock",
-      "breakpoints": true
-    },
-    {
-      "idx": 19,
-      "version": "5",
-      "when": 1768193550922,
-      "tag": "0019_wooden_madelyne_pryor",
-      "breakpoints": true
-    },
-    {
-      "idx": 20,
-      "version": "5",
-      "when": 1768201120737,
-      "tag": "0020_same_makkari",
-      "breakpoints": true
-    },
-    {
-      "idx": 21,
-      "version": "5",
-      "when": 1768202385045,
-      "tag": "0021_pale_charles_xavier",
+      "when": 1768203273774,
+      "tag": "0015_happy_meltdown",
       "breakpoints": true
     }
   ]

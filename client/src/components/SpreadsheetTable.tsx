@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useMemo, useCallback, ReactNode } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -18,12 +18,14 @@ import {
 import { 
   ChevronUp, 
   ChevronDown, 
+  ChevronRight,
   MoreHorizontal, 
   Search,
   Filter,
   Download,
   Plus,
   ArrowUpDown,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -61,6 +63,11 @@ export interface SpreadsheetTableProps<T extends { id: number | string }> {
   stickyHeader?: boolean;
   compact?: boolean;
   maxHeight?: string;
+  // New: Expandable row detail
+  expandable?: boolean;
+  renderExpanded?: (row: T, onClose: () => void) => ReactNode;
+  expandedRowId?: number | string | null;
+  onExpandChange?: (rowId: number | string | null) => void;
 }
 
 function formatCurrency(value: number | string | null | undefined): string {
@@ -101,6 +108,10 @@ export function SpreadsheetTable<T extends { id: number | string }>({
   stickyHeader = true,
   compact = false,
   maxHeight = "calc(100vh - 300px)",
+  expandable = false,
+  renderExpanded,
+  expandedRowId: controlledExpandedId,
+  onExpandChange,
 }: SpreadsheetTableProps<T>) {
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<string | null>(null);
@@ -108,6 +119,11 @@ export function SpreadsheetTable<T extends { id: number | string }>({
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [editingCell, setEditingCell] = useState<{ rowId: number | string; key: string } | null>(null);
   const [editValue, setEditValue] = useState("");
+  const [internalExpandedId, setInternalExpandedId] = useState<number | string | null>(null);
+
+  // Use controlled or internal expanded state
+  const expandedId = controlledExpandedId !== undefined ? controlledExpandedId : internalExpandedId;
+  const setExpandedId = onExpandChange || setInternalExpandedId;
 
   const handleSort = useCallback((key: string) => {
     if (sortKey === key) {
@@ -198,6 +214,20 @@ export function SpreadsheetTable<T extends { id: number | string }>({
       onSelectionChange(new Set());
     } else {
       onSelectionChange(new Set(filteredData.map((row) => row.id)));
+    }
+  };
+
+  const handleRowClick = (row: T, e: React.MouseEvent) => {
+    // Don't expand if clicking on editable cell or action
+    const target = e.target as HTMLElement;
+    if (target.closest('button') || target.closest('input') || target.closest('select')) {
+      return;
+    }
+
+    if (expandable && renderExpanded) {
+      setExpandedId(expandedId === row.id ? null : row.id);
+    } else if (onRowClick) {
+      onRowClick(row);
     }
   };
 
@@ -313,6 +343,9 @@ export function SpreadsheetTable<T extends { id: number | string }>({
   const cellPadding = compact ? "px-2 py-1" : "px-3 py-2";
   const fontSize = compact ? "text-xs" : "text-sm";
 
+  // Calculate total columns for expanded row
+  const totalColumns = columns.length + (onSelectionChange ? 1 : 0) + (expandable ? 1 : 0);
+
   return (
     <div className="flex flex-col h-full">
       {/* Toolbar */}
@@ -373,6 +406,9 @@ export function SpreadsheetTable<T extends { id: number | string }>({
         <table className="w-full border-collapse">
           <thead className={cn(stickyHeader && "sticky top-0 z-10 bg-muted/95 backdrop-blur")}>
             <tr className="border-b">
+              {expandable && (
+                <th className={cn(cellPadding, "w-8")} />
+              )}
               {onSelectionChange && (
                 <th className={cn(cellPadding, "w-10")}>
                   <input
@@ -411,58 +447,83 @@ export function SpreadsheetTable<T extends { id: number | string }>({
           <tbody>
             {isLoading ? (
               <tr>
-                <td colSpan={columns.length + (onSelectionChange ? 1 : 0)} className="text-center py-8 text-muted-foreground">
+                <td colSpan={totalColumns} className="text-center py-8 text-muted-foreground">
                   Loading...
                 </td>
               </tr>
             ) : filteredData.length === 0 ? (
               <tr>
-                <td colSpan={columns.length + (onSelectionChange ? 1 : 0)} className="text-center py-8 text-muted-foreground">
+                <td colSpan={totalColumns} className="text-center py-8 text-muted-foreground">
                   {emptyMessage}
                 </td>
               </tr>
             ) : (
-              filteredData.map((row, rowIdx) => (
-                <tr
-                  key={row.id}
-                  className={cn(
-                    "border-b last:border-b-0 hover:bg-muted/50 transition-colors",
-                    onRowClick && "cursor-pointer",
-                    selectedRows?.has(row.id) && "bg-primary/5"
+              filteredData.map((row) => (
+                <>
+                  <tr
+                    key={row.id}
+                    className={cn(
+                      "border-b hover:bg-muted/50 transition-colors",
+                      (expandable || onRowClick) && "cursor-pointer",
+                      selectedRows?.has(row.id) && "bg-primary/5",
+                      expandedId === row.id && "bg-muted/30 border-b-0"
+                    )}
+                    onClick={(e) => handleRowClick(row, e)}
+                  >
+                    {expandable && (
+                      <td className={cn(cellPadding, "w-8")}>
+                        <ChevronRight 
+                          className={cn(
+                            "h-4 w-4 text-muted-foreground transition-transform",
+                            expandedId === row.id && "rotate-90"
+                          )} 
+                        />
+                      </td>
+                    )}
+                    {onSelectionChange && (
+                      <td className={cn(cellPadding, "w-10")} onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={selectedRows?.has(row.id) || false}
+                          onChange={() => toggleRowSelection(row.id)}
+                          className="h-4 w-4 rounded border-gray-300"
+                        />
+                      </td>
+                    )}
+                    {columns.map((col) => (
+                      <td
+                        key={col.key as string}
+                        className={cn(
+                          cellPadding,
+                          fontSize,
+                          col.editable && "cursor-text hover:bg-muted/80",
+                          col.type === "currency" && "text-right font-mono",
+                          col.type === "actions" && "w-10"
+                        )}
+                        onClick={(e) => {
+                          if (col.editable) {
+                            e.stopPropagation();
+                            startEdit(row.id, col.key as string, (row as any)[col.key]);
+                          }
+                        }}
+                      >
+                        {renderCell(row, col)}
+                      </td>
+                    ))}
+                  </tr>
+                  {/* Expanded Row Detail */}
+                  {expandable && expandedId === row.id && renderExpanded && (
+                    <tr key={`${row.id}-expanded`} className="bg-muted/20">
+                      <td colSpan={totalColumns} className="p-0">
+                        <div className="border-t border-b border-primary/20 bg-card">
+                          <div className="p-4">
+                            {renderExpanded(row, () => setExpandedId(null))}
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
                   )}
-                  onClick={() => onRowClick?.(row)}
-                >
-                  {onSelectionChange && (
-                    <td className={cn(cellPadding, "w-10")} onClick={(e) => e.stopPropagation()}>
-                      <input
-                        type="checkbox"
-                        checked={selectedRows?.has(row.id) || false}
-                        onChange={() => toggleRowSelection(row.id)}
-                        className="h-4 w-4 rounded border-gray-300"
-                      />
-                    </td>
-                  )}
-                  {columns.map((col) => (
-                    <td
-                      key={col.key as string}
-                      className={cn(
-                        cellPadding,
-                        fontSize,
-                        col.editable && "cursor-text hover:bg-muted/80",
-                        col.type === "currency" && "text-right font-mono",
-                        col.type === "actions" && "w-10"
-                      )}
-                      onClick={(e) => {
-                        if (col.editable) {
-                          e.stopPropagation();
-                          startEdit(row.id, col.key as string, (row as any)[col.key]);
-                        }
-                      }}
-                    >
-                      {renderCell(row, col)}
-                    </td>
-                  ))}
-                </tr>
+                </>
               ))
             )}
           </tbody>

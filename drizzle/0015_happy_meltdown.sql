@@ -1,0 +1,437 @@
+CREATE TABLE `data_room_documents` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`dataRoomId` int NOT NULL,
+	`folderId` int,
+	`name` varchar(255) NOT NULL,
+	`description` text,
+	`fileType` varchar(64) NOT NULL,
+	`mimeType` varchar(128),
+	`fileSize` bigint,
+	`pageCount` int,
+	`storageType` enum('s3','google_drive') NOT NULL DEFAULT 's3',
+	`storageUrl` varchar(512),
+	`storageKey` varchar(255),
+	`googleDriveFileId` varchar(255),
+	`googleDriveWebViewLink` varchar(512),
+	`thumbnailUrl` varchar(512),
+	`sortOrder` int NOT NULL DEFAULT 0,
+	`isHidden` boolean NOT NULL DEFAULT false,
+	`version` int NOT NULL DEFAULT 1,
+	`originalDocumentId` int,
+	`uploadedBy` int,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `data_room_documents_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `data_room_folders` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`dataRoomId` int NOT NULL,
+	`parentId` int,
+	`name` varchar(255) NOT NULL,
+	`description` text,
+	`sortOrder` int NOT NULL DEFAULT 0,
+	`googleDriveFolderId` varchar(255),
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `data_room_folders_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `data_room_invitations` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`dataRoomId` int NOT NULL,
+	`email` varchar(320) NOT NULL,
+	`name` varchar(255),
+	`role` enum('viewer','editor','admin') NOT NULL DEFAULT 'viewer',
+	`allowDownload` boolean NOT NULL DEFAULT true,
+	`allowPrint` boolean NOT NULL DEFAULT true,
+	`allowedFolderIds` json,
+	`allowedDocumentIds` json,
+	`restrictedFolderIds` json,
+	`restrictedDocumentIds` json,
+	`inviteCode` varchar(64) NOT NULL,
+	`status` enum('pending','accepted','declined','expired') NOT NULL DEFAULT 'pending',
+	`expiresAt` timestamp,
+	`acceptedAt` timestamp,
+	`visitorId` int,
+	`message` text,
+	`invitedBy` int NOT NULL,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `data_room_invitations_id` PRIMARY KEY(`id`),
+	CONSTRAINT `data_room_invitations_inviteCode_unique` UNIQUE(`inviteCode`)
+);
+--> statement-breakpoint
+CREATE TABLE `data_room_links` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`dataRoomId` int NOT NULL,
+	`linkCode` varchar(64) NOT NULL,
+	`name` varchar(255),
+	`password` varchar(255),
+	`expiresAt` timestamp,
+	`maxViews` int,
+	`viewCount` int NOT NULL DEFAULT 0,
+	`allowDownload` boolean NOT NULL DEFAULT true,
+	`allowPrint` boolean NOT NULL DEFAULT true,
+	`restrictedFolderIds` json,
+	`restrictedDocumentIds` json,
+	`requireEmail` boolean NOT NULL DEFAULT true,
+	`requireName` boolean NOT NULL DEFAULT false,
+	`requireCompany` boolean NOT NULL DEFAULT false,
+	`requirePhone` boolean NOT NULL DEFAULT false,
+	`customFields` json,
+	`isActive` boolean NOT NULL DEFAULT true,
+	`createdBy` int NOT NULL,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `data_room_links_id` PRIMARY KEY(`id`),
+	CONSTRAINT `data_room_links_linkCode_unique` UNIQUE(`linkCode`)
+);
+--> statement-breakpoint
+CREATE TABLE `data_room_visitors` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`dataRoomId` int NOT NULL,
+	`linkId` int,
+	`email` varchar(320),
+	`name` varchar(255),
+	`company` varchar(255),
+	`phone` varchar(32),
+	`customFieldData` json,
+	`ndaAcceptedAt` timestamp,
+	`ndaIpAddress` varchar(45),
+	`ndaSignatureId` int,
+	`accessStatus` enum('active','blocked','revoked','expired') NOT NULL DEFAULT 'active',
+	`blockedAt` timestamp,
+	`blockedReason` text,
+	`revokedAt` timestamp,
+	`revokedReason` text,
+	`ipAddress` varchar(45),
+	`userAgent` text,
+	`referrer` varchar(512),
+	`totalViews` int NOT NULL DEFAULT 0,
+	`totalTimeSpent` int NOT NULL DEFAULT 0,
+	`lastViewedAt` timestamp,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `data_room_visitors_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `data_rooms` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`name` varchar(255) NOT NULL,
+	`description` text,
+	`slug` varchar(128) NOT NULL,
+	`ownerId` int NOT NULL,
+	`isPublic` boolean NOT NULL DEFAULT false,
+	`invitationOnly` boolean NOT NULL DEFAULT true,
+	`requireEmailVerification` boolean NOT NULL DEFAULT true,
+	`password` varchar(255),
+	`requiresNda` boolean NOT NULL DEFAULT false,
+	`ndaText` text,
+	`logoUrl` varchar(512),
+	`brandColor` varchar(7),
+	`welcomeMessage` text,
+	`allowDownload` boolean NOT NULL DEFAULT true,
+	`allowPrint` boolean NOT NULL DEFAULT true,
+	`expiresAt` timestamp,
+	`watermarkEnabled` boolean NOT NULL DEFAULT false,
+	`watermarkText` varchar(255),
+	`googleDriveFolderId` varchar(255),
+	`lastSyncedAt` timestamp,
+	`status` enum('active','archived','draft') NOT NULL DEFAULT 'active',
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `data_rooms_id` PRIMARY KEY(`id`),
+	CONSTRAINT `data_rooms_slug_unique` UNIQUE(`slug`)
+);
+--> statement-breakpoint
+CREATE TABLE `document_views` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`documentId` int NOT NULL,
+	`visitorId` int NOT NULL,
+	`linkId` int,
+	`startedAt` timestamp NOT NULL DEFAULT (now()),
+	`endedAt` timestamp,
+	`duration` int,
+	`pagesViewed` json,
+	`totalPagesViewed` int NOT NULL DEFAULT 0,
+	`percentViewed` decimal(5,2),
+	`downloaded` boolean NOT NULL DEFAULT false,
+	`downloadedAt` timestamp,
+	`printed` boolean NOT NULL DEFAULT false,
+	`deviceType` varchar(32),
+	`browser` varchar(64),
+	`os` varchar(64),
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	CONSTRAINT `document_views_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `emailCredentials` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`companyId` int,
+	`userId` int NOT NULL,
+	`name` varchar(255) NOT NULL,
+	`provider` enum('gmail','outlook','yahoo','icloud','custom') NOT NULL,
+	`email` varchar(320) NOT NULL,
+	`imapHost` varchar(255),
+	`imapPort` int DEFAULT 993,
+	`imapSecure` boolean DEFAULT true,
+	`imapUsername` varchar(255),
+	`imapPassword` text,
+	`accessToken` text,
+	`refreshToken` text,
+	`tokenExpiresAt` timestamp,
+	`scanFolder` varchar(255) DEFAULT 'INBOX',
+	`scanUnreadOnly` boolean DEFAULT true,
+	`markAsRead` boolean DEFAULT false,
+	`maxEmailsPerScan` int DEFAULT 50,
+	`isActive` boolean NOT NULL DEFAULT true,
+	`lastScanAt` timestamp,
+	`lastScanStatus` enum('success','failed','partial'),
+	`lastScanError` text,
+	`emailsScanned` int DEFAULT 0,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `emailCredentials_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `emailScanLogs` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`credentialId` int NOT NULL,
+	`scheduledScanId` int,
+	`startedAt` timestamp NOT NULL DEFAULT (now()),
+	`completedAt` timestamp,
+	`status` enum('running','success','failed','partial') NOT NULL DEFAULT 'running',
+	`emailsFound` int DEFAULT 0,
+	`emailsProcessed` int DEFAULT 0,
+	`emailsCategorized` int DEFAULT 0,
+	`errorMessage` text,
+	`details` text,
+	CONSTRAINT `emailScanLogs_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `imap_credentials` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`userId` int NOT NULL,
+	`name` varchar(255) NOT NULL,
+	`host` varchar(255) NOT NULL,
+	`port` int NOT NULL DEFAULT 993,
+	`secure` boolean NOT NULL DEFAULT true,
+	`email` varchar(320) NOT NULL,
+	`encryptedPassword` text NOT NULL,
+	`folder` varchar(128) NOT NULL DEFAULT 'INBOX',
+	`unseenOnly` boolean NOT NULL DEFAULT true,
+	`markAsSeen` boolean NOT NULL DEFAULT false,
+	`pollingEnabled` boolean NOT NULL DEFAULT false,
+	`pollingIntervalMinutes` int NOT NULL DEFAULT 15,
+	`lastPolledAt` timestamp,
+	`lastMessageUid` int,
+	`isActive` boolean NOT NULL DEFAULT true,
+	`lastError` text,
+	`lastSuccessAt` timestamp,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `imap_credentials_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `nda_documents` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`dataRoomId` int NOT NULL,
+	`name` varchar(255) NOT NULL,
+	`version` varchar(32) NOT NULL DEFAULT '1.0',
+	`storageKey` varchar(512) NOT NULL,
+	`storageUrl` varchar(1024) NOT NULL,
+	`mimeType` varchar(128) NOT NULL DEFAULT 'application/pdf',
+	`fileSize` bigint,
+	`pageCount` int,
+	`isActive` boolean NOT NULL DEFAULT true,
+	`requiresSignature` boolean NOT NULL DEFAULT true,
+	`allowTypedSignature` boolean NOT NULL DEFAULT true,
+	`allowDrawnSignature` boolean NOT NULL DEFAULT true,
+	`uploadedBy` int NOT NULL,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `nda_documents_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `nda_signature_audit_log` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`signatureId` int NOT NULL,
+	`action` enum('viewed_nda','started_signing','completed_signature','downloaded_signed_copy','signature_revoked','access_granted','access_denied') NOT NULL,
+	`ipAddress` varchar(45),
+	`userAgent` text,
+	`details` json,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	CONSTRAINT `nda_signature_audit_log_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `nda_signatures` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`ndaDocumentId` int NOT NULL,
+	`dataRoomId` int NOT NULL,
+	`visitorId` int,
+	`linkId` int,
+	`signerName` varchar(255) NOT NULL,
+	`signerEmail` varchar(320) NOT NULL,
+	`signerTitle` varchar(255),
+	`signerCompany` varchar(255),
+	`signatureType` enum('typed','drawn') NOT NULL,
+	`signatureData` text NOT NULL,
+	`signatureImageUrl` varchar(1024),
+	`signedDocumentKey` varchar(512),
+	`signedDocumentUrl` varchar(1024),
+	`signedAt` timestamp NOT NULL DEFAULT (now()),
+	`ipAddress` varchar(45) NOT NULL,
+	`userAgent` text,
+	`agreementText` text,
+	`consentCheckbox` boolean NOT NULL DEFAULT true,
+	`status` enum('pending','signed','revoked','expired') NOT NULL DEFAULT 'signed',
+	`revokedAt` timestamp,
+	`revokedReason` text,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `nda_signatures_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `recurringInvoiceHistory` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`recurringInvoiceId` int NOT NULL,
+	`generatedInvoiceId` int NOT NULL,
+	`generatedAt` timestamp NOT NULL DEFAULT (now()),
+	`scheduledFor` timestamp NOT NULL,
+	`status` enum('generated','sent','failed') NOT NULL DEFAULT 'generated',
+	`errorMessage` text,
+	CONSTRAINT `recurringInvoiceHistory_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `recurringInvoiceItems` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`recurringInvoiceId` int NOT NULL,
+	`productId` int,
+	`description` varchar(500) NOT NULL,
+	`quantity` decimal(10,2) NOT NULL DEFAULT '1',
+	`unitPrice` decimal(12,2) NOT NULL DEFAULT '0',
+	`taxRate` decimal(5,2),
+	`taxAmount` decimal(12,2),
+	`discountPercent` decimal(5,2),
+	`totalAmount` decimal(12,2) NOT NULL DEFAULT '0',
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	CONSTRAINT `recurringInvoiceItems_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `recurringInvoices` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`companyId` int,
+	`customerId` int NOT NULL,
+	`templateName` varchar(255) NOT NULL,
+	`description` text,
+	`recurringInvoiceFrequency` enum('weekly','biweekly','monthly','quarterly','annually') NOT NULL,
+	`dayOfWeek` int,
+	`dayOfMonth` int,
+	`startDate` timestamp NOT NULL,
+	`endDate` timestamp,
+	`nextGenerationDate` timestamp NOT NULL,
+	`currency` varchar(3) NOT NULL DEFAULT 'USD',
+	`subtotal` decimal(12,2) NOT NULL DEFAULT '0',
+	`taxRate` decimal(5,2),
+	`taxAmount` decimal(12,2) DEFAULT '0',
+	`discountPercent` decimal(5,2),
+	`discountAmount` decimal(12,2) DEFAULT '0',
+	`totalAmount` decimal(12,2) NOT NULL DEFAULT '0',
+	`autoSend` boolean NOT NULL DEFAULT false,
+	`daysUntilDue` int NOT NULL DEFAULT 30,
+	`notes` text,
+	`terms` text,
+	`isActive` boolean NOT NULL DEFAULT true,
+	`lastGeneratedAt` timestamp,
+	`generationCount` int NOT NULL DEFAULT 0,
+	`createdBy` int,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `recurringInvoices_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `scheduledEmailScans` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`credentialId` int NOT NULL,
+	`companyId` int,
+	`isEnabled` boolean NOT NULL DEFAULT true,
+	`intervalMinutes` int NOT NULL DEFAULT 15,
+	`lastRunAt` timestamp,
+	`nextRunAt` timestamp,
+	`lastRunStatus` enum('success','failed','running'),
+	`lastRunError` text,
+	`lastRunEmailsFound` int DEFAULT 0,
+	`totalRuns` int DEFAULT 0,
+	`totalEmailsProcessed` int DEFAULT 0,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `scheduledEmailScans_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `supplierDocuments` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`portalSessionId` int NOT NULL,
+	`purchaseOrderId` int NOT NULL,
+	`vendorId` int NOT NULL,
+	`documentType` enum('commercial_invoice','packing_list','dimensions_weight','hs_codes','certificate_of_origin','msds_sds','bill_of_lading','customs_declaration','other') NOT NULL,
+	`fileName` varchar(255) NOT NULL,
+	`fileUrl` text NOT NULL,
+	`fileSize` int,
+	`mimeType` varchar(100),
+	`notes` text,
+	`extractedData` text,
+	`status` enum('pending','approved','rejected') NOT NULL DEFAULT 'pending',
+	`reviewedBy` int,
+	`reviewedAt` timestamp,
+	`reviewNotes` text,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `supplierDocuments_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `supplierFreightInfo` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`portalSessionId` int NOT NULL,
+	`purchaseOrderId` int NOT NULL,
+	`vendorId` int NOT NULL,
+	`totalPackages` int,
+	`totalGrossWeight` decimal(10,2),
+	`totalNetWeight` decimal(10,2),
+	`weightUnit` varchar(10) DEFAULT 'kg',
+	`totalVolume` decimal(10,3),
+	`volumeUnit` varchar(10) DEFAULT 'cbm',
+	`packageDimensions` text,
+	`hsCodes` text,
+	`preferredShipDate` timestamp,
+	`preferredCarrier` varchar(100),
+	`incoterms` varchar(20),
+	`specialInstructions` text,
+	`hasDangerousGoods` boolean DEFAULT false,
+	`dangerousGoodsClass` varchar(50),
+	`unNumber` varchar(20),
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `supplierFreightInfo_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `supplierPortalSessions` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`token` varchar(64) NOT NULL,
+	`purchaseOrderId` int NOT NULL,
+	`vendorId` int NOT NULL,
+	`vendorEmail` varchar(320),
+	`status` enum('active','completed','expired') NOT NULL DEFAULT 'active',
+	`expiresAt` timestamp NOT NULL,
+	`completedAt` timestamp,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	CONSTRAINT `supplierPortalSessions_id` PRIMARY KEY(`id`),
+	CONSTRAINT `supplierPortalSessions_token_unique` UNIQUE(`token`)
+);
+--> statement-breakpoint
+ALTER TABLE `inbound_emails` ADD `email_category` enum('receipt','purchase_order','invoice','shipping_confirmation','freight_quote','delivery_notification','order_confirmation','payment_confirmation','general') DEFAULT 'general';--> statement-breakpoint
+ALTER TABLE `inbound_emails` ADD `categoryConfidence` decimal(5,2);--> statement-breakpoint
+ALTER TABLE `inbound_emails` ADD `categoryKeywords` json;--> statement-breakpoint
+ALTER TABLE `inbound_emails` ADD `suggestedAction` varchar(255);--> statement-breakpoint
+ALTER TABLE `inbound_emails` ADD `email_priority` enum('high','medium','low') DEFAULT 'medium';--> statement-breakpoint
+ALTER TABLE `inbound_emails` ADD `subcategory` varchar(100);

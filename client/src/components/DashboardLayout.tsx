@@ -94,53 +94,24 @@ const menuGroups = [
   {
     label: "Operations",
     items: [
-      { icon: LayoutDashboard, label: "Core Operations", path: "/operations/core" },
       { icon: Warehouse, label: "Manufacturing", path: "/operations/manufacturing-hub" },
       { icon: Building2, label: "Procurement", path: "/operations/procurement-hub" },
       { icon: Truck, label: "Logistics", path: "/operations/logistics-hub" },
-      { icon: Brain, label: "AI Forecasting", path: "/operations/forecasting" },
       { icon: Mail, label: "Email Inbox", path: "/operations/email-inbox" },
     ],
   },
   {
-    label: "HR",
+    label: "People & Legal",
     items: [
-      { icon: UserCog, label: "Employees", path: "/hr/employees" },
-      { icon: CreditCard, label: "Payroll", path: "/hr/payroll" },
+      { icon: UserCog, label: "Team & Payroll", path: "/hr/employees" },
+      { icon: FileSignature, label: "Contracts & Legal", path: "/legal/contracts" },
     ],
   },
   {
-    label: "Legal",
+    label: "Projects & Data",
     items: [
-      { icon: FileSignature, label: "Contracts", path: "/legal/contracts" },
-      { icon: AlertTriangle, label: "Disputes", path: "/legal/disputes" },
-      { icon: FileText, label: "Documents", path: "/legal/documents" },
-    ],
-  },
-  {
-    label: "Freight",
-    items: [
-      { icon: Send, label: "Quote Requests", path: "/freight/rfqs" },
-      { icon: FileCheck, label: "Customs", path: "/freight/customs" },
-    ],
-  },
-  {
-    label: "Projects",
-    items: [
-      { icon: FolderKanban, label: "All Projects", path: "/projects" },
-    ],
-  },
-  {
-    label: "Portals",
-    items: [
-      { icon: Warehouse, label: "Copacker Portal", path: "/portal/copacker" },
-      { icon: Building2, label: "Vendor Portal", path: "/portal/vendor" },
-    ],
-  },
-  {
-    label: "Data Rooms",
-    items: [
-      { icon: FolderLock, label: "All Data Rooms", path: "/datarooms" },
+      { icon: FolderKanban, label: "Projects", path: "/projects" },
+      { icon: FolderLock, label: "Data Rooms", path: "/datarooms" },
     ],
   },
   {
