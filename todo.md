@@ -594,3 +594,22 @@
 - [x] Vendor bulk actions (activate, deactivate)
 - [x] Material bulk actions (AI: Create Reorder PO, mark received, mark inspected)
 - [x] All 258 unit tests passing
+
+## Multi-Copacker Inventory UI (Jan 2026)
+- [ ] Build unified Inventory page with three toggle views (Exceptions, By Item, By Location)
+- [ ] Build Inventory by Item view with total owned, location breakdown, and actions
+- [ ] Build Inventory by Location view with raw/semi-finished/finished goods sections
+- [ ] Build Exceptions view showing delayed shipments, blocked production, yield variance, QC holds
+- [ ] Build Production Order inline cards with inputs/outputs/yield visualization
+- [ ] Build Shipment UI with one-click receive (auto inventory move, lot preservation)
+- [ ] Add lot/batch inheritance display showing transformation lineage
+- [ ] Implement copacker role restrictions (location-only view, no cost visibility)
+
+## Multi-Copacker Inventory UI (Completed)
+- [x] Unified Inventory page with three toggle views (Exceptions, By Item, By Location)
+- [x] Inventory by Item view with location breakdown and status indicators
+- [x] Inventory by Location view with expandable rows showing raw materials and finished goods
+- [x] Exceptions view with resolve actions (Delayed Shipments, Blocked Production, Yield Variance, QC Holds)
+- [x] Production Order inline cards with transformation visualization (Input Materials → Output)
+- [x] Shipment UI with one-click receive for incoming transfers
+- [x] Lot/batch inheritance display in expanded item views
