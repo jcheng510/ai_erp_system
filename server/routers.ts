@@ -628,7 +628,7 @@ export const appRouter = router({
         
         // Update invoice status to sent
         await db.updateInvoice(input.invoiceId, { status: 'sent' });
-        await createAuditLog(ctx.user.id, 'email', 'invoice', input.invoiceId, invoice.invoiceNumber);
+        await createAuditLog(ctx.user.id, 'update', 'invoice', input.invoiceId, invoice.invoiceNumber);
         
         return { success: true };
       }),
