@@ -10,4 +10,9 @@ export const ENV = {
   // SendGrid email configuration
   sendgridApiKey: process.env.SENDGRID_API_KEY ?? "",
   sendgridFromEmail: process.env.SENDGRID_FROM_EMAIL ?? "",
+  // IMAP email inbox configuration
+  imapHost: process.env.IMAP_HOST ?? "",
+  imapPort: process.env.IMAP_PORT ?? "993",
+  imapUser: process.env.IMAP_USER ?? "",
+  imapPassword: process.env.IMAP_PASSWORD ?? "",
 };

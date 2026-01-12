@@ -5203,6 +5203,240 @@ Provide your forecast in JSON format with the following structure:
           return { success: false, error: "Reparse failed" };
         }
       }),
+
+    // Check if IMAP inbox is configured
+    isInboxConfigured: protectedProcedure
+      .query(async () => {
+        const { isImapConfigured, getImapConfig, IMAP_PRESETS } = await import("./_core/emailInboxScanner");
+        return {
+          configured: isImapConfigured(),
+          presets: Object.keys(IMAP_PRESETS),
+        };
+      }),
+
+    // Test IMAP connection
+    testInboxConnection: protectedProcedure
+      .input(z.object({
+        host: z.string(),
+        port: z.number().default(993),
+        secure: z.boolean().default(true),
+        user: z.string(),
+        password: z.string(),
+      }))
+      .mutation(async ({ input }) => {
+        const { testImapConnection } = await import("./_core/emailInboxScanner");
+        return testImapConnection({
+          host: input.host,
+          port: input.port,
+          secure: input.secure,
+          auth: {
+            user: input.user,
+            pass: input.password,
+          },
+        });
+      }),
+
+    // Scan entire inbox and import emails
+    scanInbox: protectedProcedure
+      .input(z.object({
+        host: z.string().optional(),
+        port: z.number().optional(),
+        secure: z.boolean().optional(),
+        user: z.string().optional(),
+        password: z.string().optional(),
+        folder: z.string().default("INBOX"),
+        limit: z.number().default(50),
+        unseenOnly: z.boolean().default(true),
+        markAsSeen: z.boolean().default(false),
+        fullAiParsing: z.boolean().default(false),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { scanAndCategorizeInbox, getImapConfig } = await import("./_core/emailInboxScanner");
+        
+        // Get config from input or environment
+        let config = getImapConfig();
+        if (input.host && input.user && input.password) {
+          config = {
+            host: input.host,
+            port: input.port || 993,
+            secure: input.secure ?? true,
+            auth: {
+              user: input.user,
+              pass: input.password,
+            },
+          };
+        }
+        
+        if (!config) {
+          return {
+            success: false,
+            error: "IMAP not configured. Please provide connection details or set environment variables.",
+            imported: 0,
+            skipped: 0,
+            errors: [],
+          };
+        }
+
+        // Scan the inbox
+        const { scanResult, parsedResults } = await scanAndCategorizeInbox(config, {
+          folder: input.folder,
+          limit: input.limit,
+          unseenOnly: input.unseenOnly,
+          markAsSeen: input.markAsSeen,
+          fullAiParsing: input.fullAiParsing,
+        });
+
+        if (!scanResult.success) {
+          return {
+            success: false,
+            error: scanResult.errors.join("; "),
+            imported: 0,
+            skipped: 0,
+            errors: scanResult.errors,
+          };
+        }
+
+        // Import emails into the database
+        let imported = 0;
+        let skipped = 0;
+        const importErrors: string[] = [];
+
+        for (const { email, parseResult } of parsedResults) {
+          try {
+            // Check if email already exists by messageId
+            const existing = await db.findInboundEmailByMessageId(email.messageId);
+            if (existing) {
+              skipped++;
+              continue;
+            }
+
+            // Create inbound email record
+            const { id: emailId } = await db.createInboundEmail({
+              messageId: email.messageId,
+              fromEmail: email.from.address,
+              fromName: email.from.name || null,
+              toEmail: email.to.join(", ") || "inbox",
+              subject: email.subject,
+              bodyText: email.bodyText,
+              bodyHtml: email.bodyHtml || null,
+              receivedAt: email.date,
+              parsingStatus: parseResult ? "parsed" : "pending",
+              category: email.categorization?.category || "general",
+              categoryConfidence: email.categorization?.confidence?.toString() || null,
+              categoryKeywords: email.categorization?.keywords || null,
+              suggestedAction: email.categorization?.suggestedAction || null,
+              priority: email.categorization?.priority || "medium",
+              subcategory: email.categorization?.subcategory || null,
+            });
+
+            // If we have parsed documents, create them
+            if (parseResult?.documents) {
+              for (const doc of parseResult.documents) {
+                let vendorId: number | null = null;
+                const existingVendor = await db.findVendorByEmailOrName(doc.vendorEmail, doc.vendorName);
+                if (existingVendor) vendorId = existingVendor.id;
+
+                await db.createParsedDocument({
+                  emailId,
+                  documentType: doc.documentType as any,
+                  confidence: doc.confidence?.toString() || "0",
+                  vendorName: doc.vendorName || null,
+                  vendorEmail: doc.vendorEmail || null,
+                  vendorId,
+                  documentNumber: doc.documentNumber || null,
+                  documentDate: doc.documentDate ? new Date(doc.documentDate) : null,
+                  totalAmount: doc.totalAmount?.toString() || null,
+                  currency: doc.currency || "USD",
+                  trackingNumber: doc.trackingNumber || null,
+                  carrierName: doc.carrierName || null,
+                  lineItems: doc.lineItems || null,
+                  rawExtractedData: doc as any,
+                });
+              }
+            }
+
+            // Create attachment records
+            for (const attachment of email.attachments) {
+              await db.createEmailAttachment({
+                emailId,
+                filename: attachment.filename,
+                mimeType: attachment.contentType,
+                size: attachment.size,
+                storageUrl: null, // Attachments not downloaded in scan
+              });
+            }
+
+            imported++;
+          } catch (error: any) {
+            importErrors.push(`Failed to import ${email.messageId}: ${error.message}`);
+          }
+        }
+
+        return {
+          success: true,
+          totalInInbox: scanResult.totalEmails,
+          scanned: scanResult.newEmails,
+          imported,
+          skipped,
+          errors: [...scanResult.errors, ...importErrors],
+        };
+      }),
+
+    // Bulk categorize all uncategorized emails
+    bulkCategorize: protectedProcedure
+      .input(z.object({
+        useAi: z.boolean().default(false),
+        limit: z.number().default(100),
+      }))
+      .mutation(async ({ input }) => {
+        const { quickCategorize, categorizeEmail } = await import("./_core/emailParser");
+        
+        // Get uncategorized emails
+        const emails = await db.getUncategorizedEmails(input.limit);
+        
+        let categorized = 0;
+        const errors: string[] = [];
+
+        for (const email of emails) {
+          try {
+            let categorization;
+            
+            if (input.useAi) {
+              categorization = await categorizeEmail(
+                email.subject || "",
+                email.bodyText || "",
+                email.fromEmail,
+                email.fromName || undefined
+              );
+            } else {
+              categorization = quickCategorize(
+                email.subject || "",
+                email.fromEmail
+              );
+            }
+
+            await db.updateEmailCategorization(email.id, {
+              category: categorization.category,
+              categoryConfidence: categorization.confidence.toString(),
+              categoryKeywords: categorization.keywords,
+              suggestedAction: categorization.suggestedAction || null,
+              priority: categorization.priority,
+              subcategory: categorization.subcategory || null,
+            });
+
+            categorized++;
+          } catch (error: any) {
+            errors.push(`Failed to categorize email ${email.id}: ${error.message}`);
+          }
+        }
+
+        return {
+          success: true,
+          total: emails.length,
+          categorized,
+          errors,
+        };
+      }),
   }),
 });
 

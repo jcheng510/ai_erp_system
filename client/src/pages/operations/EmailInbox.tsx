@@ -36,7 +36,11 @@ import {
   Tag,
   ArrowUpCircle,
   ArrowDownCircle,
-  MinusCircle
+  MinusCircle,
+  Inbox,
+  Settings,
+  Loader2,
+  Zap
 } from "lucide-react";
 
 // Category display configuration
@@ -77,6 +81,21 @@ export default function EmailInbox() {
     subject: "",
     bodyText: "",
   });
+
+  // Inbox scan state
+  const [showScanDialog, setShowScanDialog] = useState(false);
+  const [scanConfig, setScanConfig] = useState({
+    host: "",
+    port: 993,
+    user: "",
+    password: "",
+    folder: "INBOX",
+    limit: 50,
+    unseenOnly: true,
+    markAsSeen: false,
+    fullAiParsing: false,
+  });
+  const [selectedPreset, setSelectedPreset] = useState<string>("");
 
   // Approval options
   const [approvalOptions, setApprovalOptions] = useState({
@@ -177,6 +196,95 @@ export default function EmailInbox() {
     },
   });
 
+  // Inbox scanning queries and mutations
+  const { data: inboxConfig } = trpc.emailScanning.isInboxConfigured.useQuery();
+
+  const scanInboxMutation = trpc.emailScanning.scanInbox.useMutation({
+    onSuccess: (result) => {
+      if (result.success) {
+        toast.success(
+          `Inbox scanned! Imported ${result.imported} emails, skipped ${result.skipped} duplicates.`
+        );
+        setShowScanDialog(false);
+        utils.emailScanning.list.invalidate();
+        utils.emailScanning.getStats.invalidate();
+        utils.emailScanning.getCategoryStats.invalidate();
+      } else {
+        toast.error(`Scan failed: ${result.error}`);
+      }
+    },
+    onError: (error) => {
+      toast.error(`Error: ${error.message}`);
+    },
+  });
+
+  const testConnectionMutation = trpc.emailScanning.testInboxConnection.useMutation({
+    onSuccess: (result) => {
+      if (result.success) {
+        toast.success(`Connected! Found ${result.mailboxes?.length || 0} mailboxes.`);
+      } else {
+        toast.error(`Connection failed: ${result.error}`);
+      }
+    },
+    onError: (error) => {
+      toast.error(`Error: ${error.message}`);
+    },
+  });
+
+  const bulkCategorizeMutation = trpc.emailScanning.bulkCategorize.useMutation({
+    onSuccess: (result) => {
+      if (result.success) {
+        toast.success(`Categorized ${result.categorized} of ${result.total} emails.`);
+        utils.emailScanning.list.invalidate();
+        utils.emailScanning.getCategoryStats.invalidate();
+      }
+    },
+    onError: (error) => {
+      toast.error(`Error: ${error.message}`);
+    },
+  });
+
+  // IMAP presets
+  const imapPresets: Record<string, { host: string; port: number }> = {
+    gmail: { host: "imap.gmail.com", port: 993 },
+    outlook: { host: "outlook.office365.com", port: 993 },
+    yahoo: { host: "imap.mail.yahoo.com", port: 993 },
+    icloud: { host: "imap.mail.me.com", port: 993 },
+  };
+
+  const handlePresetChange = (preset: string) => {
+    setSelectedPreset(preset);
+    if (preset && imapPresets[preset]) {
+      setScanConfig(prev => ({
+        ...prev,
+        host: imapPresets[preset].host,
+        port: imapPresets[preset].port,
+      }));
+    }
+  };
+
+  const handleScanInbox = () => {
+    if (!scanConfig.host || !scanConfig.user || !scanConfig.password) {
+      toast.error("Please fill in all connection details");
+      return;
+    }
+    scanInboxMutation.mutate(scanConfig);
+  };
+
+  const handleTestConnection = () => {
+    if (!scanConfig.host || !scanConfig.user || !scanConfig.password) {
+      toast.error("Please fill in all connection details");
+      return;
+    }
+    testConnectionMutation.mutate({
+      host: scanConfig.host,
+      port: scanConfig.port,
+      secure: true,
+      user: scanConfig.user,
+      password: scanConfig.password,
+    });
+  };
+
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "pending":
@@ -258,13 +366,187 @@ export default function EmailInbox() {
               Scan emails for receipts, invoices, and shipping documents with AI auto-categorization
             </p>
           </div>
-          <Dialog open={showSubmitDialog} onOpenChange={setShowSubmitDialog}>
-            <DialogTrigger asChild>
-              <Button className="gap-2">
-                <Plus className="h-4 w-4" />
-                Submit Email
-              </Button>
-            </DialogTrigger>
+          <div className="flex gap-2">
+            {/* Scan Inbox Button */}
+            <Dialog open={showScanDialog} onOpenChange={setShowScanDialog}>
+              <DialogTrigger asChild>
+                <Button variant="outline" className="gap-2">
+                  <Inbox className="h-4 w-4" />
+                  Scan Inbox
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-xl">
+                <DialogHeader>
+                  <DialogTitle>Scan Email Inbox</DialogTitle>
+                  <DialogDescription>
+                    Connect to your email inbox via IMAP to automatically import and categorize all emails.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4">
+                  {/* Email Provider Preset */}
+                  <div className="space-y-2">
+                    <Label>Email Provider</Label>
+                    <Select value={selectedPreset} onValueChange={handlePresetChange}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select provider or enter custom" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="gmail">Gmail</SelectItem>
+                        <SelectItem value="outlook">Outlook / Office 365</SelectItem>
+                        <SelectItem value="yahoo">Yahoo Mail</SelectItem>
+                        <SelectItem value="icloud">iCloud Mail</SelectItem>
+                        <SelectItem value="custom">Custom IMAP Server</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {/* IMAP Settings */}
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="imapHost">IMAP Host</Label>
+                      <Input
+                        id="imapHost"
+                        placeholder="imap.gmail.com"
+                        value={scanConfig.host}
+                        onChange={(e) => setScanConfig({ ...scanConfig, host: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="imapPort">Port</Label>
+                      <Input
+                        id="imapPort"
+                        type="number"
+                        value={scanConfig.port}
+                        onChange={(e) => setScanConfig({ ...scanConfig, port: parseInt(e.target.value) || 993 })}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="imapUser">Email / Username</Label>
+                      <Input
+                        id="imapUser"
+                        placeholder="you@gmail.com"
+                        value={scanConfig.user}
+                        onChange={(e) => setScanConfig({ ...scanConfig, user: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="imapPassword">Password / App Password</Label>
+                      <Input
+                        id="imapPassword"
+                        type="password"
+                        placeholder="••••••••"
+                        value={scanConfig.password}
+                        onChange={(e) => setScanConfig({ ...scanConfig, password: e.target.value })}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Scan Options */}
+                  <div className="space-y-3 border-t pt-4">
+                    <Label className="text-sm font-medium">Scan Options</Label>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="folder">Folder</Label>
+                        <Input
+                          id="folder"
+                          value={scanConfig.folder}
+                          onChange={(e) => setScanConfig({ ...scanConfig, folder: e.target.value })}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="limit">Max Emails</Label>
+                        <Input
+                          id="limit"
+                          type="number"
+                          value={scanConfig.limit}
+                          onChange={(e) => setScanConfig({ ...scanConfig, limit: parseInt(e.target.value) || 50 })}
+                        />
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <div className="flex items-center space-x-2">
+                        <Checkbox
+                          id="unseenOnly"
+                          checked={scanConfig.unseenOnly}
+                          onCheckedChange={(checked) => setScanConfig({ ...scanConfig, unseenOnly: !!checked })}
+                        />
+                        <Label htmlFor="unseenOnly" className="text-sm">Only unread emails</Label>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <Checkbox
+                          id="markAsSeen"
+                          checked={scanConfig.markAsSeen}
+                          onCheckedChange={(checked) => setScanConfig({ ...scanConfig, markAsSeen: !!checked })}
+                        />
+                        <Label htmlFor="markAsSeen" className="text-sm">Mark as read after scanning</Label>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <Checkbox
+                          id="fullAiParsing"
+                          checked={scanConfig.fullAiParsing}
+                          onCheckedChange={(checked) => setScanConfig({ ...scanConfig, fullAiParsing: !!checked })}
+                        />
+                        <Label htmlFor="fullAiParsing" className="text-sm">Full AI parsing (slower, more accurate)</Label>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Gmail/Outlook Note */}
+                  {(selectedPreset === "gmail" || selectedPreset === "outlook") && (
+                    <div className="rounded-md bg-amber-50 dark:bg-amber-950 p-3 text-sm">
+                      <p className="font-medium text-amber-800 dark:text-amber-200">Note for {selectedPreset === "gmail" ? "Gmail" : "Outlook"}:</p>
+                      <p className="text-amber-700 dark:text-amber-300 mt-1">
+                        {selectedPreset === "gmail" 
+                          ? "Use an App Password instead of your regular password. Go to Google Account → Security → 2-Step Verification → App passwords."
+                          : "You may need to enable IMAP access in Outlook settings and use an App Password if 2FA is enabled."}
+                      </p>
+                    </div>
+                  )}
+                </div>
+                <DialogFooter className="gap-2">
+                  <Button variant="outline" onClick={handleTestConnection} disabled={testConnectionMutation.isPending}>
+                    {testConnectionMutation.isPending ? (
+                      <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Testing...</>
+                    ) : (
+                      <><Settings className="h-4 w-4 mr-2" /> Test Connection</>
+                    )}
+                  </Button>
+                  <Button onClick={handleScanInbox} disabled={scanInboxMutation.isPending}>
+                    {scanInboxMutation.isPending ? (
+                      <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Scanning...</>
+                    ) : (
+                      <><Inbox className="h-4 w-4 mr-2" /> Scan Inbox</>
+                    )}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
+            {/* Bulk Categorize Button */}
+            <Button 
+              variant="outline" 
+              className="gap-2"
+              onClick={() => bulkCategorizeMutation.mutate({ useAi: false, limit: 100 })}
+              disabled={bulkCategorizeMutation.isPending}
+            >
+              {bulkCategorizeMutation.isPending ? (
+                <><Loader2 className="h-4 w-4 animate-spin" /> Categorizing...</>
+              ) : (
+                <><Zap className="h-4 w-4" /> Auto-Categorize</>
+              )}
+            </Button>
+
+            {/* Submit Email Button */}
+            <Dialog open={showSubmitDialog} onOpenChange={setShowSubmitDialog}>
+              <DialogTrigger asChild>
+                <Button className="gap-2">
+                  <Plus className="h-4 w-4" />
+                  Submit Email
+                </Button>
+              </DialogTrigger>
             <DialogContent className="max-w-2xl">
               <DialogHeader>
                 <DialogTitle>Submit Email for Parsing</DialogTitle>
@@ -335,6 +617,7 @@ export default function EmailInbox() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
+          </div>
         </div>
 
         {/* Stats Cards */}

@@ -1,4 +1,4 @@
-import { eq, desc, and, sql, gte, lte, lt, like, or, count, sum } from "drizzle-orm";
+import { eq, desc, and, sql, gte, lte, lt, like, or, count, sum, isNull } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser, users, companies, customers, vendors, products,
@@ -4676,4 +4676,40 @@ export async function getEmailCategoryStats() {
       count: Number(row.count)
     }))
   };
+}
+
+// Find inbound email by message ID
+export async function findInboundEmailByMessageId(messageId: string) {
+  const db = await getDb();
+  if (!db) return null;
+  
+  const result = await db.select().from(inboundEmails)
+    .where(eq(inboundEmails.messageId, messageId))
+    .limit(1);
+  
+  return result[0] || null;
+}
+
+// Get uncategorized emails (category is null or 'general' with low confidence)
+export async function getUncategorizedEmails(limit: number = 100) {
+  const db = await getDb();
+  if (!db) return [];
+  
+  const result = await db.select().from(inboundEmails)
+    .where(
+      or(
+        isNull(inboundEmails.category),
+        and(
+          eq(inboundEmails.category, "general"),
+          or(
+            isNull(inboundEmails.categoryConfidence),
+            sql`CAST(${inboundEmails.categoryConfidence} AS DECIMAL) < 60`
+          )
+        )
+      )
+    )
+    .orderBy(desc(inboundEmails.receivedAt))
+    .limit(limit);
+  
+  return result;
 }

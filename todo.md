@@ -368,3 +368,15 @@
 - [x] Display category badges in Email Inbox UI
 - [x] Add category filter to email list
 - [ ] Auto-route emails to appropriate workflows based on category
+
+## Automatic Email Inbox Scanning
+- [x] Connect to email inbox via IMAP/API (Gmail, Outlook, or generic IMAP)
+- [x] Fetch all unread/new emails from inbox automatically
+- [x] Scan and categorize entire inbox, not just individual submissions
+- [x] Add email provider configuration (IMAP settings, OAuth for Gmail/Outlook)
+- [x] Implement polling/webhook for new email detection
+- [x] Bulk categorization of all inbox emails
+- [x] Mark emails as processed after scanning
+- [x] UI for configuring email inbox connection
+- [x] UI for viewing scan progress and results
+- [x] Manual "Scan Inbox" button to trigger full inbox scan
