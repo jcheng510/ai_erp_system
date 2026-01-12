@@ -5555,3 +5555,114 @@ export async function getNdaAuditLogs(signatureId: number) {
     .where(eq(ndaSignatureAuditLog.signatureId, signatureId))
     .orderBy(desc(ndaSignatureAuditLog.createdAt));
 }
+
+
+// ============================================
+// ENHANCED DATA ROOM ACCESS CONTROL
+// ============================================
+
+// Get visitor by ID
+export async function getDataRoomVisitorById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [visitor] = await db.select().from(dataRoomVisitors).where(eq(dataRoomVisitors.id, id));
+  return visitor || null;
+}
+
+// Get invitation by email for a data room
+export async function getDataRoomInvitationByEmail(dataRoomId: number, email: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const [invitation] = await db.select().from(dataRoomInvitations)
+    .where(and(
+      eq(dataRoomInvitations.dataRoomId, dataRoomId),
+      eq(dataRoomInvitations.email, email.toLowerCase())
+    ));
+  return invitation || null;
+}
+
+// Block a visitor
+export async function blockDataRoomVisitor(id: number, reason?: string) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(dataRoomVisitors).set({
+    accessStatus: 'blocked',
+    blockedAt: new Date(),
+    blockedReason: reason,
+  }).where(eq(dataRoomVisitors.id, id));
+}
+
+// Unblock a visitor
+export async function unblockDataRoomVisitor(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(dataRoomVisitors).set({
+    accessStatus: 'active',
+    blockedAt: null,
+    blockedReason: null,
+  }).where(eq(dataRoomVisitors.id, id));
+}
+
+// Revoke visitor access
+export async function revokeDataRoomVisitorAccess(id: number, reason?: string) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(dataRoomVisitors).set({
+    accessStatus: 'revoked',
+    revokedAt: new Date(),
+    revokedReason: reason,
+  }).where(eq(dataRoomVisitors.id, id));
+}
+
+// Restore visitor access
+export async function restoreDataRoomVisitorAccess(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(dataRoomVisitors).set({
+    accessStatus: 'active',
+    revokedAt: null,
+    revokedReason: null,
+  }).where(eq(dataRoomVisitors.id, id));
+}
+
+// Update invitation permissions
+export async function updateDataRoomInvitationPermissions(id: number, data: {
+  allowedFolderIds?: number[] | null;
+  allowedDocumentIds?: number[] | null;
+  restrictedFolderIds?: number[] | null;
+  restrictedDocumentIds?: number[] | null;
+  allowDownload?: boolean;
+  allowPrint?: boolean;
+  role?: 'viewer' | 'editor' | 'admin';
+}) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(dataRoomInvitations).set(data).where(eq(dataRoomInvitations.id, id));
+}
+
+// Link visitor to their NDA signature
+export async function linkVisitorToNdaSignature(visitorId: number, signatureId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(dataRoomVisitors).set({
+    ndaSignatureId: signatureId,
+  }).where(eq(dataRoomVisitors.id, visitorId));
+}
+
+// Get visitor by email for a data room
+export async function getDataRoomVisitorByEmail(dataRoomId: number, email: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const [visitor] = await db.select().from(dataRoomVisitors)
+    .where(and(
+      eq(dataRoomVisitors.dataRoomId, dataRoomId),
+      eq(dataRoomVisitors.email, email.toLowerCase())
+    ));
+  return visitor || null;
+}
+
+// Check if email is invited to data room
+export async function isEmailInvitedToDataRoom(dataRoomId: number, email: string): Promise<boolean> {
+  const invitation = await getDataRoomInvitationByEmail(dataRoomId, email);
+  return invitation !== null && (invitation.status === 'pending' || invitation.status === 'accepted');
+}

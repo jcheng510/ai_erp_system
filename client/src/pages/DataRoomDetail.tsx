@@ -111,6 +111,36 @@ export default function DataRoomDetail() {
     },
   });
 
+  const utils = trpc.useUtils();
+
+  const blockVisitorMutation = trpc.dataRoom.visitors.block.useMutation({
+    onSuccess: () => {
+      toast.success("Visitor blocked");
+      utils.dataRoom.visitors.list.invalidate({ dataRoomId: roomId });
+    },
+  });
+
+  const unblockVisitorMutation = trpc.dataRoom.visitors.unblock.useMutation({
+    onSuccess: () => {
+      toast.success("Visitor unblocked");
+      utils.dataRoom.visitors.list.invalidate({ dataRoomId: roomId });
+    },
+  });
+
+  const revokeVisitorMutation = trpc.dataRoom.visitors.revoke.useMutation({
+    onSuccess: () => {
+      toast.success("Visitor access revoked");
+      utils.dataRoom.visitors.list.invalidate({ dataRoomId: roomId });
+    },
+  });
+
+  const restoreVisitorMutation = trpc.dataRoom.visitors.restore.useMutation({
+    onSuccess: () => {
+      toast.success("Visitor access restored");
+      utils.dataRoom.visitors.list.invalidate({ dataRoomId: roomId });
+    },
+  });
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -687,9 +717,11 @@ export default function DataRoomDetail() {
                       <TableRow>
                         <TableHead>Visitor</TableHead>
                         <TableHead>Company</TableHead>
+                        <TableHead>Status</TableHead>
                         <TableHead>Views</TableHead>
                         <TableHead>Time Spent</TableHead>
                         <TableHead>Last Viewed</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -702,12 +734,67 @@ export default function DataRoomDetail() {
                             </div>
                           </TableCell>
                           <TableCell>{visitor.company || "-"}</TableCell>
+                          <TableCell>
+                            <Badge variant={
+                              visitor.accessStatus === 'active' ? 'default' :
+                              visitor.accessStatus === 'blocked' ? 'destructive' :
+                              visitor.accessStatus === 'revoked' ? 'secondary' : 'outline'
+                            }>
+                              {visitor.accessStatus || 'active'}
+                            </Badge>
+                          </TableCell>
                           <TableCell>{visitor.totalViews}</TableCell>
                           <TableCell>{Math.round((visitor.totalTimeSpent || 0) / 60)}m</TableCell>
                           <TableCell>
                             {visitor.lastViewedAt
                               ? new Date(visitor.lastViewedAt).toLocaleString()
                               : "-"}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="sm">
+                                  <MoreVertical className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                {visitor.accessStatus === 'active' ? (
+                                  <>
+                                    <DropdownMenuItem
+                                      onClick={() => {
+                                        if (confirm('Block this visitor? They will no longer be able to access the data room.')) {
+                                          blockVisitorMutation.mutate({ id: visitor.id, reason: 'Blocked by admin' });
+                                        }
+                                      }}
+                                      className="text-destructive"
+                                    >
+                                      Block Visitor
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      onClick={() => {
+                                        if (confirm('Revoke access for this visitor?')) {
+                                          revokeVisitorMutation.mutate({ id: visitor.id, reason: 'Access revoked by admin' });
+                                        }
+                                      }}
+                                    >
+                                      Revoke Access
+                                    </DropdownMenuItem>
+                                  </>
+                                ) : visitor.accessStatus === 'blocked' ? (
+                                  <DropdownMenuItem
+                                    onClick={() => unblockVisitorMutation.mutate({ id: visitor.id })}
+                                  >
+                                    Unblock Visitor
+                                  </DropdownMenuItem>
+                                ) : (
+                                  <DropdownMenuItem
+                                    onClick={() => restoreVisitorMutation.mutate({ id: visitor.id })}
+                                  >
+                                    Restore Access
+                                  </DropdownMenuItem>
+                                )}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           </TableCell>
                         </TableRow>
                       ))}
@@ -782,6 +869,39 @@ export default function DataRoomDetail() {
                   <Badge variant={room.status === 'active' ? "default" : "secondary"}>
                     {room.status}
                   </Badge>
+                </div>
+                <div className="border-t pt-6 mt-6">
+                  <h3 className="font-medium mb-4">Access Controls</h3>
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <Label>Invitation Only</Label>
+                        <p className="text-sm text-muted-foreground">
+                          Only invited users can access this data room
+                        </p>
+                      </div>
+                      <Badge variant={room.invitationOnly ? "default" : "outline"}>
+                        {room.invitationOnly ? "Enabled" : "Disabled"}
+                      </Badge>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <Label>Watermark Documents</Label>
+                        <p className="text-sm text-muted-foreground">
+                          Add visitor email watermark to all documents
+                        </p>
+                      </div>
+                      <Badge variant={room.watermarkEnabled ? "default" : "outline"}>
+                        {room.watermarkEnabled ? "Enabled" : "Disabled"}
+                      </Badge>
+                    </div>
+                    {room.watermarkEnabled && room.watermarkText && (
+                      <div className="pl-4 border-l-2 border-muted">
+                        <Label className="text-sm text-muted-foreground">Custom Watermark Text</Label>
+                        <p className="text-sm">{room.watermarkText}</p>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </CardContent>
             </Card>

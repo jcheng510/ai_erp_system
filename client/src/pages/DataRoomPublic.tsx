@@ -63,7 +63,12 @@ export default function DataRoomPublic() {
   });
 
   const { data: content, isLoading: contentLoading } = trpc.dataRoom.public.getContent.useQuery(
-    { dataRoomId: dataRoomId!, visitorId: visitorId || undefined, folderId: currentFolderId },
+    { 
+      dataRoomId: dataRoomId!, 
+      visitorId: visitorId || undefined, 
+      visitorEmail: visitorInfo.email || undefined,
+      folderId: currentFolderId 
+    },
     { enabled: accessGranted && !!dataRoomId }
   );
 
@@ -225,7 +230,47 @@ export default function DataRoomPublic() {
 
   // Main Data Room View
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background relative">
+      {/* Watermark Overlay */}
+      {content?.watermark && (
+        <div 
+          className="fixed inset-0 pointer-events-none z-50 overflow-hidden"
+          style={{ opacity: content.watermark.opacity }}
+        >
+          {content.watermark.position === 'tiled' && content.watermark.tiledPositions ? (
+            content.watermark.tiledPositions.slice(0, 50).map((pos, i) => (
+              <div
+                key={i}
+                className="absolute whitespace-nowrap"
+                style={{
+                  left: `${pos.x}px`,
+                  top: `${pos.y}px`,
+                  transform: `rotate(${content.watermark!.rotation}deg)`,
+                  fontSize: `${content.watermark!.fontSize}px`,
+                  color: content.watermark!.color,
+                  fontFamily: 'Arial, sans-serif',
+                  userSelect: 'none',
+                }}
+              >
+                {content.watermark!.text}
+              </div>
+            ))
+          ) : (
+            <div
+              className="absolute top-1/2 left-1/2 whitespace-nowrap"
+              style={{
+                transform: `translate(-50%, -50%) rotate(${content.watermark.rotation}deg)`,
+                fontSize: `${content.watermark.fontSize * 3}px`,
+                color: content.watermark.color,
+                fontFamily: 'Arial, sans-serif',
+                userSelect: 'none',
+              }}
+            >
+              {content.watermark.text}
+            </div>
+          )}
+        </div>
+      )}
       {/* Header */}
       <header className="border-b bg-card">
         <div className="container mx-auto px-4 py-4">

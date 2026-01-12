@@ -134,6 +134,13 @@
       "when": 1768192779186,
       "tag": "0018_exotic_eddie_brock",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "5",
+      "when": 1768193550922,
+      "tag": "0019_wooden_madelyne_pryor",
+      "breakpoints": true
     }
   ]
 }

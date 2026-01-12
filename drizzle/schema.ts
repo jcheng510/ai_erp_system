@@ -2118,6 +2118,8 @@ export const dataRooms = mysqlTable("data_rooms", {
   
   // Access settings
   isPublic: boolean("isPublic").default(false).notNull(),
+  invitationOnly: boolean("invitationOnly").default(true).notNull(), // Only invited emails can access
+  requireEmailVerification: boolean("requireEmailVerification").default(true).notNull(),
   password: varchar("password", { length: 255 }), // Hashed password for protected rooms
   requiresNda: boolean("requiresNda").default(false).notNull(),
   ndaText: text("ndaText"),
@@ -2132,6 +2134,7 @@ export const dataRooms = mysqlTable("data_rooms", {
   allowPrint: boolean("allowPrint").default(true).notNull(),
   expiresAt: timestamp("expiresAt"),
   watermarkEnabled: boolean("watermarkEnabled").default(false).notNull(),
+  watermarkText: varchar("watermarkText", { length: 255 }), // Custom watermark text, defaults to visitor email
   
   // Google Drive sync
   googleDriveFolderId: varchar("googleDriveFolderId", { length: 255 }),
@@ -2256,6 +2259,14 @@ export const dataRoomVisitors = mysqlTable("data_room_visitors", {
   // NDA
   ndaAcceptedAt: timestamp("ndaAcceptedAt"),
   ndaIpAddress: varchar("ndaIpAddress", { length: 45 }),
+  ndaSignatureId: int("ndaSignatureId"), // Reference to signed NDA
+  
+  // Access control
+  accessStatus: mysqlEnum("accessStatus", ["active", "blocked", "revoked", "expired"]).default("active").notNull(),
+  blockedAt: timestamp("blockedAt"),
+  blockedReason: text("blockedReason"),
+  revokedAt: timestamp("revokedAt"),
+  revokedReason: text("revokedReason"),
   
   // Tracking
   ipAddress: varchar("ipAddress", { length: 45 }),
@@ -2319,9 +2330,11 @@ export const dataRoomInvitations = mysqlTable("data_room_invitations", {
   allowDownload: boolean("allowDownload").default(true).notNull(),
   allowPrint: boolean("allowPrint").default(true).notNull(),
   
-  // Restrict to specific folders/documents
-  restrictedFolderIds: json("restrictedFolderIds"),
-  restrictedDocumentIds: json("restrictedDocumentIds"),
+  // Restrict to specific folders/documents (null = access all)
+  allowedFolderIds: json("allowedFolderIds"), // Array of folder IDs this user can access (null = all)
+  allowedDocumentIds: json("allowedDocumentIds"), // Array of document IDs this user can access (null = all)
+  restrictedFolderIds: json("restrictedFolderIds"), // Explicitly blocked folders
+  restrictedDocumentIds: json("restrictedDocumentIds"), // Explicitly blocked documents
   
   // Invitation status
   inviteCode: varchar("inviteCode", { length: 64 }).notNull().unique(),

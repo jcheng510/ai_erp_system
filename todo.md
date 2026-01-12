@@ -426,3 +426,17 @@
 - [x] Allow viewing/downloading signed NDAs from admin panel
 - [x] Send email notification when NDA is signed
 - [x] Add signature verification and audit trail
+
+
+## Enhanced Data Room Access Controls
+- [x] Require email input before granting any access
+- [x] Invitation-only mode - only invited emails can access
+- [x] Per-folder permissions - restrict folders to specific visitors
+- [x] Per-document permissions - restrict documents to specific visitors
+- [x] User blocking - block specific visitors from accessing
+- [x] Access revocation - revoke access for specific users
+- [x] Document watermarking with visitor email address
+- [x] Store signed NDA with visitor record
+- [x] Send signed NDA copy to visitor via email
+- [x] Admin UI for managing visitor permissions
+- [x] Visitor access log with detailed activity

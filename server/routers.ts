@@ -5835,6 +5835,12 @@ Provide your forecast in JSON format with the following structure:
           return db.getDataRoomVisitors(input.dataRoomId);
         }),
 
+      getById: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(async ({ input }) => {
+          return db.getDataRoomVisitorById(input.id);
+        }),
+
       getViews: protectedProcedure
         .input(z.object({ visitorId: z.number() }))
         .query(async ({ input }) => {
@@ -5845,6 +5851,40 @@ Provide your forecast in JSON format with the following structure:
         .input(z.object({ visitorId: z.number() }))
         .query(async ({ input }) => {
           return db.getVisitorTimeline(input.visitorId);
+        }),
+
+      block: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          reason: z.string().optional(),
+        }))
+        .mutation(async ({ input }) => {
+          await db.blockDataRoomVisitor(input.id, input.reason);
+          return { success: true };
+        }),
+
+      unblock: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input }) => {
+          await db.unblockDataRoomVisitor(input.id);
+          return { success: true };
+        }),
+
+      revoke: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          reason: z.string().optional(),
+        }))
+        .mutation(async ({ input }) => {
+          await db.revokeDataRoomVisitorAccess(input.id, input.reason);
+          return { success: true };
+        }),
+
+      restore: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input }) => {
+          await db.restoreDataRoomVisitorAccess(input.id);
+          return { success: true };
         }),
     }),
 
@@ -5899,6 +5939,30 @@ Provide your forecast in JSON format with the following structure:
         .input(z.object({ id: z.number() }))
         .mutation(async ({ input }) => {
           await db.updateDataRoomInvitation(input.id, { status: 'expired' });
+          return { success: true };
+        }),
+
+      updatePermissions: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          allowedFolderIds: z.array(z.number()).nullable().optional(),
+          allowedDocumentIds: z.array(z.number()).nullable().optional(),
+          restrictedFolderIds: z.array(z.number()).nullable().optional(),
+          restrictedDocumentIds: z.array(z.number()).nullable().optional(),
+          allowDownload: z.boolean().optional(),
+          allowPrint: z.boolean().optional(),
+          role: z.enum(['viewer', 'editor', 'admin']).optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const { id, ...data } = input;
+          await db.updateDataRoomInvitationPermissions(id, data);
+          return { success: true };
+        }),
+
+      resend: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input }) => {
+          // TODO: Resend invitation email
           return { success: true };
         }),
     }),
@@ -6001,14 +6065,91 @@ Provide your forecast in JSON format with the following structure:
         .input(z.object({
           dataRoomId: z.number(),
           visitorId: z.number().optional(),
+          visitorEmail: z.string().optional(),
           folderId: z.number().nullable().optional(),
         }))
         .query(async ({ input }) => {
           const room = await db.getDataRoomById(input.dataRoomId);
           if (!room) throw new TRPCError({ code: 'NOT_FOUND' });
 
-          const folders = await db.getDataRoomFolders(input.dataRoomId, input.folderId);
-          const documents = await db.getDataRoomDocuments(input.dataRoomId, input.folderId);
+          // Check visitor access status if visitor ID provided
+          let visitor = null;
+          let invitation = null;
+          if (input.visitorId) {
+            visitor = await db.getDataRoomVisitorById(input.visitorId);
+            if (visitor) {
+              // Check if visitor is blocked or revoked
+              if (visitor.accessStatus === 'blocked') {
+                throw new TRPCError({ code: 'FORBIDDEN', message: 'Your access has been blocked' });
+              }
+              if (visitor.accessStatus === 'revoked') {
+                throw new TRPCError({ code: 'FORBIDDEN', message: 'Your access has been revoked' });
+              }
+              // Get invitation for permission checks
+              if (visitor.email) {
+                invitation = await db.getDataRoomInvitationByEmail(input.dataRoomId, visitor.email);
+              }
+            }
+          }
+
+          // Check invitation-only mode
+          if (room.invitationOnly && !room.isPublic) {
+            const email = input.visitorEmail || visitor?.email;
+            if (!email) {
+              throw new TRPCError({ code: 'FORBIDDEN', message: 'Email required for access' });
+            }
+            if (!invitation) {
+              invitation = await db.getDataRoomInvitationByEmail(input.dataRoomId, email);
+            }
+            if (!invitation || invitation.status !== 'accepted') {
+              throw new TRPCError({ code: 'FORBIDDEN', message: 'You have not been invited to this data room' });
+            }
+          }
+
+          let folders = await db.getDataRoomFolders(input.dataRoomId, input.folderId);
+          let documents = await db.getDataRoomDocuments(input.dataRoomId, input.folderId);
+
+          // Apply per-folder/document permissions if invitation has restrictions
+          if (invitation) {
+            const allowedFolders = invitation.allowedFolderIds as number[] | null;
+            const allowedDocs = invitation.allowedDocumentIds as number[] | null;
+            const restrictedFolders = invitation.restrictedFolderIds as number[] | null;
+            const restrictedDocs = invitation.restrictedDocumentIds as number[] | null;
+
+            // Filter folders
+            if (allowedFolders && allowedFolders.length > 0) {
+              folders = folders.filter(f => allowedFolders.includes(f.id));
+            }
+            if (restrictedFolders && restrictedFolders.length > 0) {
+              folders = folders.filter(f => !restrictedFolders.includes(f.id));
+            }
+
+            // Filter documents
+            if (allowedDocs && allowedDocs.length > 0) {
+              documents = documents.filter(d => allowedDocs.includes(d.id));
+            }
+            if (restrictedDocs && restrictedDocs.length > 0) {
+              documents = documents.filter(d => !restrictedDocs.includes(d.id));
+            }
+          }
+
+          // Generate watermark data if enabled
+          const visitorEmail = input.visitorEmail || visitor?.email || '';
+          let watermarkData = null;
+          if (room.watermarkEnabled && visitorEmail) {
+            const { generateWatermarkData, generateWatermarkText } = await import('./_core/documentWatermark');
+            const watermarkText = generateWatermarkText(
+              visitorEmail,
+              room.watermarkText || undefined,
+              true // include timestamp
+            );
+            watermarkData = generateWatermarkData({
+              text: watermarkText,
+              position: 'tiled',
+              opacity: 0.15,
+              fontSize: 12,
+            });
+          }
 
           return {
             room: {
@@ -6019,9 +6160,18 @@ Provide your forecast in JSON format with the following structure:
               brandColor: room.brandColor,
               requiresNda: room.requiresNda,
               ndaText: room.ndaText,
+              invitationOnly: room.invitationOnly,
+              watermarkEnabled: room.watermarkEnabled,
+              watermarkText: room.watermarkText,
             },
-            folders: folders.filter(f => !f.googleDriveFolderId || true), // Include all
+            folders: folders.filter(f => !f.googleDriveFolderId || true),
             documents: documents.filter(d => !d.isHidden),
+            visitorPermissions: invitation ? {
+              allowDownload: invitation.allowDownload,
+              allowPrint: invitation.allowPrint,
+              role: invitation.role,
+            } : null,
+            watermark: watermarkData,
           };
         }),
 
@@ -6542,12 +6692,50 @@ Provide your forecast in JSON format with the following structure:
             details: { signatureType: input.signatureType },
           });
 
-          // Update visitor NDA status if visitorId provided
+          // Update visitor NDA status and link signature
           if (input.visitorId) {
             await db.updateDataRoomVisitor(input.visitorId, {
               ndaAcceptedAt: new Date(),
               ndaIpAddress: ipAddress,
             });
+            // Link visitor to their NDA signature
+            await db.linkVisitorToNdaSignature(input.visitorId, id);
+          }
+
+          // Send signed NDA copy to visitor via email
+          try {
+            const { sendEmail } = await import('./_core/email');
+            const room = await db.getDataRoomById(input.dataRoomId);
+            const roomName = room?.name || 'Data Room';
+            
+            await sendEmail({
+              to: input.signerEmail,
+              subject: `Your Signed NDA for ${roomName}`,
+              html: `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                  <h2>NDA Signed Successfully</h2>
+                  <p>Dear ${input.signerName},</p>
+                  <p>Thank you for signing the Non-Disclosure Agreement for <strong>${roomName}</strong>.</p>
+                  <div style="background: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0;">
+                    <h3 style="margin-top: 0;">Signature Details</h3>
+                    <p><strong>Document:</strong> ${ndaDoc.name}</p>
+                    <p><strong>Signed By:</strong> ${input.signerName}</p>
+                    ${input.signerTitle ? `<p><strong>Title:</strong> ${input.signerTitle}</p>` : ''}
+                    ${input.signerCompany ? `<p><strong>Company:</strong> ${input.signerCompany}</p>` : ''}
+                    <p><strong>Email:</strong> ${input.signerEmail}</p>
+                    <p><strong>Date:</strong> ${new Date().toLocaleString()}</p>
+                    <p><strong>IP Address:</strong> ${ipAddress}</p>
+                    <p><strong>Signature ID:</strong> ${id}</p>
+                  </div>
+                  ${signatureImageUrl ? `<p><strong>Your Signature:</strong></p><img src="${signatureImageUrl}" alt="Signature" style="max-width: 300px; border: 1px solid #ddd; padding: 10px;" />` : ''}
+                  <p style="color: #666; font-size: 12px;">This email serves as your confirmation of signing. Please keep it for your records.</p>
+                  <p style="color: #666; font-size: 12px;">If you have any questions, please contact the data room administrator.</p>
+                </div>
+              `,
+            });
+          } catch (emailError) {
+            console.error('Failed to send NDA confirmation email:', emailError);
+            // Don't fail the signature if email fails
           }
 
           return { id, success: true };
