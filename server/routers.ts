@@ -4856,6 +4856,325 @@ Provide your forecast in JSON format with the following structure:
         return { success: true };
       }),
   }),
+
+  // ============================================
+  // EMAIL SCANNING & DOCUMENT PARSING
+  // ============================================
+  emailScanning: router({
+    // List inbound emails
+    list: protectedProcedure
+      .input(z.object({
+        status: z.string().optional(),
+        limit: z.number().optional(),
+        offset: z.number().optional(),
+      }).optional())
+      .query(async ({ input }) => {
+        return db.getInboundEmails(input);
+      }),
+
+    // Get single email with attachments and parsed documents
+    getById: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const email = await db.getInboundEmailById(input.id);
+        if (!email) return null;
+        
+        const attachments = await db.getEmailAttachments(input.id);
+        const documents = await db.getParsedDocuments({ emailId: input.id });
+        
+        return { ...email, attachments, documents };
+      }),
+
+    // Submit email for parsing (manual forward)
+    submitEmail: protectedProcedure
+      .input(z.object({
+        fromEmail: z.string().email(),
+        fromName: z.string().optional(),
+        subject: z.string(),
+        bodyText: z.string(),
+        bodyHtml: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { parseEmailContent } = await import("./_core/emailParser");
+        
+        // Create inbound email record
+        const { id: emailId } = await db.createInboundEmail({
+          messageId: `manual-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          fromEmail: input.fromEmail,
+          fromName: input.fromName || null,
+          toEmail: "erp@system.local",
+          subject: input.subject,
+          bodyText: input.bodyText,
+          bodyHtml: input.bodyHtml || null,
+          receivedAt: new Date(),
+          parsingStatus: "processing",
+        });
+
+        try {
+          // Parse email content with AI
+          const result = await parseEmailContent(
+            input.subject,
+            input.bodyText,
+            input.fromEmail,
+            input.fromName
+          );
+
+          if (!result.success) {
+            await db.updateInboundEmailStatus(emailId, "failed", result.error);
+            return { emailId, success: false, error: result.error, documents: [] };
+          }
+
+          // Create parsed document records
+          const createdDocs = [];
+          for (const doc of result.documents) {
+            // Try to match vendor
+            let vendorId: number | null = null;
+            const existingVendor = await db.findVendorByEmailOrName(doc.vendorEmail, doc.vendorName);
+            if (existingVendor) {
+              vendorId = existingVendor.id;
+            }
+
+            // Try to match PO
+            let purchaseOrderId: number | null = null;
+            if (doc.documentNumber && (doc.documentType === "invoice" || doc.documentType === "receipt")) {
+              const po = await db.findPurchaseOrderByNumber(doc.documentNumber);
+              if (po) purchaseOrderId = po.id;
+            }
+
+            // Try to match shipment
+            let shipmentId: number | null = null;
+            if (doc.trackingNumber) {
+              const shipment = await db.findShipmentByTracking(doc.trackingNumber);
+              if (shipment) shipmentId = shipment.id;
+            }
+
+            const { id: docId } = await db.createParsedDocument({
+              emailId,
+              documentType: doc.documentType as any,
+              confidence: doc.confidence?.toString() || "0",
+              vendorName: doc.vendorName || null,
+              vendorEmail: doc.vendorEmail || null,
+              vendorId,
+              documentNumber: doc.documentNumber || null,
+              documentDate: doc.documentDate ? new Date(doc.documentDate) : null,
+              dueDate: doc.dueDate ? new Date(doc.dueDate) : null,
+              subtotal: doc.subtotal?.toString() || null,
+              taxAmount: doc.taxAmount?.toString() || null,
+              shippingAmount: doc.shippingAmount?.toString() || null,
+              totalAmount: doc.totalAmount?.toString() || null,
+              currency: doc.currency || "USD",
+              trackingNumber: doc.trackingNumber || null,
+              carrierName: doc.carrierName || null,
+              shipmentId,
+              purchaseOrderId,
+              lineItems: doc.lineItems || null,
+              rawExtractedData: doc as any,
+            });
+
+            // Create line items if present
+            if (doc.lineItems && doc.lineItems.length > 0) {
+              for (let i = 0; i < doc.lineItems.length; i++) {
+                const item = doc.lineItems[i];
+                await db.createParsedDocumentLineItem({
+                  documentId: docId,
+                  lineNumber: i + 1,
+                  description: item.description || null,
+                  sku: item.sku || null,
+                  quantity: item.quantity?.toString() || null,
+                  unit: item.unit || null,
+                  unitPrice: item.unitPrice?.toString() || null,
+                  totalPrice: item.totalPrice?.toString() || null,
+                });
+              }
+            }
+
+            createdDocs.push({ id: docId, type: doc.documentType, vendorId, purchaseOrderId, shipmentId });
+          }
+
+          await db.updateInboundEmailStatus(emailId, "parsed");
+          
+          // Create audit log
+          await db.createAuditLog({
+            userId: ctx.user.id,
+            action: "create",
+            entityType: "inbound_email",
+            entityId: emailId,
+            newValues: { documentsFound: createdDocs.length },
+          });
+
+          return { emailId, success: true, documents: createdDocs };
+        } catch (error) {
+          await db.updateInboundEmailStatus(emailId, "failed", error instanceof Error ? error.message : "Unknown error");
+          return { emailId, success: false, error: "Parsing failed", documents: [] };
+        }
+      }),
+
+    // Get parsed documents
+    getDocuments: protectedProcedure
+      .input(z.object({
+        documentType: z.string().optional(),
+        isReviewed: z.boolean().optional(),
+        isApproved: z.boolean().optional(),
+        limit: z.number().optional(),
+        offset: z.number().optional(),
+      }).optional())
+      .query(async ({ input }) => {
+        return db.getParsedDocuments(input);
+      }),
+
+    // Get single parsed document with line items
+    getDocument: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const doc = await db.getParsedDocumentById(input.id);
+        if (!doc) return null;
+        
+        const lineItems = await db.getParsedDocumentLineItems(input.id);
+        return { ...doc, lineItems };
+      }),
+
+    // Approve parsed document and optionally create records
+    approveDocument: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        createVendor: z.boolean().optional(),
+        createTransaction: z.boolean().optional(),
+        linkToPO: z.number().optional(),
+        linkToShipment: z.number().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const doc = await db.getParsedDocumentById(input.id);
+        if (!doc) throw new TRPCError({ code: "NOT_FOUND" });
+
+        // Create vendor if requested
+        if (input.createVendor && doc.vendorName && !doc.vendorId) {
+          const { id: vendorId } = await db.createVendor({
+            name: doc.vendorName,
+            email: doc.vendorEmail || undefined,
+            status: "active",
+          });
+          await db.setCreatedVendor(input.id, vendorId);
+        }
+
+        // Create transaction if requested (for receipts/invoices)
+        if (input.createTransaction && doc.totalAmount) {
+          const { id: transactionId } = await db.createTransaction({
+            type: "expense",
+            totalAmount: doc.totalAmount,
+            transactionNumber: `DOC-${Date.now()}`,
+            description: `${doc.documentType} from ${doc.vendorName || "Unknown"} - ${doc.documentNumber || "No ref"}`,
+            date: doc.documentDate || new Date(),
+            status: "posted",
+          });
+          await db.setCreatedTransaction(input.id, transactionId);
+        }
+
+        // Link to PO if specified
+        if (input.linkToPO) {
+          await db.linkParsedDocumentToPO(input.id, input.linkToPO);
+        }
+
+        // Link to shipment if specified
+        if (input.linkToShipment) {
+          await db.linkParsedDocumentToShipment(input.id, input.linkToShipment);
+        }
+
+        // Approve the document
+        await db.approveParsedDocument(input.id, ctx.user.id);
+
+        // Create audit log
+        await db.createAuditLog({
+          userId: ctx.user.id,
+          action: "approve",
+          entityType: "parsed_document",
+          entityId: input.id,
+          newValues: { createVendor: input.createVendor, createTransaction: input.createTransaction },
+        });
+
+        return { success: true };
+      }),
+
+    // Reject parsed document
+    rejectDocument: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        await db.rejectParsedDocument(input.id, ctx.user.id, input.notes);
+        return { success: true };
+      }),
+
+    // Get email scanning statistics
+    getStats: protectedProcedure
+      .query(async () => {
+        return db.getEmailScanningStats();
+      }),
+
+    // Archive email
+    archiveEmail: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input }) => {
+        await db.updateInboundEmailStatus(input.id, "archived");
+        return { success: true };
+      }),
+
+    // Reparse email
+    reparseEmail: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const email = await db.getInboundEmailById(input.id);
+        if (!email) throw new TRPCError({ code: "NOT_FOUND" });
+
+        const { parseEmailContent } = await import("./_core/emailParser");
+        
+        await db.updateInboundEmailStatus(input.id, "processing");
+
+        try {
+          const result = await parseEmailContent(
+            email.subject || "",
+            email.bodyText || "",
+            email.fromEmail,
+            email.fromName || undefined
+          );
+
+          if (!result.success) {
+            await db.updateInboundEmailStatus(input.id, "failed", result.error);
+            return { success: false, error: result.error };
+          }
+
+          // Create new parsed documents
+          for (const doc of result.documents) {
+            let vendorId: number | null = null;
+            const existingVendor = await db.findVendorByEmailOrName(doc.vendorEmail, doc.vendorName);
+            if (existingVendor) vendorId = existingVendor.id;
+
+            await db.createParsedDocument({
+              emailId: input.id,
+              documentType: doc.documentType as any,
+              confidence: doc.confidence?.toString() || "0",
+              vendorName: doc.vendorName || null,
+              vendorEmail: doc.vendorEmail || null,
+              vendorId,
+              documentNumber: doc.documentNumber || null,
+              documentDate: doc.documentDate ? new Date(doc.documentDate) : null,
+              totalAmount: doc.totalAmount?.toString() || null,
+              currency: doc.currency || "USD",
+              trackingNumber: doc.trackingNumber || null,
+              carrierName: doc.carrierName || null,
+              lineItems: doc.lineItems || null,
+              rawExtractedData: doc as any,
+            });
+          }
+
+          await db.updateInboundEmailStatus(input.id, "parsed");
+          return { success: true, documentsFound: result.documents.length };
+        } catch (error) {
+          await db.updateInboundEmailStatus(input.id, "failed", error instanceof Error ? error.message : "Unknown error");
+          return { success: false, error: "Reparse failed" };
+        }
+      }),
+  }),
 });
 
 // Helper function to map Shopify order status to DB enum

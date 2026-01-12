@@ -40,6 +40,7 @@ import WorkOrderDetail from "./pages/operations/WorkOrderDetail";
 import POReceiving from "./pages/operations/POReceiving";
 import Forecasting from "./pages/operations/Forecasting";
 import CoreOperations from "./pages/operations/CoreOperations";
+import EmailInbox from "./pages/operations/EmailInbox";
 
 // Freight
 import FreightDashboard from "./pages/freight/FreightDashboard";
@@ -115,6 +116,7 @@ function Router() {
         <Route path="/operations/receiving" component={POReceiving} />
         <Route path="/operations/forecasting" component={Forecasting} />
         <Route path="/operations/core" component={CoreOperations} />
+        <Route path="/operations/email-inbox" component={EmailInbox} />
 
         {/* Freight */}
         <Route path="/freight" component={FreightDashboard} />

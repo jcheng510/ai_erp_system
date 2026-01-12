@@ -342,3 +342,20 @@
 - [x] Notification preferences settings page
 - [x] Email notification option for critical alerts (via preferences)
 - [x] All 193 unit tests passing
+
+## Email Scanning for Receipts & Documents
+
+- [x] Database schema for email inbox (inbound emails, attachments, parsing status)
+- [x] Database schema for parsed documents (receipts, invoices, POs extracted from emails)
+- [x] AI-powered email content parsing using LLM
+- [x] Receipt extraction (vendor, amount, date, line items, tax)
+- [x] Purchase order extraction (PO number, vendor, items, quantities, prices)
+- [x] Invoice extraction (invoice number, vendor, amounts, due date)
+- [x] Freight document extraction (BOL, tracking numbers, carrier info)
+- [x] Auto-create vendors from parsed email sender/content
+- [x] Auto-create transactions from parsed receipts- [ ] Link parsed documents to existing POs and shipments
+- [ ] Attachment parsing (PDF receipts, images of receipts)
+- [ ] Email inbox UI with list of scanned emails
+- [ ] Document review and approval workflow
+- [ ] Manual email forwarding endpoint for processing
+- [ ] Unit tests for email parsing functionality

@@ -814,6 +814,129 @@ export const aiMessages = mysqlTable("ai_messages", {
 });
 
 // ============================================
+// EMAIL SCANNING & DOCUMENT PARSING
+// ============================================
+
+export const emailParsingStatusEnum = mysqlEnum("email_parsing_status", [
+  "pending",
+  "processing",
+  "parsed",
+  "failed",
+  "reviewed",
+  "archived",
+]);
+
+export const parsedDocumentTypeEnum = mysqlEnum("parsed_document_type", [
+  "receipt",
+  "invoice",
+  "purchase_order",
+  "bill_of_lading",
+  "packing_list",
+  "customs_document",
+  "freight_quote",
+  "shipping_label",
+  "other",
+]);
+
+export const inboundEmails = mysqlTable("inbound_emails", {
+  id: int("id").autoincrement().primaryKey(),
+  messageId: varchar("messageId", { length: 255 }).unique(),
+  fromEmail: varchar("fromEmail", { length: 255 }).notNull(),
+  fromName: varchar("fromName", { length: 255 }),
+  toEmail: varchar("toEmail", { length: 255 }).notNull(),
+  subject: varchar("subject", { length: 500 }),
+  bodyText: text("bodyText"),
+  bodyHtml: text("bodyHtml"),
+  receivedAt: timestamp("receivedAt").notNull(),
+  parsingStatus: emailParsingStatusEnum.default("pending").notNull(),
+  parsedAt: timestamp("parsedAt"),
+  errorMessage: text("errorMessage"),
+  rawHeaders: json("rawHeaders"),
+  metadata: json("metadata"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export const emailAttachments = mysqlTable("email_attachments", {
+  id: int("id").autoincrement().primaryKey(),
+  emailId: int("emailId").notNull(),
+  filename: varchar("filename", { length: 255 }).notNull(),
+  mimeType: varchar("mimeType", { length: 100 }),
+  size: int("size"),
+  storageUrl: varchar("storageUrl", { length: 512 }),
+  storageKey: varchar("storageKey", { length: 255 }),
+  isProcessed: boolean("isProcessed").default(false),
+  extractedText: text("extractedText"),
+  metadata: json("metadata"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export const parsedDocuments = mysqlTable("parsed_documents", {
+  id: int("id").autoincrement().primaryKey(),
+  emailId: int("emailId"),
+  attachmentId: int("attachmentId"),
+  documentType: parsedDocumentTypeEnum.notNull(),
+  confidence: decimal("confidence", { precision: 5, scale: 2 }),
+  
+  // Common fields
+  vendorName: varchar("vendorName", { length: 255 }),
+  vendorEmail: varchar("vendorEmail", { length: 255 }),
+  vendorId: int("vendorId"), // Link to existing vendor if matched
+  documentNumber: varchar("documentNumber", { length: 100 }), // Invoice #, PO #, Receipt #
+  documentDate: timestamp("documentDate"),
+  dueDate: timestamp("dueDate"),
+  
+  // Financial fields
+  subtotal: decimal("subtotal", { precision: 12, scale: 2 }),
+  taxAmount: decimal("taxAmount", { precision: 12, scale: 2 }),
+  shippingAmount: decimal("shippingAmount", { precision: 12, scale: 2 }),
+  totalAmount: decimal("totalAmount", { precision: 12, scale: 2 }),
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  
+  // Freight-specific fields
+  trackingNumber: varchar("trackingNumber", { length: 100 }),
+  carrierName: varchar("carrierName", { length: 255 }),
+  shipmentId: int("shipmentId"), // Link to existing shipment
+  
+  // PO-specific fields
+  purchaseOrderId: int("purchaseOrderId"), // Link to existing PO
+  
+  // Line items stored as JSON
+  lineItems: json("lineItems"), // Array of {description, quantity, unitPrice, total, sku?}
+  
+  // Processing status
+  isReviewed: boolean("isReviewed").default(false),
+  reviewedBy: int("reviewedBy"),
+  reviewedAt: timestamp("reviewedAt"),
+  isApproved: boolean("isApproved").default(false),
+  
+  // Created records
+  createdTransactionId: int("createdTransactionId"),
+  createdVendorId: int("createdVendorId"),
+  
+  rawExtractedData: json("rawExtractedData"), // Full AI extraction result
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export const parsedDocumentLineItems = mysqlTable("parsed_document_line_items", {
+  id: int("id").autoincrement().primaryKey(),
+  documentId: int("documentId").notNull(),
+  lineNumber: int("lineNumber").default(1),
+  description: varchar("description", { length: 500 }),
+  sku: varchar("sku", { length: 100 }),
+  quantity: decimal("quantity", { precision: 12, scale: 4 }),
+  unit: varchar("unit", { length: 50 }),
+  unitPrice: decimal("unitPrice", { precision: 12, scale: 4 }),
+  totalPrice: decimal("totalPrice", { precision: 12, scale: 2 }),
+  productId: int("productId"), // Matched product
+  rawMaterialId: int("rawMaterialId"), // Matched raw material
+  metadata: json("metadata"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+// ============================================
 // TYPE EXPORTS
 // ============================================
 
@@ -1939,3 +2062,17 @@ export const syncLogs = mysqlTable("syncLogs", {
 
 export type SyncLog = typeof syncLogs.$inferSelect;
 export type InsertSyncLog = typeof syncLogs.$inferInsert;
+
+
+// Email scanning types
+export type InboundEmail = typeof inboundEmails.$inferSelect;
+export type InsertInboundEmail = typeof inboundEmails.$inferInsert;
+
+export type EmailAttachment = typeof emailAttachments.$inferSelect;
+export type InsertEmailAttachment = typeof emailAttachments.$inferInsert;
+
+export type ParsedDocument = typeof parsedDocuments.$inferSelect;
+export type InsertParsedDocument = typeof parsedDocuments.$inferInsert;
+
+export type ParsedDocumentLineItem = typeof parsedDocumentLineItems.$inferSelect;
+export type InsertParsedDocumentLineItem = typeof parsedDocumentLineItems.$inferInsert;

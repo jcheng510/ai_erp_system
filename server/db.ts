@@ -34,6 +34,8 @@ import {
   notificationPreferences,
   // Reconciliation
   reconciliationRuns, reconciliationLines,
+  // Email scanning
+  inboundEmails, emailAttachments, parsedDocuments, parsedDocumentLineItems,
   InsertCompany, InsertCustomer, InsertVendor, InsertProduct,
   InsertAccount, InsertInvoice, InsertPayment, InsertTransaction,
   InsertOrder, InsertInventory, InsertPurchaseOrder, InsertWarehouse,
@@ -53,7 +55,8 @@ import {
   InsertShopifyStore, InsertWebhookEvent, InsertShopifySkuMapping, InsertShopifyLocationMapping,
   InsertSalesOrder, InsertSalesOrderLine, InsertInventoryReservation,
   InsertInventoryAllocation, InsertSalesEvent,
-  InsertReconciliationRun, InsertReconciliationLine
+  InsertReconciliationRun, InsertReconciliationLine,
+  InsertInboundEmail, InsertEmailAttachment, InsertParsedDocument, InsertParsedDocumentLineItem
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -4287,4 +4290,324 @@ export async function notifyUsersOfEvent(
   }
   
   return { inApp: inAppCount, email: emailCount };
+}
+
+
+// ============================================
+// EMAIL SCANNING & DOCUMENT PARSING
+// ============================================
+
+export async function createInboundEmail(input: InsertInboundEmail) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  const result = await db.insert(inboundEmails).values(input);
+  return { id: result[0].insertId };
+}
+
+export async function getInboundEmails(options?: {
+  status?: string;
+  limit?: number;
+  offset?: number;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+  
+  if (options?.status) {
+    return db.select().from(inboundEmails)
+      .where(eq(inboundEmails.parsingStatus, options.status as any))
+      .orderBy(desc(inboundEmails.receivedAt))
+      .limit(options?.limit || 100)
+      .offset(options?.offset || 0);
+  }
+  
+  return db.select().from(inboundEmails)
+    .orderBy(desc(inboundEmails.receivedAt))
+    .limit(options?.limit || 100)
+    .offset(options?.offset || 0);
+}
+
+export async function getInboundEmailById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  
+  const result = await db.select().from(inboundEmails).where(eq(inboundEmails.id, id));
+  return result[0] || null;
+}
+
+export async function updateInboundEmailStatus(
+  id: number,
+  status: "pending" | "processing" | "parsed" | "failed" | "reviewed" | "archived",
+  errorMessage?: string
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  const updates: any = { parsingStatus: status };
+  if (status === "parsed") {
+    updates.parsedAt = new Date();
+  }
+  if (errorMessage) {
+    updates.errorMessage = errorMessage;
+  }
+  
+  await db.update(inboundEmails).set(updates).where(eq(inboundEmails.id, id));
+}
+
+export async function createEmailAttachment(input: InsertEmailAttachment) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  const result = await db.insert(emailAttachments).values(input);
+  return { id: result[0].insertId };
+}
+
+export async function getEmailAttachments(emailId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  
+  return db.select().from(emailAttachments).where(eq(emailAttachments.emailId, emailId));
+}
+
+export async function updateAttachmentProcessed(id: number, extractedText?: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  await db.update(emailAttachments).set({
+    isProcessed: true,
+    extractedText: extractedText || null
+  }).where(eq(emailAttachments.id, id));
+}
+
+export async function createParsedDocument(input: InsertParsedDocument) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  const result = await db.insert(parsedDocuments).values(input);
+  return { id: result[0].insertId };
+}
+
+export async function getParsedDocuments(options?: {
+  emailId?: number;
+  documentType?: string;
+  isReviewed?: boolean;
+  isApproved?: boolean;
+  limit?: number;
+  offset?: number;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+  
+  const conditions = [];
+  
+  if (options?.emailId) {
+    conditions.push(eq(parsedDocuments.emailId, options.emailId));
+  }
+  
+  if (options?.documentType) {
+    conditions.push(eq(parsedDocuments.documentType, options.documentType as any));
+  }
+  
+  if (options?.isReviewed !== undefined) {
+    conditions.push(eq(parsedDocuments.isReviewed, options.isReviewed));
+  }
+  
+  if (options?.isApproved !== undefined) {
+    conditions.push(eq(parsedDocuments.isApproved, options.isApproved));
+  }
+  
+  let query = db.select().from(parsedDocuments);
+  
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as any;
+  }
+  
+  return query.orderBy(desc(parsedDocuments.createdAt))
+    .limit(options?.limit || 100)
+    .offset(options?.offset || 0);
+}
+
+export async function getParsedDocumentById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  
+  const result = await db.select().from(parsedDocuments).where(eq(parsedDocuments.id, id));
+  return result[0] || null;
+}
+
+export async function updateParsedDocument(id: number, updates: Partial<InsertParsedDocument>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  await db.update(parsedDocuments).set(updates).where(eq(parsedDocuments.id, id));
+}
+
+export async function approveParsedDocument(id: number, userId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  await db.update(parsedDocuments).set({
+    isReviewed: true,
+    isApproved: true,
+    reviewedBy: userId,
+    reviewedAt: new Date()
+  }).where(eq(parsedDocuments.id, id));
+}
+
+export async function rejectParsedDocument(id: number, userId: number, notes?: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  await db.update(parsedDocuments).set({
+    isReviewed: true,
+    isApproved: false,
+    reviewedBy: userId,
+    reviewedAt: new Date(),
+    notes: notes || null
+  }).where(eq(parsedDocuments.id, id));
+}
+
+export async function createParsedDocumentLineItem(input: InsertParsedDocumentLineItem) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  const result = await db.insert(parsedDocumentLineItems).values(input);
+  return { id: result[0].insertId };
+}
+
+export async function getParsedDocumentLineItems(documentId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  
+  return db.select().from(parsedDocumentLineItems)
+    .where(eq(parsedDocumentLineItems.documentId, documentId))
+    .orderBy(parsedDocumentLineItems.lineNumber);
+}
+
+export async function linkParsedDocumentToVendor(documentId: number, vendorId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  await db.update(parsedDocuments).set({ vendorId }).where(eq(parsedDocuments.id, documentId));
+}
+
+export async function linkParsedDocumentToPO(documentId: number, purchaseOrderId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  await db.update(parsedDocuments).set({ purchaseOrderId }).where(eq(parsedDocuments.id, documentId));
+}
+
+export async function linkParsedDocumentToShipment(documentId: number, shipmentId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  await db.update(parsedDocuments).set({ shipmentId }).where(eq(parsedDocuments.id, documentId));
+}
+
+export async function setCreatedTransaction(documentId: number, transactionId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  await db.update(parsedDocuments).set({ createdTransactionId: transactionId }).where(eq(parsedDocuments.id, documentId));
+}
+
+export async function setCreatedVendor(documentId: number, vendorId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  await db.update(parsedDocuments).set({ createdVendorId: vendorId, vendorId }).where(eq(parsedDocuments.id, documentId));
+}
+
+// Find vendor by email domain or name match
+export async function findVendorByEmailOrName(email?: string, name?: string) {
+  const db = await getDb();
+  if (!db) return null;
+  
+  if (email) {
+    // Try to match by email
+    const byEmail = await db.select().from(vendors).where(eq(vendors.email, email));
+    if (byEmail.length > 0) return byEmail[0];
+    
+    // Try to match by email domain
+    const domain = email.split("@")[1];
+    if (domain) {
+      const byDomain = await db.select().from(vendors).where(
+        sql`${vendors.email} LIKE ${`%@${domain}`}`
+      );
+      if (byDomain.length > 0) return byDomain[0];
+    }
+  }
+  
+  if (name) {
+    // Try exact match first
+    const byName = await db.select().from(vendors).where(eq(vendors.name, name));
+    if (byName.length > 0) return byName[0];
+    
+    // Try partial match
+    const byPartialName = await db.select().from(vendors).where(
+      sql`LOWER(${vendors.name}) LIKE ${`%${name.toLowerCase()}%`}`
+    );
+    if (byPartialName.length > 0) return byPartialName[0];
+  }
+  
+  return null;
+}
+
+// Find PO by number
+export async function findPurchaseOrderByNumber(poNumber: string) {
+  const db = await getDb();
+  if (!db) return null;
+  
+  const result = await db.select().from(purchaseOrders).where(
+    sql`${purchaseOrders.poNumber} = ${poNumber} OR ${purchaseOrders.poNumber} LIKE ${`%${poNumber}%`}`
+  );
+  return result[0] || null;
+}
+
+// Find shipment by tracking number
+export async function findShipmentByTracking(trackingNumber: string) {
+  const db = await getDb();
+  if (!db) return null;
+  
+  const result = await db.select().from(shipments).where(
+    eq(shipments.trackingNumber, trackingNumber)
+  );
+  return result[0] || null;
+}
+
+// Get email scanning statistics
+export async function getEmailScanningStats() {
+  const db = await getDb();
+  if (!db) return { total: 0, pending: 0, parsed: 0, failed: 0, documents: 0 };
+  
+  const emails = await db.select({
+    status: inboundEmails.parsingStatus,
+    count: sql<number>`COUNT(*)`
+  }).from(inboundEmails).groupBy(inboundEmails.parsingStatus);
+  
+  const docCount = await db.select({
+    count: sql<number>`COUNT(*)`
+  }).from(parsedDocuments);
+  
+  const stats = {
+    total: 0,
+    pending: 0,
+    processing: 0,
+    parsed: 0,
+    failed: 0,
+    reviewed: 0,
+    documents: Number(docCount[0]?.count) || 0
+  };
+  
+  for (const row of emails) {
+    stats.total += Number(row.count);
+    if (row.status === "pending") stats.pending = Number(row.count);
+    if (row.status === "processing") stats.processing = Number(row.count);
+    if (row.status === "parsed") stats.parsed = Number(row.count);
+    if (row.status === "failed") stats.failed = Number(row.count);
+    if (row.status === "reviewed") stats.reviewed = Number(row.count);
+  }
+  
+  return stats;
 }

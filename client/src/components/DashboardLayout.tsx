@@ -48,6 +48,7 @@ import {
   UserCog,
   FileSignature,
   AlertTriangle,
+  Mail,
   ChevronDown,
   Search,
   Bell,
@@ -113,6 +114,7 @@ const menuGroups = [
       { icon: ClipboardList, label: "Work Orders", path: "/operations/work-orders" },
       { icon: PackageCheck, label: "Receiving", path: "/operations/receiving" },
       { icon: Brain, label: "AI Forecasting", path: "/operations/forecasting" },
+      { icon: Mail, label: "Email Inbox", path: "/operations/email-inbox" },
     ],
   },
   {
