@@ -47,6 +47,7 @@ import Procurement from "./pages/operations/Procurement";
 import ManufacturingHub from "./pages/operations/ManufacturingHub";
 import ProcurementHub from "./pages/operations/ProcurementHub";
 import LogisticsHub from "./pages/operations/LogisticsHub";
+import SupplierPortal from "./pages/SupplierPortal";
 
 // Freight
 import FreightDashboard from "./pages/freight/FreightDashboard";
@@ -186,6 +187,8 @@ function App() {
           <Switch>
             {/* Public Data Room Access (outside dashboard) */}
             <Route path="/share/:code" component={DataRoomPublic} />
+            {/* Supplier Portal (public) */}
+            <Route path="/supplier-portal/:token" component={SupplierPortal} />
             {/* All other routes go through dashboard */}
             <Route component={Router} />
           </Switch>

@@ -481,3 +481,18 @@
 - [x] Recurring invoice templates
 - [x] Auto-generate invoices on schedule (weekly/monthly)
 - [x] Recurring invoice management UI
+
+
+## Spreadsheet Views & PO Workflow Enhancement
+- [x] Create reusable spreadsheet-style data table component with inline editing
+- [x] Update Manufacturing Hub to use spreadsheet view as default
+- [x] Update Procurement Hub to use spreadsheet view as default
+- [x] Update Logistics Hub to use spreadsheet view as default
+- [x] Update Sales Hub to use spreadsheet view as default
+- [x] Add PO email to supplier functionality
+- [x] Auto-generate shipment order when PO is sent
+- [x] Auto-generate freight quote request when PO is sent
+- [x] Request customs documentation in supplier email (invoice, packing list, dimensions, HS code)
+- [x] Create supplier portal for document upload
+- [x] Link uploaded documents to freight quote requests
+- [x] Send documentation to freight vendors for quotes

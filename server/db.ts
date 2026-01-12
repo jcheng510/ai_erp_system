@@ -46,6 +46,8 @@ import {
   emailCredentials, scheduledEmailScans, emailScanLogs,
   // Recurring invoices
   recurringInvoices, recurringInvoiceItems, recurringInvoiceHistory,
+  // Supplier portal
+  supplierPortalSessions, supplierDocuments, supplierFreightInfo,
   InsertCompany, InsertCustomer, InsertVendor, InsertProduct,
   InsertAccount, InsertInvoice, InsertPayment, InsertTransaction,
   InsertOrder, InsertInventory, InsertPurchaseOrder, InsertWarehouse,
@@ -5840,4 +5842,129 @@ export async function getRecurringInvoiceHistory(recurringInvoiceId: number) {
     .from(recurringInvoiceHistory)
     .where(eq(recurringInvoiceHistory.recurringInvoiceId, recurringInvoiceId))
     .orderBy(desc(recurringInvoiceHistory.generatedAt));
+}
+
+
+// ============================================
+// SUPPLIER PORTAL
+// ============================================
+
+export async function createSupplierPortalSession(data: {
+  token: string;
+  purchaseOrderId: number;
+  vendorId: number;
+  vendorEmail?: string;
+  expiresAt: Date;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(supplierPortalSessions).values(data);
+  return { id: result[0].insertId, ...data };
+}
+
+export async function getSupplierPortalSession(token: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(supplierPortalSessions).where(eq(supplierPortalSessions.token, token));
+  return result[0] || null;
+}
+
+export async function updateSupplierPortalSession(id: number, data: Partial<{ status: string; completedAt: Date }>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(supplierPortalSessions).set(data as any).where(eq(supplierPortalSessions.id, id));
+}
+
+export async function createSupplierDocument(data: {
+  portalSessionId: number;
+  purchaseOrderId: number;
+  vendorId: number;
+  documentType: string;
+  fileName: string;
+  fileUrl: string;
+  fileSize?: number;
+  mimeType?: string;
+  notes?: string;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(supplierDocuments).values(data as any);
+  return { id: result[0].insertId, ...data };
+}
+
+export async function getSupplierDocuments(filters?: { purchaseOrderId?: number; vendorId?: number; portalSessionId?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  let query = db.select().from(supplierDocuments);
+  const conditions = [];
+  if (filters?.purchaseOrderId) conditions.push(eq(supplierDocuments.purchaseOrderId, filters.purchaseOrderId));
+  if (filters?.vendorId) conditions.push(eq(supplierDocuments.vendorId, filters.vendorId));
+  if (filters?.portalSessionId) conditions.push(eq(supplierDocuments.portalSessionId, filters.portalSessionId));
+  if (conditions.length > 0) query = query.where(and(...conditions)) as any;
+  return query.orderBy(desc(supplierDocuments.createdAt));
+}
+
+export async function updateSupplierDocument(id: number, data: Partial<{
+  status: string;
+  reviewedBy: number;
+  reviewedAt: Date;
+  reviewNotes: string;
+  extractedData: string;
+}>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(supplierDocuments).set(data as any).where(eq(supplierDocuments.id, id));
+}
+
+export async function createSupplierFreightInfo(data: {
+  portalSessionId: number;
+  purchaseOrderId: number;
+  vendorId: number;
+  totalPackages?: number;
+  totalGrossWeight?: string;
+  totalNetWeight?: string;
+  weightUnit?: string;
+  totalVolume?: string;
+  volumeUnit?: string;
+  packageDimensions?: string;
+  hsCodes?: string;
+  preferredShipDate?: Date;
+  preferredCarrier?: string;
+  incoterms?: string;
+  specialInstructions?: string;
+  hasDangerousGoods?: boolean;
+  dangerousGoodsClass?: string;
+  unNumber?: string;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(supplierFreightInfo).values(data as any);
+  return { id: result[0].insertId, ...data };
+}
+
+export async function getSupplierFreightInfo(purchaseOrderId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(supplierFreightInfo).where(eq(supplierFreightInfo.purchaseOrderId, purchaseOrderId));
+  return result[0] || null;
+}
+
+export async function updateSupplierFreightInfo(id: number, data: Partial<{
+  totalPackages: number;
+  totalGrossWeight: string;
+  totalNetWeight: string;
+  totalVolume: string;
+  packageDimensions: string;
+  hsCodes: string;
+  preferredShipDate: Date;
+  preferredCarrier: string;
+  incoterms: string;
+  specialInstructions: string;
+  hasDangerousGoods: boolean;
+  dangerousGoodsClass: string;
+  unNumber: string;
+}>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(supplierFreightInfo).set(data as any).where(eq(supplierFreightInfo.id, id));
 }

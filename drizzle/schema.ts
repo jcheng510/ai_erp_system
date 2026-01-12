@@ -2665,3 +2665,90 @@ export const recurringInvoiceHistory = mysqlTable("recurringInvoiceHistory", {
 });
 
 export type RecurringInvoiceHistory = typeof recurringInvoiceHistory.$inferSelect;
+
+
+// ============================================
+// SUPPLIER PORTAL
+// ============================================
+
+export const supplierPortalSessions = mysqlTable("supplierPortalSessions", {
+  id: int("id").autoincrement().primaryKey(),
+  token: varchar("token", { length: 64 }).notNull().unique(),
+  purchaseOrderId: int("purchaseOrderId").notNull(),
+  vendorId: int("vendorId").notNull(),
+  vendorEmail: varchar("vendorEmail", { length: 320 }),
+  status: mysqlEnum("status", ["active", "completed", "expired"]).default("active").notNull(),
+  expiresAt: timestamp("expiresAt").notNull(),
+  completedAt: timestamp("completedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type SupplierPortalSession = typeof supplierPortalSessions.$inferSelect;
+export type InsertSupplierPortalSession = typeof supplierPortalSessions.$inferInsert;
+
+export const supplierDocuments = mysqlTable("supplierDocuments", {
+  id: int("id").autoincrement().primaryKey(),
+  portalSessionId: int("portalSessionId").notNull(),
+  purchaseOrderId: int("purchaseOrderId").notNull(),
+  vendorId: int("vendorId").notNull(),
+  documentType: mysqlEnum("documentType", [
+    "commercial_invoice",
+    "packing_list",
+    "dimensions_weight",
+    "hs_codes",
+    "certificate_of_origin",
+    "msds_sds",
+    "bill_of_lading",
+    "customs_declaration",
+    "other"
+  ]).notNull(),
+  fileName: varchar("fileName", { length: 255 }).notNull(),
+  fileUrl: text("fileUrl").notNull(),
+  fileSize: int("fileSize"),
+  mimeType: varchar("mimeType", { length: 100 }),
+  notes: text("notes"),
+  // Extracted data from document (JSON)
+  extractedData: text("extractedData"),
+  status: mysqlEnum("status", ["pending", "approved", "rejected"]).default("pending").notNull(),
+  reviewedBy: int("reviewedBy"),
+  reviewedAt: timestamp("reviewedAt"),
+  reviewNotes: text("reviewNotes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type SupplierDocument = typeof supplierDocuments.$inferSelect;
+export type InsertSupplierDocument = typeof supplierDocuments.$inferInsert;
+
+// Customs/freight info submitted by supplier
+export const supplierFreightInfo = mysqlTable("supplierFreightInfo", {
+  id: int("id").autoincrement().primaryKey(),
+  portalSessionId: int("portalSessionId").notNull(),
+  purchaseOrderId: int("purchaseOrderId").notNull(),
+  vendorId: int("vendorId").notNull(),
+  // Shipment details
+  totalPackages: int("totalPackages"),
+  totalGrossWeight: decimal("totalGrossWeight", { precision: 10, scale: 2 }),
+  totalNetWeight: decimal("totalNetWeight", { precision: 10, scale: 2 }),
+  weightUnit: varchar("weightUnit", { length: 10 }).default("kg"),
+  totalVolume: decimal("totalVolume", { precision: 10, scale: 3 }),
+  volumeUnit: varchar("volumeUnit", { length: 10 }).default("cbm"),
+  // Dimensions (JSON array of package dimensions)
+  packageDimensions: text("packageDimensions"),
+  // HS codes (JSON array)
+  hsCodes: text("hsCodes"),
+  // Shipping preferences
+  preferredShipDate: timestamp("preferredShipDate"),
+  preferredCarrier: varchar("preferredCarrier", { length: 100 }),
+  incoterms: varchar("incoterms", { length: 20 }),
+  specialInstructions: text("specialInstructions"),
+  // Dangerous goods
+  hasDangerousGoods: boolean("hasDangerousGoods").default(false),
+  dangerousGoodsClass: varchar("dangerousGoodsClass", { length: 50 }),
+  unNumber: varchar("unNumber", { length: 20 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type SupplierFreightInfo = typeof supplierFreightInfo.$inferSelect;
+export type InsertSupplierFreightInfo = typeof supplierFreightInfo.$inferInsert;

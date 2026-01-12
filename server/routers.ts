@@ -1235,6 +1235,100 @@ export const appRouter = router({
         await createAuditLog(ctx.user.id, 'approve', 'purchaseOrder', input.id);
         return { success: true };
       }),
+    sendToSupplier: opsProcedure
+      .input(z.object({
+        poId: z.number(),
+        message: z.string().optional(),
+        createShipment: z.boolean().optional(),
+        createFreightRfq: z.boolean().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const po = await db.getPurchaseOrderWithItems(input.poId);
+        if (!po) throw new TRPCError({ code: 'NOT_FOUND', message: 'PO not found' });
+        
+        const vendor = await db.getVendorById(po.vendorId);
+        if (!vendor) throw new TRPCError({ code: 'NOT_FOUND', message: 'Vendor not found' });
+        
+        // Generate supplier portal link for document uploads
+        const portalToken = nanoid(32);
+        const portalLink = `${process.env.VITE_APP_URL || ''}/supplier-portal/${portalToken}`;
+        
+        // Create shipment if requested
+        let shipmentId: number | undefined;
+        if (input.createShipment) {
+          const shipmentNumber = generateNumber('SHIP');
+          const shipment = await db.createShipment({
+            type: 'inbound',
+            purchaseOrderId: po.id,
+            shipmentNumber,
+            status: 'pending',
+            fromAddress: vendor.address || undefined,
+          });
+          shipmentId = shipment.id;
+        }
+        
+        // Create freight RFQ if requested
+        let rfqId: number | undefined;
+        if (input.createFreightRfq) {
+          const rfq = await db.createFreightRfq({
+            title: `Freight for PO ${po.poNumber}`,
+            purchaseOrderId: po.id,
+            status: 'draft',
+            originAddress: vendor.address || undefined,
+            createdById: ctx.user.id,
+          });
+          rfqId = rfq.id;
+        }
+        
+        // Send email to supplier
+        if (vendor.email && isEmailConfigured()) {
+          const itemsHtml = po.items?.map((item: any) => 
+            `<tr><td>${item.description}</td><td>${item.quantity}</td><td>$${item.unitPrice}</td><td>$${item.totalAmount}</td></tr>`
+          ).join('') || '';
+          
+          const emailHtml = formatEmailHtml(`
+            <h2>Purchase Order: ${po.poNumber}</h2>
+            <p>Dear ${vendor.contactName || vendor.name},</p>
+            <p>Please find attached our purchase order ${po.poNumber}.</p>
+            ${input.message ? `<p><strong>Message:</strong> ${input.message}</p>` : ''}
+            
+            <h3>Order Details</h3>
+            <table border="1" cellpadding="8" cellspacing="0" style="border-collapse: collapse; width: 100%;">
+              <tr style="background: #f3f4f6;"><th>Description</th><th>Qty</th><th>Unit Price</th><th>Total</th></tr>
+              ${itemsHtml}
+              <tr><td colspan="3" style="text-align: right;"><strong>Subtotal:</strong></td><td>$${po.subtotal}</td></tr>
+              <tr><td colspan="3" style="text-align: right;"><strong>Total:</strong></td><td><strong>$${po.totalAmount}</strong></td></tr>
+            </table>
+            
+            <h3>Required Documentation</h3>
+            <p>Please upload the following documents to our supplier portal:</p>
+            <ul>
+              <li>Commercial Invoice</li>
+              <li>Packing List</li>
+              <li>Product Dimensions & Weight</li>
+              <li>HS Codes for all items</li>
+              <li>Certificate of Origin (if applicable)</li>
+              <li>MSDS/SDS (if applicable)</li>
+            </ul>
+            <p><a href="${portalLink}" style="background: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">Upload Documents to Portal</a></p>
+            
+            <p>Expected Delivery Date: ${po.expectedDate ? new Date(po.expectedDate).toLocaleDateString() : 'TBD'}</p>
+            <p>Please confirm receipt of this order and provide estimated shipping date.</p>
+          `);
+          
+          await sendEmail({
+            to: vendor.email,
+            subject: `Purchase Order ${po.poNumber} - Action Required`,
+            html: emailHtml,
+          });
+        }
+        
+        // Update PO status to sent
+        await db.updatePurchaseOrder(po.id, { status: 'sent' });
+        await createAuditLog(ctx.user.id, 'update', 'purchaseOrder', po.id, po.poNumber);
+        
+        return { success: true, shipmentId, rfqId, portalToken };
+      }),
   }),
 
   // ============================================
@@ -2608,10 +2702,19 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
         .input(z.object({
           rfqId: z.number(),
           carrierIds: z.array(z.number()),
+          includeSupplierDocs: z.boolean().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
           const rfq = await db.getFreightRfqById(input.rfqId);
           if (!rfq) throw new TRPCError({ code: 'NOT_FOUND', message: 'RFQ not found' });
+          
+          // Get supplier documents if PO is linked
+          let supplierDocs: any[] = [];
+          let freightInfo: any = null;
+          if (rfq.purchaseOrderId && input.includeSupplierDocs) {
+            supplierDocs = await db.getSupplierDocuments({ purchaseOrderId: rfq.purchaseOrderId });
+            freightInfo = await db.getSupplierFreightInfo(rfq.purchaseOrderId);
+          }
           
           const results = { sent: 0, failed: 0, emails: [] as any[] };
           
@@ -2622,6 +2725,42 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
               continue;
             }
             
+            // Build supplier documentation info for email
+            let supplierDocsInfo = '';
+            if (freightInfo) {
+              supplierDocsInfo = `\n\nSHIPMENT DETAILS FROM SUPPLIER:\n`;
+              supplierDocsInfo += `Total Packages: ${freightInfo.totalPackages || 'TBD'}\n`;
+              supplierDocsInfo += `Gross Weight: ${freightInfo.totalGrossWeight || 'TBD'} ${freightInfo.weightUnit || 'kg'}\n`;
+              supplierDocsInfo += `Net Weight: ${freightInfo.totalNetWeight || 'TBD'} ${freightInfo.weightUnit || 'kg'}\n`;
+              supplierDocsInfo += `Volume: ${freightInfo.totalVolume || 'TBD'} ${freightInfo.volumeUnit || 'CBM'}\n`;
+              if (freightInfo.packageDimensions) {
+                try {
+                  const dims = JSON.parse(freightInfo.packageDimensions);
+                  supplierDocsInfo += `Package Dimensions: ${dims.map((d: any) => `${d.length}x${d.width}x${d.height}cm (${d.quantity} pcs)`).join(', ')}\n`;
+                } catch {}
+              }
+              if (freightInfo.hsCodes) {
+                try {
+                  const codes = JSON.parse(freightInfo.hsCodes);
+                  supplierDocsInfo += `HS Codes: ${codes.map((c: any) => c.code).join(', ')}\n`;
+                } catch {}
+              }
+              if (freightInfo.hasDangerousGoods) {
+                supplierDocsInfo += `DANGEROUS GOODS: Class ${freightInfo.dangerousGoodsClass}, UN ${freightInfo.unNumber}\n`;
+              }
+              if (freightInfo.specialInstructions) {
+                supplierDocsInfo += `Special Instructions: ${freightInfo.specialInstructions}\n`;
+              }
+            }
+            
+            let attachmentsInfo = '';
+            if (supplierDocs.length > 0) {
+              attachmentsInfo = `\n\nATTACHED DOCUMENTATION:\n`;
+              supplierDocs.forEach((doc: any) => {
+                attachmentsInfo += `- ${doc.documentType.replace(/_/g, ' ').toUpperCase()}: ${doc.fileName}\n`;
+              });
+            }
+            
             // Generate AI email content
             const emailPrompt = `Generate a professional freight quote request email for the following shipment:
 
@@ -2630,15 +2769,15 @@ Title: ${rfq.title}
 Origin: ${rfq.originCity || ''}, ${rfq.originCountry || ''}
 Destination: ${rfq.destinationCity || ''}, ${rfq.destinationCountry || ''}
 Cargo: ${rfq.cargoDescription || 'General cargo'}
-Weight: ${rfq.totalWeight || 'TBD'} kg
-Volume: ${rfq.totalVolume || 'TBD'} CBM
-Packages: ${rfq.numberOfPackages || 'TBD'}
+Weight: ${rfq.totalWeight || freightInfo?.totalGrossWeight || 'TBD'} ${freightInfo?.weightUnit || 'kg'}
+Volume: ${rfq.totalVolume || freightInfo?.totalVolume || 'TBD'} ${freightInfo?.volumeUnit || 'CBM'}
+Packages: ${rfq.numberOfPackages || freightInfo?.totalPackages || 'TBD'}
 Preferred Mode: ${rfq.preferredMode || 'Any'}
-Incoterms: ${rfq.incoterms || 'TBD'}
-Required Pickup: ${rfq.requiredPickupDate ? new Date(rfq.requiredPickupDate).toLocaleDateString() : 'Flexible'}
+Incoterms: ${rfq.incoterms || freightInfo?.incoterms || 'TBD'}
+Required Pickup: ${rfq.requiredPickupDate ? new Date(rfq.requiredPickupDate).toLocaleDateString() : freightInfo?.preferredShipDate ? new Date(freightInfo.preferredShipDate).toLocaleDateString() : 'Flexible'}
 Required Delivery: ${rfq.requiredDeliveryDate ? new Date(rfq.requiredDeliveryDate).toLocaleDateString() : 'Flexible'}
 Insurance Required: ${rfq.insuranceRequired ? 'Yes' : 'No'}
-Customs Clearance Required: ${rfq.customsClearanceRequired ? 'Yes' : 'No'}
+Customs Clearance Required: ${rfq.customsClearanceRequired ? 'Yes' : 'No'}${supplierDocsInfo}${attachmentsInfo}
 
 Please provide:
 1. Freight cost breakdown
@@ -7092,6 +7231,118 @@ Provide your forecast in JSON format with the following structure:
       .mutation(async ({ input, ctx }) => {
         await db.updateRecurringInvoice(input.id, { isActive: input.isActive });
         await createAuditLog(ctx.user.id, 'update', 'recurring_invoice', input.id, input.isActive ? 'Activated' : 'Paused');
+        return { success: true };
+      }),
+  }),
+
+  // ============================================
+  // SUPPLIER PORTAL (PUBLIC)
+  // ============================================
+  supplierPortal: router({
+    getSession: publicProcedure
+      .input(z.object({ token: z.string() }))
+      .query(async ({ input }) => {
+        const session = await db.getSupplierPortalSession(input.token);
+        if (!session) return null;
+        if (new Date(session.expiresAt) < new Date()) {
+          await db.updateSupplierPortalSession(session.id, { status: 'expired' });
+          return null;
+        }
+        const po = await db.getPurchaseOrderWithItems(session.purchaseOrderId);
+        return { ...session, purchaseOrder: po };
+      }),
+    getDocuments: publicProcedure
+      .input(z.object({ token: z.string() }))
+      .query(async ({ input }) => {
+        const session = await db.getSupplierPortalSession(input.token);
+        if (!session) return [];
+        return db.getSupplierDocuments({ portalSessionId: session.id });
+      }),
+    getFreightInfo: publicProcedure
+      .input(z.object({ token: z.string() }))
+      .query(async ({ input }) => {
+        const session = await db.getSupplierPortalSession(input.token);
+        if (!session) return null;
+        return db.getSupplierFreightInfo(session.purchaseOrderId);
+      }),
+    uploadDocument: publicProcedure
+      .input(z.object({
+        token: z.string(),
+        documentType: z.string(),
+        fileName: z.string(),
+        fileData: z.string(), // base64
+        mimeType: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const session = await db.getSupplierPortalSession(input.token);
+        if (!session || session.status !== 'active') {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Invalid or expired session' });
+        }
+        // Upload to S3
+        const buffer = Buffer.from(input.fileData, 'base64');
+        const fileKey = `supplier-docs/${session.purchaseOrderId}/${input.documentType}/${Date.now()}-${input.fileName}`;
+        const { url } = await storagePut(fileKey, buffer, input.mimeType || 'application/octet-stream');
+        // Save to database
+        return db.createSupplierDocument({
+          portalSessionId: session.id,
+          purchaseOrderId: session.purchaseOrderId,
+          vendorId: session.vendorId,
+          documentType: input.documentType,
+          fileName: input.fileName,
+          fileUrl: url,
+          fileSize: buffer.length,
+          mimeType: input.mimeType,
+        });
+      }),
+    saveFreightInfo: publicProcedure
+      .input(z.object({
+        token: z.string(),
+        totalPackages: z.number().optional(),
+        totalGrossWeight: z.string().optional(),
+        totalNetWeight: z.string().optional(),
+        weightUnit: z.string().optional(),
+        totalVolume: z.string().optional(),
+        volumeUnit: z.string().optional(),
+        packageDimensions: z.string().optional(),
+        hsCodes: z.string().optional(),
+        preferredShipDate: z.date().optional(),
+        preferredCarrier: z.string().optional(),
+        incoterms: z.string().optional(),
+        specialInstructions: z.string().optional(),
+        hasDangerousGoods: z.boolean().optional(),
+        dangerousGoodsClass: z.string().optional(),
+        unNumber: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const session = await db.getSupplierPortalSession(input.token);
+        if (!session || session.status !== 'active') {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Invalid or expired session' });
+        }
+        const { token, ...data } = input;
+        const existing = await db.getSupplierFreightInfo(session.purchaseOrderId);
+        if (existing) {
+          await db.updateSupplierFreightInfo(existing.id, data);
+          return { success: true, id: existing.id };
+        } else {
+          const result = await db.createSupplierFreightInfo({
+            portalSessionId: session.id,
+            purchaseOrderId: session.purchaseOrderId,
+            vendorId: session.vendorId,
+            ...data,
+          });
+          return { success: true, id: result.id };
+        }
+      }),
+    completeSubmission: publicProcedure
+      .input(z.object({ token: z.string() }))
+      .mutation(async ({ input }) => {
+        const session = await db.getSupplierPortalSession(input.token);
+        if (!session || session.status !== 'active') {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Invalid or expired session' });
+        }
+        await db.updateSupplierPortalSession(session.id, { status: 'completed', completedAt: new Date() });
+        // Update PO status
+        await db.updatePurchaseOrder(session.purchaseOrderId, { status: 'confirmed' });
         return { success: true };
       }),
   }),
