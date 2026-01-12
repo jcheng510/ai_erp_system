@@ -474,6 +474,23 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
   const [debouncedMaterialName, setDebouncedMaterialName] = useState<string | null>(null);
   const [selectedVendorId, setSelectedVendorId] = useState<number | null>(null);
   const [showVendorDropdown, setShowVendorDropdown] = useState(false);
+  // New states for enhanced UX
+  const [showDraftPreview, setShowDraftPreview] = useState(false);
+  const [draftData, setDraftData] = useState<{
+    taskType: TaskType;
+    material: { id: number; name: string; sku: string | null; unit: string | null } | null;
+    vendor: { id: number; name: string; email: string | null } | null;
+    quantity: number | null;
+    unit: string | null;
+    requiredDate: Date | null;
+    estimatedPrice: number | null;
+    originalQuery: string;
+  } | null>(null);
+  const [materialSearch, setMaterialSearch] = useState("");
+  const [showMaterialDropdown, setShowMaterialDropdown] = useState(false);
+  const [selectedMaterial, setSelectedMaterial] = useState<{ id: number; name: string; sku: string | null; unit: string | null } | null>(null);
+  const [editingQuantity, setEditingQuantity] = useState<string>("");
+  const [editingDate, setEditingDate] = useState<string>("");
   const inputRef = useRef<HTMLInputElement>(null);
   const [, setLocation] = useLocation();
   const utils = trpc.useUtils();
@@ -511,8 +528,22 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
   // Query all vendors for manual selection
   const vendorsQuery = trpc.vendors.list.useQuery(
     {},
-    { enabled: showVendorDropdown }
+    { enabled: showVendorDropdown || showDraftPreview }
   );
+
+  // Query materials for autocomplete
+  const materialsQuery = trpc.rawMaterials.list.useQuery(
+    {},
+    { enabled: showMaterialDropdown || showDraftPreview }
+  );
+
+  // Filter materials based on search
+  const filteredMaterials = materialsQuery.data?.filter(m => 
+    materialSearch.length > 0 && (
+      m.name.toLowerCase().includes(materialSearch.toLowerCase()) ||
+      (m.sku && m.sku.toLowerCase().includes(materialSearch.toLowerCase()))
+    )
+  ).slice(0, 10) || [];
 
   // Query for vendor suggestion based on material name
   const vendorSuggestionQuery = trpc.rawMaterials.getPreferredVendor.useQuery(
@@ -553,6 +584,13 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
       setDebouncedMaterialName(null);
       setSelectedVendorId(null);
       setShowVendorDropdown(false);
+      setShowDraftPreview(false);
+      setDraftData(null);
+      setMaterialSearch("");
+      setShowMaterialDropdown(false);
+      setSelectedMaterial(null);
+      setEditingQuantity("");
+      setEditingDate("");
     }
   }, [open]);
 
@@ -573,7 +611,6 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
 
   const handleSubmit = useCallback(async (q: string, forceTaskType?: TaskType) => {
     if (!q.trim()) return;
-    setIsLoading(true);
     setShowSuggestions(false);
     setResponse(null);
     setTaskCreated(null);
@@ -584,6 +621,7 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
     
     // If it's a general query, use the AI query endpoint
     if (taskType === "query") {
+      setIsLoading(true);
       let fullQuery = q;
       if (context) {
         fullQuery = `[Context: ${context.type}${context.name ? ` - ${context.name}` : ""}${context.id ? ` (ID: ${context.id})` : ""}]\n\n${q}`;
@@ -592,61 +630,81 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
       return;
     }
     
-    // For actionable tasks, create an AI Agent task
+    // For actionable tasks, show draft preview first
+    const material = vendorSuggestion?.material || selectedMaterial;
+    const vendor = selectedVendorId 
+      ? vendorsQuery.data?.find(v => v.id === selectedVendorId) || null
+      : vendorSuggestion?.suggestedVendor 
+        ? { id: vendorSuggestion.suggestedVendor.id, name: vendorSuggestion.suggestedVendor.name, email: vendorSuggestion.suggestedVendor.email }
+        : vendorSuggestion?.preferredVendor
+          ? { id: vendorSuggestion.preferredVendor.id, name: vendorSuggestion.preferredVendor.name, email: null }
+          : null;
+    
+    const parsedQty = intent.taskData?.quantity || null;
+    const parsedDate = intent.taskData?.requiredDate ? new Date(intent.taskData.requiredDate) : null;
+    const lastPrice = vendorSuggestion?.lastPurchasePrice ? parseFloat(vendorSuggestion.lastPurchasePrice) : null;
+    const estimatedPrice = parsedQty && lastPrice ? parsedQty * lastPrice : null;
+    
+    setDraftData({
+      taskType,
+      material: material ? { id: material.id, name: material.name, sku: material.sku || null, unit: material.unit || null } : null,
+      vendor: vendor ? { id: vendor.id, name: vendor.name, email: vendor.email || null } : null,
+      quantity: parsedQty,
+      unit: intent.taskData?.unit || material?.unit || null,
+      requiredDate: parsedDate,
+      estimatedPrice,
+      originalQuery: q
+    });
+    setEditingQuantity(parsedQty?.toString() || "");
+    setEditingDate(parsedDate ? parsedDate.toISOString().split('T')[0] : "");
+    setShowDraftPreview(true);
+  }, [context, aiQuery, vendorSuggestion, selectedVendorId, vendorsQuery.data, selectedMaterial]);
+
+  // Submit the draft after preview/editing
+  const handleSubmitDraft = useCallback(async () => {
+    if (!draftData) return;
+    setIsLoading(true);
+    
     try {
-      // Get selected vendor info if manually selected
-      const selectedVendor = selectedVendorId 
-        ? vendorsQuery.data?.find(v => v.id === selectedVendorId)
-        : null;
-      
-      // Include vendor suggestion if available
       const taskDataWithVendor = {
-        ...intent.taskData,
-        originalQuery: q,
+        originalQuery: draftData.originalQuery,
         context: context ? {
           type: context.type,
           id: context.id,
           name: context.name
         } : null,
-        // Add vendor suggestion data if available
-        ...(vendorSuggestion?.material && {
-          materialId: vendorSuggestion.material.id,
-          materialName: vendorSuggestion.material.name,
-          materialSku: vendorSuggestion.material.sku,
-          materialUnit: vendorSuggestion.material.unit,
+        // Material info
+        ...(draftData.material && {
+          materialId: draftData.material.id,
+          materialName: draftData.material.name,
+          materialSku: draftData.material.sku,
+          materialUnit: draftData.material.unit,
         }),
-        // Use manually selected vendor if provided, otherwise use suggested vendor
-        ...(selectedVendor ? {
-          vendorId: selectedVendor.id,
-          vendorName: selectedVendor.name,
-          vendorEmail: selectedVendor.email,
-          manuallySelected: true,
-        } : vendorSuggestion?.suggestedVendor ? {
-          suggestedVendorId: vendorSuggestion.suggestedVendor.id,
-          suggestedVendorName: vendorSuggestion.suggestedVendor.name,
-          suggestedVendorEmail: vendorSuggestion.suggestedVendor.email,
-          vendorPOCount: vendorSuggestion.suggestedVendor.poCount,
-        } : {}),
-        ...(vendorSuggestion?.preferredVendor && !selectedVendor && {
-          preferredVendorId: vendorSuggestion.preferredVendor.id,
-          preferredVendorName: vendorSuggestion.preferredVendor.name,
+        // Vendor info
+        ...(draftData.vendor && {
+          vendorId: draftData.vendor.id,
+          vendorName: draftData.vendor.name,
+          vendorEmail: draftData.vendor.email,
         }),
-        ...(vendorSuggestion?.lastPurchasePrice && {
-          lastPurchasePrice: vendorSuggestion.lastPurchasePrice,
-        }),
-        // Flag if no vendor is selected and none was suggested
-        needsVendorSelection: !selectedVendor && !vendorSuggestion?.suggestedVendor && !vendorSuggestion?.preferredVendor,
+        // Quantity and date from editing
+        quantity: editingQuantity ? parseFloat(editingQuantity) : draftData.quantity,
+        unit: draftData.unit,
+        requiredDate: editingDate || (draftData.requiredDate ? draftData.requiredDate.toISOString() : null),
+        estimatedPrice: draftData.estimatedPrice,
+        needsVendorSelection: !draftData.vendor,
       };
       
       await createTask.mutateAsync({
-        taskType: taskType,
+        taskType: draftData.taskType,
         priority: "medium",
         taskData: JSON.stringify(taskDataWithVendor)
       });
+      setShowDraftPreview(false);
+      setDraftData(null);
     } catch (error) {
       // Error handled by mutation onError
     }
-  }, [context, aiQuery, createTask, vendorSuggestion]);
+  }, [draftData, context, createTask, editingQuantity, editingDate]);
 
   const filteredActions = quickActions.filter(action => 
     !context || action.context.some(c => context.type.toLowerCase().includes(c))
@@ -825,6 +883,197 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
                   }}
                 >
                   <X className="h-4 w-4 mr-1" /> New Task
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* Draft Preview Panel */}
+          {showDraftPreview && draftData && !isLoading && !taskCreated && (
+            <div className="p-4 space-y-4">
+              <div className="flex items-center gap-2 mb-3">
+                <FileText className="h-5 w-5 text-blue-600" />
+                <h3 className="font-semibold text-lg">Review Draft {draftData.taskType === 'generate_po' ? 'Purchase Order' : draftData.taskType === 'send_rfq' ? 'RFQ' : 'Task'}</h3>
+              </div>
+              
+              <div className="bg-slate-50 rounded-lg p-4 space-y-4">
+                {/* Material Selection */}
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-700 flex items-center gap-2">
+                    <Package className="h-4 w-4" /> Material
+                    {!draftData.material && <span className="text-red-500 text-xs">* Required</span>}
+                  </label>
+                  {draftData.material ? (
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 px-3 py-2 bg-white border rounded-md">
+                        <span className="font-medium">{draftData.material.name}</span>
+                        {draftData.material.sku && <span className="text-muted-foreground ml-2">({draftData.material.sku})</span>}
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                          setDraftData({ ...draftData, material: null });
+                          setShowMaterialDropdown(true);
+                          setMaterialSearch("");
+                        }}
+                      >
+                        Change
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="relative">
+                      <Input
+                        placeholder="Search for a material..."
+                        value={materialSearch}
+                        onChange={(e) => {
+                          setMaterialSearch(e.target.value);
+                          setShowMaterialDropdown(true);
+                        }}
+                        onFocus={() => setShowMaterialDropdown(true)}
+                        className="bg-white"
+                      />
+                      {showMaterialDropdown && filteredMaterials.length > 0 && (
+                        <div className="absolute z-50 w-full mt-1 bg-white border rounded-md shadow-lg max-h-48 overflow-auto">
+                          {filteredMaterials.map((m) => (
+                            <button
+                              key={m.id}
+                              className="w-full px-3 py-2 text-left hover:bg-slate-100 flex items-center justify-between"
+                              onClick={() => {
+                                setDraftData({ 
+                                  ...draftData, 
+                                  material: { id: m.id, name: m.name, sku: m.sku || null, unit: m.unit || null },
+                                  unit: m.unit || draftData.unit
+                                });
+                                setShowMaterialDropdown(false);
+                                setMaterialSearch("");
+                              }}
+                            >
+                              <span>{m.name}</span>
+                              {m.sku && <span className="text-xs text-muted-foreground">{m.sku}</span>}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {showMaterialDropdown && materialSearch.length > 0 && filteredMaterials.length === 0 && (
+                        <div className="absolute z-50 w-full mt-1 bg-white border rounded-md shadow-lg p-3 text-sm text-muted-foreground">
+                          No materials found matching "{materialSearch}"
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Vendor Selection */}
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-700 flex items-center gap-2">
+                    <Building className="h-4 w-4" /> Vendor
+                    {!draftData.vendor && <span className="text-amber-500 text-xs">(Optional - can be assigned later)</span>}
+                  </label>
+                  <select
+                    value={draftData.vendor?.id || ''}
+                    onChange={(e) => {
+                      const vendorId = e.target.value ? Number(e.target.value) : null;
+                      const vendor = vendorId ? vendorsQuery.data?.find(v => v.id === vendorId) : null;
+                      setDraftData({
+                        ...draftData,
+                        vendor: vendor ? { id: vendor.id, name: vendor.name, email: vendor.email || null } : null
+                      });
+                    }}
+                    className="w-full px-3 py-2 border rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">Select a vendor (optional)...</option>
+                    {vendorsQuery.data?.map((vendor) => (
+                      <option key={vendor.id} value={vendor.id}>
+                        {vendor.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Quantity */}
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-700 flex items-center gap-2">
+                    <ClipboardList className="h-4 w-4" /> Quantity
+                    {!editingQuantity && <span className="text-red-500 text-xs">* Required</span>}
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="number"
+                      placeholder="Enter quantity"
+                      value={editingQuantity}
+                      onChange={(e) => setEditingQuantity(e.target.value)}
+                      className="bg-white flex-1"
+                    />
+                    <span className="text-sm text-muted-foreground w-20">
+                      {draftData.unit || 'units'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Required Date */}
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-700 flex items-center gap-2">
+                    <Clock className="h-4 w-4" /> Required By
+                    <span className="text-muted-foreground text-xs">(Optional)</span>
+                  </label>
+                  <Input
+                    type="date"
+                    value={editingDate}
+                    onChange={(e) => setEditingDate(e.target.value)}
+                    className="bg-white"
+                  />
+                </div>
+
+                {/* Estimated Price */}
+                {draftData.estimatedPrice && (
+                  <div className="pt-2 border-t">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Estimated Total:</span>
+                      <span className="font-semibold text-lg">${draftData.estimatedPrice.toFixed(2)}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Validation Messages */}
+              {(!draftData.material || !editingQuantity) && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="h-5 w-5 text-amber-600 mt-0.5" />
+                    <div className="text-sm">
+                      <p className="font-medium text-amber-800">Missing required information:</p>
+                      <ul className="mt-1 text-amber-700 list-disc list-inside">
+                        {!draftData.material && <li>Please select a material</li>}
+                        {!editingQuantity && <li>Please enter a quantity</li>}
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div className="flex gap-2 pt-2">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setShowDraftPreview(false);
+                    setDraftData(null);
+                    setShowSuggestions(true);
+                  }}
+                >
+                  <X className="h-4 w-4 mr-1" /> Cancel
+                </Button>
+                <Button
+                  onClick={handleSubmitDraft}
+                  disabled={!draftData.material || !editingQuantity || isLoading}
+                  className="flex-1"
+                >
+                  {isLoading ? (
+                    <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Submitting...</>
+                  ) : (
+                    <><Send className="h-4 w-4 mr-2" /> Submit for Approval</>
+                  )}
                 </Button>
               </div>
             </div>

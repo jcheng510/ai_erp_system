@@ -653,3 +653,9 @@
 - [x] Allow vendor selection when no preferred vendor is found for a material
 - [x] Add vendor dropdown to AI Command Bar for PO generation
 - [x] Allow proceeding with draft PO even without vendor selection
+
+## AI Command Bar Enhancements
+- [x] Add material autocomplete with search-as-you-type
+- [x] Prompt user for missing required information (quantity, vendor, date)
+- [x] Show draft preview of PO/RFQ before submitting for approval
+- [x] Allow editing draft before final submission
