@@ -2576,3 +2576,92 @@ export const ndaSignatureAuditLog = mysqlTable("nda_signature_audit_log", {
 
 export type NdaSignatureAuditLog = typeof ndaSignatureAuditLog.$inferSelect;
 export type InsertNdaSignatureAuditLog = typeof ndaSignatureAuditLog.$inferInsert;
+
+
+// ============================================
+// RECURRING INVOICES
+// ============================================
+
+export const recurringInvoiceFrequency = mysqlEnum("recurringInvoiceFrequency", [
+  "weekly",
+  "biweekly", 
+  "monthly",
+  "quarterly",
+  "annually",
+]);
+
+export const recurringInvoices = mysqlTable("recurringInvoices", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  customerId: int("customerId").notNull(),
+  
+  // Template info
+  templateName: varchar("templateName", { length: 255 }).notNull(),
+  description: text("description"),
+  
+  // Scheduling
+  frequency: recurringInvoiceFrequency.notNull(),
+  dayOfWeek: int("dayOfWeek"), // 0-6 for weekly
+  dayOfMonth: int("dayOfMonth"), // 1-31 for monthly
+  startDate: timestamp("startDate").notNull(),
+  endDate: timestamp("endDate"), // null = no end
+  nextGenerationDate: timestamp("nextGenerationDate").notNull(),
+  
+  // Invoice template data
+  currency: varchar("currency", { length: 3 }).default("USD").notNull(),
+  subtotal: decimal("subtotal", { precision: 12, scale: 2 }).default("0").notNull(),
+  taxRate: decimal("taxRate", { precision: 5, scale: 2 }),
+  taxAmount: decimal("taxAmount", { precision: 12, scale: 2 }).default("0"),
+  discountPercent: decimal("discountPercent", { precision: 5, scale: 2 }),
+  discountAmount: decimal("discountAmount", { precision: 12, scale: 2 }).default("0"),
+  totalAmount: decimal("totalAmount", { precision: 12, scale: 2 }).default("0").notNull(),
+  
+  // Settings
+  autoSend: boolean("autoSend").default(false).notNull(),
+  daysUntilDue: int("daysUntilDue").default(30).notNull(),
+  notes: text("notes"),
+  terms: text("terms"),
+  
+  // Status
+  isActive: boolean("isActive").default(true).notNull(),
+  lastGeneratedAt: timestamp("lastGeneratedAt"),
+  generationCount: int("generationCount").default(0).notNull(),
+  
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type RecurringInvoice = typeof recurringInvoices.$inferSelect;
+export type InsertRecurringInvoice = typeof recurringInvoices.$inferInsert;
+
+// Line items for recurring invoice template
+export const recurringInvoiceItems = mysqlTable("recurringInvoiceItems", {
+  id: int("id").autoincrement().primaryKey(),
+  recurringInvoiceId: int("recurringInvoiceId").notNull(),
+  productId: int("productId"),
+  description: varchar("description", { length: 500 }).notNull(),
+  quantity: decimal("quantity", { precision: 10, scale: 2 }).default("1").notNull(),
+  unitPrice: decimal("unitPrice", { precision: 12, scale: 2 }).default("0").notNull(),
+  taxRate: decimal("taxRate", { precision: 5, scale: 2 }),
+  taxAmount: decimal("taxAmount", { precision: 12, scale: 2 }),
+  discountPercent: decimal("discountPercent", { precision: 5, scale: 2 }),
+  totalAmount: decimal("totalAmount", { precision: 12, scale: 2 }).default("0").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type RecurringInvoiceItem = typeof recurringInvoiceItems.$inferSelect;
+export type InsertRecurringInvoiceItem = typeof recurringInvoiceItems.$inferInsert;
+
+// Track generated invoices from recurring templates
+export const recurringInvoiceHistory = mysqlTable("recurringInvoiceHistory", {
+  id: int("id").autoincrement().primaryKey(),
+  recurringInvoiceId: int("recurringInvoiceId").notNull(),
+  generatedInvoiceId: int("generatedInvoiceId").notNull(),
+  generatedAt: timestamp("generatedAt").defaultNow().notNull(),
+  scheduledFor: timestamp("scheduledFor").notNull(),
+  status: mysqlEnum("status", ["generated", "sent", "failed"]).default("generated").notNull(),
+  errorMessage: text("errorMessage"),
+});
+
+export type RecurringInvoiceHistory = typeof recurringInvoiceHistory.$inferSelect;

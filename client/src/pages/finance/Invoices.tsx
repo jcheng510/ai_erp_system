@@ -30,7 +30,19 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { FileText, Plus, Search, Loader2, Trash2, Mail, Send } from "lucide-react";
+import { FileText, Plus, Search, Loader2, Trash2, Mail, Send, Download, DollarSign, RefreshCw, Calendar, MoreHorizontal } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { format } from "date-fns";
 
@@ -59,6 +71,24 @@ export default function Invoices() {
   const [isEmailDialogOpen, setIsEmailDialogOpen] = useState(false);
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<number | null>(null);
   const [emailMessage, setEmailMessage] = useState("");
+  const [isPaymentDialogOpen, setIsPaymentDialogOpen] = useState(false);
+  const [isRecurringDialogOpen, setIsRecurringDialogOpen] = useState(false);
+  const [paymentData, setPaymentData] = useState({
+    amount: "",
+    paymentMethod: "bank_transfer" as const,
+    notes: "",
+  });
+  const [recurringData, setRecurringData] = useState({
+    customerId: 0,
+    templateName: "",
+    frequency: "monthly" as const,
+    dayOfMonth: 1,
+    startDate: "",
+    autoSend: false,
+    daysUntilDue: 30,
+  });
+  const [recurringLineItems, setRecurringLineItems] = useState<LineItem[]>([]);
+  const [activeTab, setActiveTab] = useState("invoices");
   const [formData, setFormData] = useState({
     customerId: 0,
     dueDate: "",
@@ -76,6 +106,77 @@ export default function Invoices() {
       setIsOpen(false);
       resetForm();
       refetch();
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const { data: recurringInvoices, refetch: refetchRecurring } = trpc.recurringInvoices.list.useQuery();
+
+  const generatePdf = trpc.invoices.generatePdf.useMutation({
+    onSuccess: (data) => {
+      // Download the PDF
+      const link = document.createElement('a');
+      link.href = `data:application/pdf;base64,${data.pdf}`;
+      link.download = data.filename;
+      link.click();
+      toast.success("PDF downloaded");
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const recordPayment = trpc.invoices.recordPayment.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Payment recorded. Invoice status: ${data.newStatus}`);
+      setIsPaymentDialogOpen(false);
+      setPaymentData({ amount: "", paymentMethod: "bank_transfer", notes: "" });
+      setSelectedInvoiceId(null);
+      refetch();
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const createRecurringInvoice = trpc.recurringInvoices.create.useMutation({
+    onSuccess: () => {
+      toast.success("Recurring invoice created");
+      setIsRecurringDialogOpen(false);
+      setRecurringData({
+        customerId: 0,
+        templateName: "",
+        frequency: "monthly",
+        dayOfMonth: 1,
+        startDate: "",
+        autoSend: false,
+        daysUntilDue: 30,
+      });
+      setRecurringLineItems([]);
+      refetchRecurring();
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const generateNow = trpc.recurringInvoices.generateNow.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Invoice ${data.invoiceNumber} generated`);
+      refetch();
+      refetchRecurring();
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const toggleRecurringActive = trpc.recurringInvoices.toggleActive.useMutation({
+    onSuccess: () => {
+      toast.success("Recurring invoice updated");
+      refetchRecurring();
     },
     onError: (error) => {
       toast.error(error.message);
@@ -206,6 +307,53 @@ export default function Invoices() {
     });
   };
 
+  const openPaymentDialog = (invoiceId: number, totalAmount: string, paidAmount: string | null) => {
+    const remaining = parseFloat(totalAmount) - parseFloat(paidAmount || "0");
+    setSelectedInvoiceId(invoiceId);
+    setPaymentData({ ...paymentData, amount: remaining.toFixed(2) });
+    setIsPaymentDialogOpen(true);
+  };
+
+  const handleRecordPayment = () => {
+    if (!selectedInvoiceId || !paymentData.amount) return;
+    recordPayment.mutate({
+      invoiceId: selectedInvoiceId,
+      amount: paymentData.amount,
+      paymentMethod: paymentData.paymentMethod,
+      notes: paymentData.notes,
+    });
+  };
+
+  const handleCreateRecurring = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!recurringData.customerId || !recurringData.templateName || recurringLineItems.length === 0) {
+      toast.error("Please fill all required fields and add at least one line item");
+      return;
+    }
+    createRecurringInvoice.mutate({
+      ...recurringData,
+      startDate: new Date(recurringData.startDate),
+      items: recurringLineItems.map(item => ({
+        productId: item.productId,
+        description: item.description,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        taxRate: item.taxRate,
+      })),
+    });
+  };
+
+  const addRecurringLineItem = () => {
+    setRecurringLineItems([...recurringLineItems, {
+      description: "",
+      quantity: "1",
+      unitPrice: "0",
+      taxRate: "0",
+      taxAmount: "0",
+      totalAmount: "0",
+    }]);
+  };
+
   const handleSendEmail = () => {
     if (!selectedInvoiceId) return;
     sendInvoiceEmail.mutate({
@@ -233,13 +381,18 @@ export default function Invoices() {
             Manage customer invoices and track payments.
           </p>
         </div>
-        <Dialog open={isOpen} onOpenChange={setIsOpen}>
-          <DialogTrigger asChild>
-            <Button>
-              <Plus className="h-4 w-4 mr-2" />
-              Create Invoice
-            </Button>
-          </DialogTrigger>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => setIsRecurringDialogOpen(true)}>
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Recurring
+          </Button>
+          <Dialog open={isOpen} onOpenChange={setIsOpen}>
+            <DialogTrigger asChild>
+              <Button>
+                <Plus className="h-4 w-4 mr-2" />
+                Create Invoice
+              </Button>
+            </DialogTrigger>
           <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
             <form onSubmit={handleSubmit}>
               <DialogHeader>
@@ -426,6 +579,7 @@ export default function Invoices() {
             </form>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       {/* Email Dialog */}
@@ -461,6 +615,232 @@ export default function Invoices() {
               Send Invoice
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Payment Dialog */}
+      <Dialog open={isPaymentDialogOpen} onOpenChange={setIsPaymentDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Record Payment</DialogTitle>
+            <DialogDescription>
+              Record a payment received for this invoice.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Payment Amount</Label>
+              <Input
+                type="number"
+                step="0.01"
+                value={paymentData.amount}
+                onChange={(e) => setPaymentData({ ...paymentData, amount: e.target.value })}
+                placeholder="0.00"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Payment Method</Label>
+              <Select 
+                value={paymentData.paymentMethod} 
+                onValueChange={(v: any) => setPaymentData({ ...paymentData, paymentMethod: v })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
+                  <SelectItem value="credit_card">Credit Card</SelectItem>
+                  <SelectItem value="check">Check</SelectItem>
+                  <SelectItem value="cash">Cash</SelectItem>
+                  <SelectItem value="other">Other</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Notes (Optional)</Label>
+              <Textarea
+                value={paymentData.notes}
+                onChange={(e) => setPaymentData({ ...paymentData, notes: e.target.value })}
+                placeholder="Payment reference or notes..."
+                rows={2}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsPaymentDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleRecordPayment} disabled={recordPayment.isPending}>
+              {recordPayment.isPending ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <DollarSign className="h-4 w-4 mr-2" />
+              )}
+              Record Payment
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Recurring Invoice Dialog */}
+      <Dialog open={isRecurringDialogOpen} onOpenChange={setIsRecurringDialogOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Create Recurring Invoice</DialogTitle>
+            <DialogDescription>
+              Set up automatic invoice generation on a schedule.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleCreateRecurring}>
+            <div className="space-y-4 py-4 max-h-[60vh] overflow-y-auto">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Template Name *</Label>
+                  <Input
+                    value={recurringData.templateName}
+                    onChange={(e) => setRecurringData({ ...recurringData, templateName: e.target.value })}
+                    placeholder="Monthly Subscription"
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Customer *</Label>
+                  <Select 
+                    value={recurringData.customerId?.toString() || ""} 
+                    onValueChange={(v) => setRecurringData({ ...recurringData, customerId: parseInt(v) })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select customer" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {customers?.map((c) => (
+                        <SelectItem key={c.id} value={c.id.toString()}>{c.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-4">
+                <div className="space-y-2">
+                  <Label>Frequency *</Label>
+                  <Select 
+                    value={recurringData.frequency} 
+                    onValueChange={(v: any) => setRecurringData({ ...recurringData, frequency: v })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="weekly">Weekly</SelectItem>
+                      <SelectItem value="biweekly">Bi-weekly</SelectItem>
+                      <SelectItem value="monthly">Monthly</SelectItem>
+                      <SelectItem value="quarterly">Quarterly</SelectItem>
+                      <SelectItem value="annually">Annually</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Day of Month</Label>
+                  <Input
+                    type="number"
+                    min="1"
+                    max="31"
+                    value={recurringData.dayOfMonth}
+                    onChange={(e) => setRecurringData({ ...recurringData, dayOfMonth: parseInt(e.target.value) })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Start Date *</Label>
+                  <Input
+                    type="date"
+                    value={recurringData.startDate}
+                    onChange={(e) => setRecurringData({ ...recurringData, startDate: e.target.value })}
+                    required
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Days Until Due</Label>
+                  <Input
+                    type="number"
+                    value={recurringData.daysUntilDue}
+                    onChange={(e) => setRecurringData({ ...recurringData, daysUntilDue: parseInt(e.target.value) })}
+                  />
+                </div>
+                <div className="flex items-center gap-2 pt-6">
+                  <input
+                    type="checkbox"
+                    checked={recurringData.autoSend}
+                    onChange={(e) => setRecurringData({ ...recurringData, autoSend: e.target.checked })}
+                    className="h-4 w-4"
+                  />
+                  <Label>Auto-send to customer</Label>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <Label>Line Items</Label>
+                  <Button type="button" variant="outline" size="sm" onClick={addRecurringLineItem}>
+                    <Plus className="h-4 w-4 mr-1" /> Add Item
+                  </Button>
+                </div>
+                {recurringLineItems.map((item, idx) => (
+                  <div key={idx} className="flex gap-2 items-center">
+                    <Input
+                      placeholder="Description"
+                      value={item.description}
+                      onChange={(e) => {
+                        const updated = [...recurringLineItems];
+                        updated[idx].description = e.target.value;
+                        setRecurringLineItems(updated);
+                      }}
+                      className="flex-1"
+                    />
+                    <Input
+                      type="number"
+                      placeholder="Qty"
+                      value={item.quantity}
+                      onChange={(e) => {
+                        const updated = [...recurringLineItems];
+                        updated[idx].quantity = e.target.value;
+                        setRecurringLineItems(updated);
+                      }}
+                      className="w-20"
+                    />
+                    <Input
+                      type="number"
+                      placeholder="Price"
+                      value={item.unitPrice}
+                      onChange={(e) => {
+                        const updated = [...recurringLineItems];
+                        updated[idx].unitPrice = e.target.value;
+                        setRecurringLineItems(updated);
+                      }}
+                      className="w-24"
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setRecurringLineItems(recurringLineItems.filter((_, i) => i !== idx))}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setIsRecurringDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={createRecurringInvoice.isPending}>
+                {createRecurringInvoice.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                Create Recurring Invoice
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
 
@@ -531,15 +911,33 @@ export default function Invoices() {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => openEmailDialog(invoice.id)}
-                        disabled={invoice.status === "paid" || invoice.status === "cancelled"}
-                      >
-                        <Mail className="h-4 w-4 mr-1" />
-                        Email
-                      </Button>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="sm">
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => generatePdf.mutate({ invoiceId: invoice.id })}>
+                            <Download className="h-4 w-4 mr-2" />
+                            Download PDF
+                          </DropdownMenuItem>
+                          <DropdownMenuItem 
+                            onClick={() => openEmailDialog(invoice.id)}
+                            disabled={invoice.status === "paid" || invoice.status === "cancelled"}
+                          >
+                            <Mail className="h-4 w-4 mr-2" />
+                            Email Invoice
+                          </DropdownMenuItem>
+                          <DropdownMenuItem 
+                            onClick={() => openPaymentDialog(invoice.id, invoice.totalAmount, invoice.paidAmount)}
+                            disabled={invoice.status === "paid" || invoice.status === "cancelled"}
+                          >
+                            <DollarSign className="h-4 w-4 mr-2" />
+                            Record Payment
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </TableCell>
                   </TableRow>
                 ))}

@@ -44,6 +44,8 @@ import {
   imapCredentials,
   // Email credentials and scheduled scans
   emailCredentials, scheduledEmailScans, emailScanLogs,
+  // Recurring invoices
+  recurringInvoices, recurringInvoiceItems, recurringInvoiceHistory,
   InsertCompany, InsertCustomer, InsertVendor, InsertProduct,
   InsertAccount, InsertInvoice, InsertPayment, InsertTransaction,
   InsertOrder, InsertInventory, InsertPurchaseOrder, InsertWarehouse,
@@ -5714,4 +5716,128 @@ export async function getDataRoomVisitorByEmail(dataRoomId: number, email: strin
 export async function isEmailInvitedToDataRoom(dataRoomId: number, email: string): Promise<boolean> {
   const invitation = await getDataRoomInvitationByEmail(dataRoomId, email);
   return invitation !== null && (invitation.status === 'pending' || invitation.status === 'accepted');
+}
+
+
+// ============================================
+// RECURRING INVOICES
+// ============================================
+
+export async function getRecurringInvoices(filters?: { companyId?: number; customerId?: number; isActive?: boolean }) {
+  const db = await getDb();
+  if (!db) return [];
+  
+  const conditions = [];
+  if (filters?.companyId) conditions.push(eq(recurringInvoices.companyId, filters.companyId));
+  if (filters?.customerId) conditions.push(eq(recurringInvoices.customerId, filters.customerId));
+  if (filters?.isActive !== undefined) conditions.push(eq(recurringInvoices.isActive, filters.isActive));
+  
+  const baseQuery = db.select({
+    id: recurringInvoices.id,
+    companyId: recurringInvoices.companyId,
+    customerId: recurringInvoices.customerId,
+    templateName: recurringInvoices.templateName,
+    description: recurringInvoices.description,
+    frequency: recurringInvoices.frequency,
+    dayOfWeek: recurringInvoices.dayOfWeek,
+    dayOfMonth: recurringInvoices.dayOfMonth,
+    startDate: recurringInvoices.startDate,
+    endDate: recurringInvoices.endDate,
+    nextGenerationDate: recurringInvoices.nextGenerationDate,
+    currency: recurringInvoices.currency,
+    subtotal: recurringInvoices.subtotal,
+    taxAmount: recurringInvoices.taxAmount,
+    discountAmount: recurringInvoices.discountAmount,
+    totalAmount: recurringInvoices.totalAmount,
+    autoSend: recurringInvoices.autoSend,
+    daysUntilDue: recurringInvoices.daysUntilDue,
+    isActive: recurringInvoices.isActive,
+    lastGeneratedAt: recurringInvoices.lastGeneratedAt,
+    generationCount: recurringInvoices.generationCount,
+    createdAt: recurringInvoices.createdAt,
+    customer: {
+      id: customers.id,
+      name: customers.name,
+      email: customers.email,
+    },
+  }).from(recurringInvoices).leftJoin(customers, eq(recurringInvoices.customerId, customers.id));
+  
+  if (conditions.length > 0) {
+    return baseQuery.where(and(...conditions)).orderBy(desc(recurringInvoices.nextGenerationDate));
+  }
+  return baseQuery.orderBy(desc(recurringInvoices.nextGenerationDate));
+}
+
+export async function getRecurringInvoiceById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(recurringInvoices).where(eq(recurringInvoices.id, id)).limit(1);
+  return result[0];
+}
+
+export async function getRecurringInvoiceWithItems(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  
+  const invoice = await getRecurringInvoiceById(id);
+  if (!invoice) return undefined;
+  
+  const items = await db.select().from(recurringInvoiceItems).where(eq(recurringInvoiceItems.recurringInvoiceId, id));
+  return { ...invoice, items };
+}
+
+export async function createRecurringInvoice(data: typeof recurringInvoices.$inferInsert) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(recurringInvoices).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateRecurringInvoice(id: number, data: Partial<typeof recurringInvoices.$inferInsert>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(recurringInvoices).set(data).where(eq(recurringInvoices.id, id));
+}
+
+export async function createRecurringInvoiceItem(data: typeof recurringInvoiceItems.$inferInsert) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(recurringInvoiceItems).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function deleteRecurringInvoiceItems(recurringInvoiceId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(recurringInvoiceItems).where(eq(recurringInvoiceItems.recurringInvoiceId, recurringInvoiceId));
+}
+
+export async function getRecurringInvoicesDueForGeneration() {
+  const db = await getDb();
+  if (!db) return [];
+  
+  const now = new Date();
+  return db.select()
+    .from(recurringInvoices)
+    .where(and(
+      eq(recurringInvoices.isActive, true),
+      lte(recurringInvoices.nextGenerationDate, now)
+    ))
+    .orderBy(recurringInvoices.nextGenerationDate);
+}
+
+export async function createRecurringInvoiceHistory(data: typeof recurringInvoiceHistory.$inferInsert) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(recurringInvoiceHistory).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getRecurringInvoiceHistory(recurringInvoiceId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select()
+    .from(recurringInvoiceHistory)
+    .where(eq(recurringInvoiceHistory.recurringInvoiceId, recurringInvoiceId))
+    .orderBy(desc(recurringInvoiceHistory.generatedAt));
 }

@@ -141,6 +141,13 @@
       "when": 1768193550922,
       "tag": "0019_wooden_madelyne_pryor",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "5",
+      "when": 1768201120737,
+      "tag": "0020_same_makkari",
+      "breakpoints": true
     }
   ]
 }

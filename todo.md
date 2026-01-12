@@ -471,3 +471,13 @@
 - [x] Calculate invoice totals from selected products
 - [x] Add email invoice to customer functionality
 - [x] Remove Products from Operations menu
+
+
+## Invoice Enhancements
+- [x] PDF invoice generation with company branding
+- [x] Attach PDF to invoice emails
+- [x] Quick payment recording from invoice view
+- [x] Mark invoice as paid when payment recorded
+- [x] Recurring invoice templates
+- [x] Auto-generate invoices on schedule (weekly/monthly)
+- [x] Recurring invoice management UI

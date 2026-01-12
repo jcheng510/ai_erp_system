@@ -632,6 +632,93 @@ export const appRouter = router({
         
         return { success: true };
       }),
+    generatePdf: financeProcedure
+      .input(z.object({ invoiceId: z.number() }))
+      .mutation(async ({ input }) => {
+        const invoice = await db.getInvoiceWithItems(input.invoiceId);
+        if (!invoice) throw new TRPCError({ code: 'NOT_FOUND', message: 'Invoice not found' });
+        
+        const { generateInvoicePdf, getDefaultCompanyInfo } = await import('./_core/invoicePdf');
+        const company = getDefaultCompanyInfo();
+        
+        const pdfBuffer = await generateInvoicePdf({
+          invoiceNumber: invoice.invoiceNumber,
+          issueDate: invoice.issueDate,
+          dueDate: invoice.dueDate,
+          customer: {
+            name: invoice.customer?.name || 'Customer',
+            email: invoice.customer?.email,
+          },
+          items: invoice.items.map((item: any) => ({
+            description: item.description,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            taxRate: item.taxRate,
+            taxAmount: item.taxAmount,
+            totalAmount: item.totalAmount,
+          })),
+          subtotal: invoice.subtotal,
+          taxAmount: invoice.taxAmount,
+          discountAmount: invoice.discountAmount,
+          totalAmount: invoice.totalAmount,
+          notes: invoice.notes,
+          terms: invoice.terms,
+          currency: invoice.currency || 'USD',
+        }, company);
+        
+        // Return base64 encoded PDF
+        return { 
+          pdf: pdfBuffer.toString('base64'),
+          filename: `invoice-${invoice.invoiceNumber}.pdf`,
+        };
+      }),
+    recordPayment: financeProcedure
+      .input(z.object({
+        invoiceId: z.number(),
+        amount: z.string(),
+        paymentMethod: z.enum(['cash', 'check', 'bank_transfer', 'credit_card', 'other']).default('bank_transfer'),
+        reference: z.string().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const invoice = await db.getInvoiceById(input.invoiceId);
+        if (!invoice) throw new TRPCError({ code: 'NOT_FOUND', message: 'Invoice not found' });
+        
+        // Create payment record
+        const paymentResult = await db.createPayment({
+          companyId: invoice.companyId,
+          type: 'received',
+          status: 'completed',
+          amount: input.amount,
+          currency: invoice.currency || 'USD',
+          paymentMethod: input.paymentMethod,
+          paymentNumber: `PAY-${Date.now()}`,
+          paymentDate: new Date(),
+          invoiceId: input.invoiceId,
+          notes: input.notes || `Payment received for invoice ${invoice.invoiceNumber}`,
+        });
+        
+        // Update invoice paid amount and status
+        const currentPaid = parseFloat(invoice.paidAmount || '0');
+        const newPayment = parseFloat(input.amount);
+        const totalPaid = currentPaid + newPayment;
+        const totalDue = parseFloat(invoice.totalAmount);
+        
+        const newStatus = totalPaid >= totalDue ? 'paid' : 'partial';
+        await db.updateInvoice(input.invoiceId, {
+          paidAmount: totalPaid.toString(),
+          status: newStatus,
+        });
+        
+        await createAuditLog(ctx.user.id, 'update', 'invoice', input.invoiceId, `Payment recorded: ${input.amount}`);
+        
+        return { 
+          success: true, 
+          paymentId: paymentResult.id,
+          newStatus,
+          totalPaid: totalPaid.toString(),
+        };
+      }),
   }),
 
   // ============================================
@@ -6821,7 +6908,237 @@ Provide your forecast in JSON format with the following structure:
         }),
     }),
   }),
+
+  // ============================================
+  // RECURRING INVOICES
+  // ============================================
+  recurringInvoices: router({
+    list: financeProcedure
+      .input(z.object({
+        customerId: z.number().optional(),
+        isActive: z.boolean().optional(),
+      }).optional())
+      .query(async ({ input }) => {
+        return db.getRecurringInvoices(input);
+      }),
+    getById: financeProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        return db.getRecurringInvoiceWithItems(input.id);
+      }),
+    create: financeProcedure
+      .input(z.object({
+        customerId: z.number(),
+        templateName: z.string(),
+        description: z.string().optional(),
+        frequency: z.enum(['weekly', 'biweekly', 'monthly', 'quarterly', 'annually']),
+        dayOfWeek: z.number().min(0).max(6).optional(),
+        dayOfMonth: z.number().min(1).max(31).optional(),
+        startDate: z.date(),
+        endDate: z.date().optional(),
+        currency: z.string().default('USD'),
+        autoSend: z.boolean().default(false),
+        daysUntilDue: z.number().default(30),
+        notes: z.string().optional(),
+        terms: z.string().optional(),
+        items: z.array(z.object({
+          productId: z.number().optional(),
+          description: z.string(),
+          quantity: z.string(),
+          unitPrice: z.string(),
+          taxRate: z.string().optional(),
+        })),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { items, ...invoiceData } = input;
+        
+        // Calculate totals
+        let subtotal = 0;
+        let taxAmount = 0;
+        const processedItems = items.map(item => {
+          const qty = parseFloat(item.quantity) || 0;
+          const price = parseFloat(item.unitPrice) || 0;
+          const lineTotal = qty * price;
+          const lineTax = item.taxRate ? lineTotal * (parseFloat(item.taxRate) / 100) : 0;
+          subtotal += lineTotal;
+          taxAmount += lineTax;
+          return { ...item, totalAmount: (lineTotal + lineTax).toString(), taxAmount: lineTax.toString() };
+        });
+        
+        const totalAmount = subtotal + taxAmount;
+        
+        // Calculate next generation date
+        const nextGenerationDate = new Date(input.startDate);
+        
+        const result = await db.createRecurringInvoice({
+          ...invoiceData,
+          subtotal: subtotal.toString(),
+          taxAmount: taxAmount.toString(),
+          totalAmount: totalAmount.toString(),
+          nextGenerationDate,
+          createdBy: ctx.user.id,
+        });
+        
+        // Create line items
+        for (const item of processedItems) {
+          await db.createRecurringInvoiceItem({
+            recurringInvoiceId: result.id,
+            productId: item.productId,
+            description: item.description,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            taxRate: item.taxRate,
+            taxAmount: item.taxAmount,
+            totalAmount: item.totalAmount,
+          });
+        }
+        
+        await createAuditLog(ctx.user.id, 'create', 'recurring_invoice', result.id, input.templateName);
+        return result;
+      }),
+    update: financeProcedure
+      .input(z.object({
+        id: z.number(),
+        templateName: z.string().optional(),
+        description: z.string().optional(),
+        frequency: z.enum(['weekly', 'biweekly', 'monthly', 'quarterly', 'annually']).optional(),
+        dayOfWeek: z.number().min(0).max(6).optional(),
+        dayOfMonth: z.number().min(1).max(31).optional(),
+        endDate: z.date().optional(),
+        autoSend: z.boolean().optional(),
+        daysUntilDue: z.number().optional(),
+        notes: z.string().optional(),
+        terms: z.string().optional(),
+        isActive: z.boolean().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { id, ...data } = input;
+        await db.updateRecurringInvoice(id, data);
+        await createAuditLog(ctx.user.id, 'update', 'recurring_invoice', id);
+        return { success: true };
+      }),
+    generateNow: financeProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const recurring = await db.getRecurringInvoiceWithItems(input.id);
+        if (!recurring) throw new TRPCError({ code: 'NOT_FOUND', message: 'Recurring invoice not found' });
+        
+        // Generate invoice number
+        const invoiceNumber = `INV-${Date.now()}`;
+        const issueDate = new Date();
+        const dueDate = new Date();
+        dueDate.setDate(dueDate.getDate() + (recurring.daysUntilDue || 30));
+        
+        // Create the invoice
+        const invoiceResult = await db.createInvoice({
+          companyId: recurring.companyId,
+          customerId: recurring.customerId,
+          invoiceNumber,
+          type: 'invoice',
+          status: 'draft',
+          issueDate,
+          dueDate,
+          subtotal: recurring.subtotal,
+          taxAmount: recurring.taxAmount,
+          discountAmount: recurring.discountAmount,
+          totalAmount: recurring.totalAmount,
+          currency: recurring.currency,
+          notes: recurring.notes,
+          terms: recurring.terms,
+          createdBy: ctx.user.id,
+        });
+        
+        // Create invoice items
+        for (const item of recurring.items || []) {
+          await db.createInvoiceItem({
+            invoiceId: invoiceResult.id,
+            productId: item.productId,
+            description: item.description,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            taxRate: item.taxRate,
+            taxAmount: item.taxAmount,
+            totalAmount: item.totalAmount,
+          });
+        }
+        
+        // Update recurring invoice
+        const nextDate = calculateNextGenerationDate(recurring.frequency, recurring.dayOfWeek, recurring.dayOfMonth);
+        await db.updateRecurringInvoice(input.id, {
+          lastGeneratedAt: new Date(),
+          nextGenerationDate: nextDate,
+          generationCount: (recurring.generationCount || 0) + 1,
+        });
+        
+        // Record history
+        await db.createRecurringInvoiceHistory({
+          recurringInvoiceId: input.id,
+          generatedInvoiceId: invoiceResult.id,
+          scheduledFor: issueDate,
+          status: 'generated',
+        });
+        
+        await createAuditLog(ctx.user.id, 'create', 'invoice', invoiceResult.id, `Generated from recurring: ${recurring.templateName}`);
+        
+        return { invoiceId: invoiceResult.id, invoiceNumber };
+      }),
+    history: financeProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        return db.getRecurringInvoiceHistory(input.id);
+      }),
+    toggleActive: financeProcedure
+      .input(z.object({ id: z.number(), isActive: z.boolean() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.updateRecurringInvoice(input.id, { isActive: input.isActive });
+        await createAuditLog(ctx.user.id, 'update', 'recurring_invoice', input.id, input.isActive ? 'Activated' : 'Paused');
+        return { success: true };
+      }),
+  }),
 });
+
+// Helper function to calculate next generation date for recurring invoices
+function calculateNextGenerationDate(
+  frequency: string,
+  dayOfWeek?: number | null,
+  dayOfMonth?: number | null
+): Date {
+  const now = new Date();
+  const next = new Date(now);
+  
+  switch (frequency) {
+    case 'weekly':
+      next.setDate(next.getDate() + 7);
+      if (dayOfWeek !== undefined && dayOfWeek !== null) {
+        const currentDay = next.getDay();
+        const daysUntil = (dayOfWeek - currentDay + 7) % 7;
+        next.setDate(next.getDate() + daysUntil);
+      }
+      break;
+    case 'biweekly':
+      next.setDate(next.getDate() + 14);
+      break;
+    case 'monthly':
+      next.setMonth(next.getMonth() + 1);
+      if (dayOfMonth !== undefined && dayOfMonth !== null) {
+        next.setDate(Math.min(dayOfMonth, new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate()));
+      }
+      break;
+    case 'quarterly':
+      next.setMonth(next.getMonth() + 3);
+      if (dayOfMonth !== undefined && dayOfMonth !== null) {
+        next.setDate(Math.min(dayOfMonth, new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate()));
+      }
+      break;
+    case 'annually':
+      next.setFullYear(next.getFullYear() + 1);
+      break;
+    default:
+      next.setMonth(next.getMonth() + 1);
+  }
+  
+  return next;
+}
 
 // Helper function to map Shopify order status to DB enum
 function mapShopifyOrderStatusToDb(financialStatus: string, fulfillmentStatus: string | null): 'pending' | 'confirmed' | 'processing' | 'shipped' | 'delivered' | 'cancelled' | 'refunded' {
