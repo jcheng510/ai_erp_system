@@ -2909,3 +2909,165 @@ export const emailTemplates = mysqlTable("emailTemplates", {
 });
 export type EmailTemplate = typeof emailTemplates.$inferSelect;
 export type InsertEmailTemplate = typeof emailTemplates.$inferInsert;
+
+
+// ==========================================
+// VENDOR QUOTE MANAGEMENT (RFQ System)
+// ==========================================
+
+// Vendor RFQ (Request for Quote) - sent to vendors for material pricing
+export const vendorRfqs = mysqlTable("vendorRfqs", {
+  id: int("id").autoincrement().primaryKey(),
+  rfqNumber: varchar("rfqNumber", { length: 50 }).notNull(),
+  status: mysqlEnum("status", ["draft", "sent", "partially_received", "all_received", "awarded", "cancelled", "expired"]).default("draft").notNull(),
+  
+  // Material details
+  rawMaterialId: int("rawMaterialId"),
+  materialName: varchar("materialName", { length: 255 }).notNull(),
+  materialDescription: text("materialDescription"),
+  quantity: decimal("quantity", { precision: 15, scale: 4 }).notNull(),
+  unit: varchar("unit", { length: 50 }).notNull(),
+  specifications: text("specifications"), // Technical specs, quality requirements
+  
+  // Delivery requirements
+  requiredDeliveryDate: timestamp("requiredDeliveryDate"),
+  deliveryLocation: varchar("deliveryLocation", { length: 255 }),
+  deliveryAddress: text("deliveryAddress"),
+  incoterms: varchar("incoterms", { length: 10 }), // EXW, FOB, CIF, DDP, etc.
+  
+  // Timeline
+  quoteDueDate: timestamp("quoteDueDate"),
+  validityPeriod: int("validityPeriod"), // Days the quote should be valid
+  
+  // Related records
+  purchaseRequestId: int("purchaseRequestId"),
+  projectId: int("projectId"),
+  
+  // Metadata
+  priority: mysqlEnum("priority", ["low", "normal", "high", "urgent"]).default("normal"),
+  notes: text("notes"),
+  internalNotes: text("internalNotes"),
+  createdById: int("createdById"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+// Vendor quotes received in response to RFQs
+export const vendorQuotes = mysqlTable("vendorQuotes", {
+  id: int("id").autoincrement().primaryKey(),
+  rfqId: int("rfqId").notNull(),
+  vendorId: int("vendorId").notNull(),
+  quoteNumber: varchar("quoteNumber", { length: 50 }),
+  status: mysqlEnum("status", ["pending", "received", "under_review", "accepted", "rejected", "expired", "converted_to_po"]).default("pending").notNull(),
+  
+  // Pricing
+  unitPrice: decimal("unitPrice", { precision: 15, scale: 4 }),
+  quantity: decimal("quantity", { precision: 15, scale: 4 }),
+  totalPrice: decimal("totalPrice", { precision: 15, scale: 2 }),
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  
+  // Additional costs
+  shippingCost: decimal("shippingCost", { precision: 15, scale: 2 }),
+  handlingFee: decimal("handlingFee", { precision: 15, scale: 2 }),
+  taxAmount: decimal("taxAmount", { precision: 15, scale: 2 }),
+  otherCharges: decimal("otherCharges", { precision: 15, scale: 2 }),
+  totalWithCharges: decimal("totalWithCharges", { precision: 15, scale: 2 }),
+  
+  // Delivery details
+  leadTimeDays: int("leadTimeDays"),
+  estimatedDeliveryDate: timestamp("estimatedDeliveryDate"),
+  minimumOrderQty: decimal("minimumOrderQty", { precision: 15, scale: 4 }),
+  
+  // Quote validity
+  validUntil: timestamp("validUntil"),
+  paymentTerms: varchar("paymentTerms", { length: 100 }), // Net 30, COD, etc.
+  
+  // AI analysis
+  aiScore: int("aiScore"), // AI-generated score 1-100
+  aiAnalysis: text("aiAnalysis"), // AI-generated analysis
+  aiRecommendation: text("aiRecommendation"),
+  priceComparisonRank: int("priceComparisonRank"), // 1 = best price
+  leadTimeComparisonRank: int("leadTimeComparisonRank"), // 1 = fastest
+  overallRank: int("overallRank"), // Combined ranking
+  
+  // Communication
+  receivedVia: mysqlEnum("receivedVia", ["email", "portal", "phone", "manual"]).default("email"),
+  emailThreadId: varchar("emailThreadId", { length: 255 }),
+  rawEmailContent: text("rawEmailContent"),
+  attachments: text("attachments"), // JSON array of attachment URLs
+  
+  // Conversion to PO
+  convertedToPOId: int("convertedToPOId"),
+  convertedAt: timestamp("convertedAt"),
+  
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+// Email communications for vendor RFQs
+export const vendorRfqEmails = mysqlTable("vendorRfqEmails", {
+  id: int("id").autoincrement().primaryKey(),
+  rfqId: int("rfqId"),
+  vendorId: int("vendorId"),
+  quoteId: int("quoteId"),
+  direction: mysqlEnum("direction", ["outbound", "inbound"]).notNull(),
+  emailType: mysqlEnum("emailType", ["rfq_request", "quote_response", "follow_up", "clarification", "award_notification", "rejection_notification", "other"]).notNull(),
+  
+  // Email details
+  fromEmail: varchar("fromEmail", { length: 320 }),
+  toEmail: varchar("toEmail", { length: 320 }),
+  ccEmails: text("ccEmails"),
+  subject: varchar("subject", { length: 500 }),
+  body: text("body"),
+  htmlBody: text("htmlBody"),
+  
+  // AI processing
+  aiGenerated: boolean("aiGenerated").default(false),
+  aiParsed: boolean("aiParsed").default(false),
+  aiExtractedData: text("aiExtractedData"), // JSON of extracted quote data
+  
+  // Status
+  sendStatus: mysqlEnum("sendStatus", ["draft", "queued", "sent", "delivered", "failed", "bounced"]).default("draft"),
+  sentAt: timestamp("sentAt"),
+  deliveredAt: timestamp("deliveredAt"),
+  openedAt: timestamp("openedAt"),
+  errorMessage: text("errorMessage"),
+  
+  // External IDs
+  externalMessageId: varchar("externalMessageId", { length: 255 }),
+  threadId: varchar("threadId", { length: 255 }),
+  
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+// Vendors invited to an RFQ
+export const vendorRfqInvitations = mysqlTable("vendorRfqInvitations", {
+  id: int("id").autoincrement().primaryKey(),
+  rfqId: int("rfqId").notNull(),
+  vendorId: int("vendorId").notNull(),
+  status: mysqlEnum("status", ["pending", "sent", "viewed", "responded", "declined", "no_response"]).default("pending").notNull(),
+  
+  invitedAt: timestamp("invitedAt"),
+  viewedAt: timestamp("viewedAt"),
+  respondedAt: timestamp("respondedAt"),
+  reminderSentAt: timestamp("reminderSentAt"),
+  reminderCount: int("reminderCount").default(0),
+  
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type VendorRfq = typeof vendorRfqs.$inferSelect;
+export type InsertVendorRfq = typeof vendorRfqs.$inferInsert;
+
+export type VendorQuote = typeof vendorQuotes.$inferSelect;
+export type InsertVendorQuote = typeof vendorQuotes.$inferInsert;
+
+export type VendorRfqEmail = typeof vendorRfqEmails.$inferSelect;
+export type InsertVendorRfqEmail = typeof vendorRfqEmails.$inferInsert;
+
+export type VendorRfqInvitation = typeof vendorRfqInvitations.$inferSelect;
+export type InsertVendorRfqInvitation = typeof vendorRfqInvitations.$inferInsert;

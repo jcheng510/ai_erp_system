@@ -630,3 +630,21 @@
 - [ ] Create backend procedure to get preferred vendor for material based on PO history
 - [ ] Integrate vendor suggestion into AICommandBar when material name is parsed
 - [ ] Show suggested vendor in task preview before submission
+
+## Vendor Quote Management (RFQ System)
+- [ ] Create vendorQuoteRequests and vendorQuotes database tables
+- [ ] Build backend procedures for RFQ creation, quote submission, comparison
+- [ ] Create email templates for vendor quote requests
+- [ ] Build quote tracking UI in Procurement Hub
+- [ ] Add best quote selection with price/lead time comparison
+- [ ] Add one-click PO conversion from accepted quote
+
+
+## Vendor Quote Management (RFQ System) - Completed
+- [x] Create vendor RFQ and quote database tables (vendorRfqs, vendorRfqInvitations, vendorQuotes)
+- [x] Build vendor quotes router with full CRUD operations
+- [x] Implement RFQ email sending to multiple vendors
+- [x] Build quote tracking and comparison UI in Procurement Hub (Quotes tab)
+- [x] Implement best quote selection and PO conversion workflow
+- [x] Add quote ranking by price, lead time, and overall score
+- [x] Write comprehensive tests (20 tests passing, 278 total)

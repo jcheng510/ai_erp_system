@@ -50,6 +50,8 @@ import {
   supplierPortalSessions, supplierDocuments, supplierFreightInfo,
   // AI Agent system
   aiAgentTasks, aiAgentRules, aiAgentLogs, emailTemplates,
+  // Vendor Quote Management
+  vendorRfqs, vendorQuotes, vendorRfqEmails, vendorRfqInvitations,
   InsertCompany, InsertCustomer, InsertVendor, InsertProduct,
   InsertAccount, InsertInvoice, InsertPayment, InsertTransaction,
   InsertOrder, InsertInventory, InsertPurchaseOrder, InsertWarehouse,
@@ -77,7 +79,9 @@ import {
   InsertNdaDocument, InsertNdaSignature, InsertNdaSignatureAuditLog,
   InsertImapCredential,
   // AI Agent types
-  InsertAiAgentTask, InsertAiAgentRule, InsertAiAgentLog, InsertEmailTemplate
+  InsertAiAgentTask, InsertAiAgentRule, InsertAiAgentLog, InsertEmailTemplate,
+  // Vendor Quote types
+  InsertVendorRfq, InsertVendorQuote, InsertVendorRfqEmail, InsertVendorRfqInvitation
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -6129,4 +6133,158 @@ export async function updateEmailTemplate(id: number, data: Partial<{
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.update(emailTemplates).set(data as any).where(eq(emailTemplates.id, id));
+}
+
+
+// ============================================
+// VENDOR QUOTE MANAGEMENT (RFQ System)
+// ============================================
+
+// Vendor RFQs
+export async function createVendorRfq(data: InsertVendorRfq) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(vendorRfqs).values(data as any);
+  return { id: result[0].insertId, ...data };
+}
+
+export async function getVendorRfqs(filters?: { status?: string; rawMaterialId?: number; createdById?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  let query = db.select().from(vendorRfqs);
+  const conditions = [];
+  if (filters?.status) conditions.push(eq(vendorRfqs.status, filters.status as any));
+  if (filters?.rawMaterialId) conditions.push(eq(vendorRfqs.rawMaterialId, filters.rawMaterialId));
+  if (filters?.createdById) conditions.push(eq(vendorRfqs.createdById, filters.createdById));
+  if (conditions.length > 0) query = query.where(and(...conditions)) as any;
+  return query.orderBy(desc(vendorRfqs.createdAt));
+}
+
+export async function getVendorRfqById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(vendorRfqs).where(eq(vendorRfqs.id, id));
+  return result[0] || null;
+}
+
+export async function updateVendorRfq(id: number, data: Partial<InsertVendorRfq>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(vendorRfqs).set(data as any).where(eq(vendorRfqs.id, id));
+}
+
+// Vendor Quotes
+export async function createVendorQuote(data: InsertVendorQuote) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(vendorQuotes).values(data as any);
+  return { id: result[0].insertId, ...data };
+}
+
+export async function getVendorQuotes(filters?: { rfqId?: number; vendorId?: number; status?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  let query = db.select().from(vendorQuotes);
+  const conditions = [];
+  if (filters?.rfqId) conditions.push(eq(vendorQuotes.rfqId, filters.rfqId));
+  if (filters?.vendorId) conditions.push(eq(vendorQuotes.vendorId, filters.vendorId));
+  if (filters?.status) conditions.push(eq(vendorQuotes.status, filters.status as any));
+  if (conditions.length > 0) query = query.where(and(...conditions)) as any;
+  return query.orderBy(desc(vendorQuotes.createdAt));
+}
+
+export async function getVendorQuoteById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(vendorQuotes).where(eq(vendorQuotes.id, id));
+  return result[0] || null;
+}
+
+export async function updateVendorQuote(id: number, data: Partial<InsertVendorQuote>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(vendorQuotes).set(data as any).where(eq(vendorQuotes.id, id));
+}
+
+export async function getVendorQuotesWithVendorInfo(rfqId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const quotes = await db.select().from(vendorQuotes).where(eq(vendorQuotes.rfqId, rfqId)).orderBy(vendorQuotes.overallRank);
+  const vendorIds = Array.from(new Set(quotes.map(q => q.vendorId)));
+  const vendorList = vendorIds.length > 0 ? await db.select().from(vendors).where(inArray(vendors.id, vendorIds)) : [];
+  const vendorMap = new Map(vendorList.map(v => [v.id, v]));
+  return quotes.map(q => ({ ...q, vendor: vendorMap.get(q.vendorId) || null }));
+}
+
+// Vendor RFQ Emails
+export async function createVendorRfqEmail(data: InsertVendorRfqEmail) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(vendorRfqEmails).values(data as any);
+  return { id: result[0].insertId, ...data };
+}
+
+export async function getVendorRfqEmails(filters?: { rfqId?: number; vendorId?: number; direction?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  let query = db.select().from(vendorRfqEmails);
+  const conditions = [];
+  if (filters?.rfqId) conditions.push(eq(vendorRfqEmails.rfqId, filters.rfqId));
+  if (filters?.vendorId) conditions.push(eq(vendorRfqEmails.vendorId, filters.vendorId));
+  if (filters?.direction) conditions.push(eq(vendorRfqEmails.direction, filters.direction as any));
+  if (conditions.length > 0) query = query.where(and(...conditions)) as any;
+  return query.orderBy(desc(vendorRfqEmails.createdAt));
+}
+
+export async function updateVendorRfqEmail(id: number, data: Partial<InsertVendorRfqEmail>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(vendorRfqEmails).set(data as any).where(eq(vendorRfqEmails.id, id));
+}
+
+// Vendor RFQ Invitations
+export async function createVendorRfqInvitation(data: InsertVendorRfqInvitation) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(vendorRfqInvitations).values(data as any);
+  return { id: result[0].insertId, ...data };
+}
+
+export async function getVendorRfqInvitations(rfqId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const invitations = await db.select().from(vendorRfqInvitations).where(eq(vendorRfqInvitations.rfqId, rfqId));
+  const vendorIds = Array.from(new Set(invitations.map(i => i.vendorId)));
+  const vendorList = vendorIds.length > 0 ? await db.select().from(vendors).where(inArray(vendors.id, vendorIds)) : [];
+  const vendorMap = new Map(vendorList.map(v => [v.id, v]));
+  return invitations.map(i => ({ ...i, vendor: vendorMap.get(i.vendorId) || null }));
+}
+
+export async function updateVendorRfqInvitation(id: number, data: Partial<InsertVendorRfqInvitation>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(vendorRfqInvitations).set(data as any).where(eq(vendorRfqInvitations.id, id));
+}
+
+// Helper: Get best quote for an RFQ
+export async function getBestVendorQuote(rfqId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(vendorQuotes)
+    .where(and(
+      eq(vendorQuotes.rfqId, rfqId),
+      eq(vendorQuotes.status, "received")
+    ))
+    .orderBy(vendorQuotes.overallRank)
+    .limit(1);
+  return result[0] || null;
+}
+
+// Helper: Generate RFQ number
+export async function generateVendorRfqNumber() {
+  const db = await getDb();
+  if (!db) return `RFQ-${Date.now()}`;
+  const result = await db.select({ count: sql<number>`COUNT(*)` }).from(vendorRfqs);
+  const count = result[0]?.count || 0;
+  return `RFQ-${String(count + 1).padStart(6, '0')}`;
 }

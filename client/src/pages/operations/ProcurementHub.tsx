@@ -71,6 +71,708 @@ const poStatusOptions = [
   { value: "cancelled", label: "Cancelled", color: "bg-red-100 text-red-800" },
 ];
 
+// Vendor Quotes Tab Component
+function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMaterials: any[] }) {
+  const utils = trpc.useUtils();
+  const [activeSubTab, setActiveSubTab] = useState<'rfqs' | 'quotes'>('rfqs');
+  const [isCreateRfqOpen, setIsCreateRfqOpen] = useState(false);
+  const [selectedRfqId, setSelectedRfqId] = useState<number | null>(null);
+  const [selectedVendorIds, setSelectedVendorIds] = useState<number[]>([]);
+  const [isEnterQuoteOpen, setIsEnterQuoteOpen] = useState(false);
+  const [quoteForm, setQuoteForm] = useState({
+    vendorId: '',
+    unitPrice: '',
+    quantity: '',
+    totalPrice: '',
+    leadTimeDays: '',
+    validUntil: '',
+    paymentTerms: '',
+    notes: '',
+  });
+  const [rfqForm, setRfqForm] = useState({
+    materialName: '',
+    rawMaterialId: '',
+    materialDescription: '',
+    quantity: '',
+    unit: 'kg',
+    specifications: '',
+    requiredDeliveryDate: '',
+    deliveryLocation: '',
+    quoteDueDate: '',
+    priority: 'normal',
+    notes: '',
+  });
+
+  // Queries
+  const { data: rfqs, isLoading: rfqsLoading } = trpc.vendorQuotes.rfqs.list.useQuery();
+  const { data: quotes, isLoading: quotesLoading } = trpc.vendorQuotes.quotes.list.useQuery();
+  const { data: selectedRfqQuotes } = trpc.vendorQuotes.quotes.getWithVendorInfo.useQuery(
+    { rfqId: selectedRfqId! },
+    { enabled: !!selectedRfqId }
+  );
+  const { data: selectedRfqInvitations } = trpc.vendorQuotes.rfqs.getInvitations.useQuery(
+    { rfqId: selectedRfqId! },
+    { enabled: !!selectedRfqId }
+  );
+
+  // Mutations
+  const createRfq = trpc.vendorQuotes.rfqs.create.useMutation({
+    onSuccess: () => {
+      toast.success('RFQ created successfully');
+      utils.vendorQuotes.rfqs.list.invalidate();
+      setIsCreateRfqOpen(false);
+      setRfqForm({ materialName: '', rawMaterialId: '', materialDescription: '', quantity: '', unit: 'kg', specifications: '', requiredDeliveryDate: '', deliveryLocation: '', quoteDueDate: '', priority: 'normal', notes: '' });
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const sendToVendors = trpc.vendorQuotes.rfqs.sendToVendors.useMutation({
+    onSuccess: (result) => {
+      if (result.emailConfigured) {
+        toast.success(`RFQ sent to ${result.sent} vendors`);
+      } else {
+        toast.info(`Email drafts created for ${result.sent + result.failed} vendors (SendGrid not configured)`);
+      }
+      utils.vendorQuotes.rfqs.list.invalidate();
+      utils.vendorQuotes.rfqs.getInvitations.invalidate();
+      setSelectedVendorIds([]);
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const sendReminder = trpc.vendorQuotes.rfqs.sendReminder.useMutation({
+    onSuccess: () => {
+      toast.success('Reminder sent');
+      utils.vendorQuotes.rfqs.getInvitations.invalidate();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const createQuote = trpc.vendorQuotes.quotes.create.useMutation({
+    onSuccess: () => {
+      toast.success('Quote recorded successfully');
+      utils.vendorQuotes.quotes.list.invalidate();
+      utils.vendorQuotes.quotes.getWithVendorInfo.invalidate();
+      utils.vendorQuotes.rfqs.list.invalidate();
+      setIsEnterQuoteOpen(false);
+      setQuoteForm({ vendorId: '', unitPrice: '', quantity: '', totalPrice: '', leadTimeDays: '', validUntil: '', paymentTerms: '', notes: '' });
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const acceptQuote = trpc.vendorQuotes.quotes.accept.useMutation({
+    onSuccess: (result) => {
+      toast.success(result.poId ? `Quote accepted and PO #${result.poId} created` : 'Quote accepted');
+      utils.vendorQuotes.quotes.list.invalidate();
+      utils.vendorQuotes.quotes.getWithVendorInfo.invalidate();
+      utils.vendorQuotes.rfqs.list.invalidate();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const rejectQuote = trpc.vendorQuotes.quotes.reject.useMutation({
+    onSuccess: () => {
+      toast.success('Quote rejected');
+      utils.vendorQuotes.quotes.list.invalidate();
+      utils.vendorQuotes.quotes.getWithVendorInfo.invalidate();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const selectedRfq = rfqs?.find((r: any) => r.id === selectedRfqId);
+
+  const rfqColumns: Column<any>[] = [
+    { key: 'rfqNumber', header: 'RFQ #', type: 'text', width: '120px' },
+    { key: 'materialName', header: 'Material', type: 'text', width: '200px' },
+    { key: 'quantity', header: 'Qty', type: 'number', width: '100px', render: (v, row) => `${v} ${row.unit}` },
+    { key: 'status', header: 'Status', type: 'text', width: '120px', render: (v) => {
+      const colors: Record<string, string> = {
+        draft: 'bg-gray-100 text-gray-800',
+        sent: 'bg-blue-100 text-blue-800',
+        partially_received: 'bg-yellow-100 text-yellow-800',
+        all_received: 'bg-green-100 text-green-800',
+        awarded: 'bg-purple-100 text-purple-800',
+        cancelled: 'bg-red-100 text-red-800',
+      };
+      return <Badge className={colors[v] || 'bg-gray-100'}>{v?.replace(/_/g, ' ')}</Badge>;
+    }},
+    { key: 'quoteDueDate', header: 'Due Date', type: 'date', width: '120px', render: (v) => formatDate(v) },
+    { key: 'createdAt', header: 'Created', type: 'date', width: '120px', render: (v) => formatDate(v) },
+  ];
+
+  return (
+    <div className="space-y-4">
+      {/* Sub-tabs for RFQs vs All Quotes */}
+      <div className="flex items-center justify-between">
+        <div className="flex gap-2">
+          <Button
+            variant={activeSubTab === 'rfqs' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setActiveSubTab('rfqs')}
+          >
+            <FileText className="h-4 w-4 mr-1" />
+            RFQs ({rfqs?.length || 0})
+          </Button>
+          <Button
+            variant={activeSubTab === 'quotes' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setActiveSubTab('quotes')}
+          >
+            <DollarSign className="h-4 w-4 mr-1" />
+            All Quotes ({quotes?.length || 0})
+          </Button>
+        </div>
+        <Button onClick={() => setIsCreateRfqOpen(true)}>
+          <Mail className="h-4 w-4 mr-1" />
+          Create RFQ
+        </Button>
+      </div>
+
+      {activeSubTab === 'rfqs' && (
+        <div className="grid grid-cols-3 gap-4">
+          {/* RFQ List */}
+          <Card className="col-span-1">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">Request for Quotes</CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              <div className="max-h-[500px] overflow-y-auto">
+                {rfqsLoading ? (
+                  <div className="flex items-center justify-center p-8">
+                    <Loader2 className="h-6 w-6 animate-spin" />
+                  </div>
+                ) : rfqs?.length === 0 ? (
+                  <div className="text-center text-muted-foreground p-8">
+                    No RFQs yet. Create one to get started.
+                  </div>
+                ) : (
+                  rfqs?.map((rfq: any) => (
+                    <div
+                      key={rfq.id}
+                      className={`p-3 border-b cursor-pointer hover:bg-muted/50 ${selectedRfqId === rfq.id ? 'bg-muted' : ''}`}
+                      onClick={() => setSelectedRfqId(rfq.id)}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-medium text-sm">{rfq.rfqNumber}</span>
+                        <Badge variant="outline" className="text-xs">
+                          {rfq.status?.replace(/_/g, ' ')}
+                        </Badge>
+                      </div>
+                      <div className="text-sm text-muted-foreground mt-1">{rfq.materialName}</div>
+                      <div className="text-xs text-muted-foreground">{rfq.quantity} {rfq.unit}</div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* RFQ Detail & Quotes */}
+          <Card className="col-span-2">
+            <CardContent className="p-4">
+              {selectedRfq ? (
+                <div className="space-y-4">
+                  {/* RFQ Header */}
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <h3 className="text-lg font-semibold">{selectedRfq.rfqNumber}</h3>
+                      <p className="text-sm text-muted-foreground">{selectedRfq.materialName}</p>
+                    </div>
+                    <div className="flex gap-2">
+                      {selectedRfq.status === 'draft' && (
+                        <Button
+                          size="sm"
+                          onClick={() => {
+                            if (selectedVendorIds.length === 0) {
+                              toast.error('Select vendors to send RFQ');
+                              return;
+                            }
+                            sendToVendors.mutate({ rfqId: selectedRfq.id, vendorIds: selectedVendorIds });
+                          }}
+                          disabled={sendToVendors.isPending}
+                        >
+                          {sendToVendors.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
+                          <Send className="h-4 w-4 mr-1" />
+                          Send to Vendors
+                        </Button>
+                      )}
+                      {['sent', 'partially_received'].includes(selectedRfq.status) && (
+                        <Button size="sm" variant="outline" onClick={() => setIsEnterQuoteOpen(true)}>
+                          <DollarSign className="h-4 w-4 mr-1" />
+                          Enter Quote
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* RFQ Details */}
+                  <div className="grid grid-cols-4 gap-3">
+                    <div className="bg-muted/50 rounded p-2">
+                      <div className="text-xs text-muted-foreground">Quantity</div>
+                      <div className="font-semibold">{selectedRfq.quantity} {selectedRfq.unit}</div>
+                    </div>
+                    <div className="bg-muted/50 rounded p-2">
+                      <div className="text-xs text-muted-foreground">Due Date</div>
+                      <div className="font-semibold">{formatDate(selectedRfq.quoteDueDate)}</div>
+                    </div>
+                    <div className="bg-muted/50 rounded p-2">
+                      <div className="text-xs text-muted-foreground">Delivery Date</div>
+                      <div className="font-semibold">{formatDate(selectedRfq.requiredDeliveryDate)}</div>
+                    </div>
+                    <div className="bg-muted/50 rounded p-2">
+                      <div className="text-xs text-muted-foreground">Priority</div>
+                      <div className="font-semibold capitalize">{selectedRfq.priority || 'Normal'}</div>
+                    </div>
+                  </div>
+
+                  {/* Vendor Selection (for draft RFQs) */}
+                  {selectedRfq.status === 'draft' && (
+                    <div>
+                      <h4 className="text-sm font-medium mb-2">Select Vendors to Invite</h4>
+                      <div className="grid grid-cols-2 gap-2 max-h-[150px] overflow-y-auto">
+                        {vendors.map((vendor: any) => (
+                          <label
+                            key={vendor.id}
+                            className={`flex items-center gap-2 p-2 rounded border cursor-pointer hover:bg-muted/50 ${selectedVendorIds.includes(vendor.id) ? 'border-primary bg-primary/5' : ''}`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={selectedVendorIds.includes(vendor.id)}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setSelectedVendorIds([...selectedVendorIds, vendor.id]);
+                                } else {
+                                  setSelectedVendorIds(selectedVendorIds.filter(id => id !== vendor.id));
+                                }
+                              }}
+                              className="rounded"
+                            />
+                            <div>
+                              <div className="text-sm font-medium">{vendor.name}</div>
+                              <div className="text-xs text-muted-foreground">{vendor.email}</div>
+                            </div>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Invited Vendors Status */}
+                  {selectedRfq.status !== 'draft' && selectedRfqInvitations && selectedRfqInvitations.length > 0 && (
+                    <div>
+                      <h4 className="text-sm font-medium mb-2">Invited Vendors</h4>
+                      <div className="space-y-2">
+                        {selectedRfqInvitations.map((inv: any) => (
+                          <div key={inv.id} className="flex items-center justify-between p-2 bg-muted/30 rounded">
+                            <div>
+                              <div className="text-sm font-medium">{inv.vendor?.name}</div>
+                              <div className="text-xs text-muted-foreground">
+                                Invited: {formatDate(inv.invitedAt)}
+                                {inv.reminderCount > 0 && ` • ${inv.reminderCount} reminder(s) sent`}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Badge variant="outline" className="text-xs">
+                                {inv.status === 'responded' ? 'Quoted' : inv.status}
+                              </Badge>
+                              {inv.status === 'sent' && (
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => sendReminder.mutate({ rfqId: selectedRfq.id, vendorId: inv.vendorId })}
+                                  disabled={sendReminder.isPending}
+                                >
+                                  <Mail className="h-3 w-3" />
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Received Quotes Comparison */}
+                  {selectedRfqQuotes && selectedRfqQuotes.length > 0 && (
+                    <div>
+                      <h4 className="text-sm font-medium mb-2">Received Quotes ({selectedRfqQuotes.length})</h4>
+                      <div className="border rounded overflow-hidden">
+                        <table className="w-full text-sm">
+                          <thead className="bg-muted">
+                            <tr>
+                              <th className="text-left p-2">Rank</th>
+                              <th className="text-left p-2">Vendor</th>
+                              <th className="text-right p-2">Unit Price</th>
+                              <th className="text-right p-2">Total</th>
+                              <th className="text-center p-2">Lead Time</th>
+                              <th className="text-center p-2">Valid Until</th>
+                              <th className="text-center p-2">Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {selectedRfqQuotes.map((quote: any, idx: number) => (
+                              <tr key={quote.id} className={`border-t ${idx === 0 ? 'bg-green-50' : ''}`}>
+                                <td className="p-2">
+                                  {idx === 0 ? (
+                                    <Badge className="bg-green-500">Best</Badge>
+                                  ) : (
+                                    <span className="text-muted-foreground">#{quote.overallRank || idx + 1}</span>
+                                  )}
+                                </td>
+                                <td className="p-2 font-medium">{quote.vendor?.name}</td>
+                                <td className="p-2 text-right font-mono">{formatCurrency(quote.unitPrice)}</td>
+                                <td className="p-2 text-right font-mono font-semibold">{formatCurrency(quote.totalPrice)}</td>
+                                <td className="p-2 text-center">{quote.leadTimeDays ? `${quote.leadTimeDays} days` : '-'}</td>
+                                <td className="p-2 text-center">{formatDate(quote.validUntil)}</td>
+                                <td className="p-2 text-center">
+                                  {quote.status === 'received' && (
+                                    <div className="flex items-center justify-center gap-1">
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        className="h-7 text-green-600 hover:text-green-700"
+                                        onClick={() => acceptQuote.mutate({ id: quote.id, createPO: true })}
+                                        disabled={acceptQuote.isPending}
+                                      >
+                                        <CheckCircle className="h-4 w-4" />
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        className="h-7 text-red-600 hover:text-red-700"
+                                        onClick={() => rejectQuote.mutate({ id: quote.id, sendNotification: true })}
+                                        disabled={rejectQuote.isPending}
+                                      >
+                                        <XCircle className="h-4 w-4" />
+                                      </Button>
+                                    </div>
+                                  )}
+                                  {quote.status === 'accepted' && <Badge className="bg-green-500">Accepted</Badge>}
+                                  {quote.status === 'rejected' && <Badge variant="destructive">Rejected</Badge>}
+                                  {quote.status === 'converted_to_po' && <Badge className="bg-purple-500">PO Created</Badge>}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="flex items-center justify-center h-[400px] text-muted-foreground">
+                  Select an RFQ to view details and quotes
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {activeSubTab === 'quotes' && (
+        <Card>
+          <CardContent className="pt-6">
+            {quotesLoading ? (
+              <div className="flex items-center justify-center p-8">
+                <Loader2 className="h-6 w-6 animate-spin" />
+              </div>
+            ) : quotes?.length === 0 ? (
+              <div className="text-center text-muted-foreground p-8">
+                No quotes received yet.
+              </div>
+            ) : (
+              <div className="border rounded overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted">
+                    <tr>
+                      <th className="text-left p-2">Quote #</th>
+                      <th className="text-left p-2">RFQ</th>
+                      <th className="text-left p-2">Vendor</th>
+                      <th className="text-right p-2">Unit Price</th>
+                      <th className="text-right p-2">Total</th>
+                      <th className="text-center p-2">Status</th>
+                      <th className="text-center p-2">Received</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {quotes?.map((quote: any) => {
+                      const rfq = rfqs?.find((r: any) => r.id === quote.rfqId);
+                      const vendor = vendors.find((v: any) => v.id === quote.vendorId);
+                      return (
+                        <tr key={quote.id} className="border-t hover:bg-muted/50">
+                          <td className="p-2 font-mono">{quote.quoteNumber || `Q-${quote.id}`}</td>
+                          <td className="p-2">{rfq?.rfqNumber || '-'}</td>
+                          <td className="p-2 font-medium">{vendor?.name || '-'}</td>
+                          <td className="p-2 text-right font-mono">{formatCurrency(quote.unitPrice)}</td>
+                          <td className="p-2 text-right font-mono font-semibold">{formatCurrency(quote.totalPrice)}</td>
+                          <td className="p-2 text-center">
+                            <Badge variant="outline">{quote.status}</Badge>
+                          </td>
+                          <td className="p-2 text-center text-muted-foreground">{formatDate(quote.createdAt)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Create RFQ Dialog */}
+      <Dialog open={isCreateRfqOpen} onOpenChange={setIsCreateRfqOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Create Request for Quote</DialogTitle>
+            <DialogDescription>Send an RFQ to vendors for material pricing</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label>Material *</Label>
+              <Select
+                value={rfqForm.rawMaterialId}
+                onValueChange={(v) => {
+                  const mat = rawMaterials.find((m: any) => m.id.toString() === v);
+                  setRfqForm({
+                    ...rfqForm,
+                    rawMaterialId: v,
+                    materialName: mat?.name || '',
+                    unit: mat?.unit || 'kg',
+                  });
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select material or enter custom" />
+                </SelectTrigger>
+                <SelectContent>
+                  {rawMaterials.map((m: any) => (
+                    <SelectItem key={m.id} value={m.id.toString()}>{m.name} ({m.sku})</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {!rfqForm.rawMaterialId && (
+                <Input
+                  className="mt-2"
+                  placeholder="Or enter custom material name"
+                  value={rfqForm.materialName}
+                  onChange={(e) => setRfqForm({ ...rfqForm, materialName: e.target.value })}
+                />
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Quantity *</Label>
+                <Input
+                  type="number"
+                  value={rfqForm.quantity}
+                  onChange={(e) => setRfqForm({ ...rfqForm, quantity: e.target.value })}
+                />
+              </div>
+              <div>
+                <Label>Unit</Label>
+                <Select value={rfqForm.unit} onValueChange={(v) => setRfqForm({ ...rfqForm, unit: v })}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="kg">kg</SelectItem>
+                    <SelectItem value="lbs">lbs</SelectItem>
+                    <SelectItem value="units">units</SelectItem>
+                    <SelectItem value="cases">cases</SelectItem>
+                    <SelectItem value="pallets">pallets</SelectItem>
+                    <SelectItem value="liters">liters</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div>
+              <Label>Specifications</Label>
+              <Textarea
+                value={rfqForm.specifications}
+                onChange={(e) => setRfqForm({ ...rfqForm, specifications: e.target.value })}
+                placeholder="Quality requirements, certifications, etc."
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Quote Due Date</Label>
+                <Input
+                  type="date"
+                  value={rfqForm.quoteDueDate}
+                  onChange={(e) => setRfqForm({ ...rfqForm, quoteDueDate: e.target.value })}
+                />
+              </div>
+              <div>
+                <Label>Required Delivery Date</Label>
+                <Input
+                  type="date"
+                  value={rfqForm.requiredDeliveryDate}
+                  onChange={(e) => setRfqForm({ ...rfqForm, requiredDeliveryDate: e.target.value })}
+                />
+              </div>
+            </div>
+            <div>
+              <Label>Priority</Label>
+              <Select value={rfqForm.priority} onValueChange={(v) => setRfqForm({ ...rfqForm, priority: v })}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="low">Low</SelectItem>
+                  <SelectItem value="normal">Normal</SelectItem>
+                  <SelectItem value="high">High</SelectItem>
+                  <SelectItem value="urgent">Urgent</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsCreateRfqOpen(false)}>Cancel</Button>
+            <Button
+              onClick={() => {
+                if (!rfqForm.materialName || !rfqForm.quantity) {
+                  toast.error('Material and quantity are required');
+                  return;
+                }
+                createRfq.mutate({
+                  materialName: rfqForm.materialName,
+                  rawMaterialId: rfqForm.rawMaterialId ? parseInt(rfqForm.rawMaterialId) : undefined,
+                  materialDescription: rfqForm.materialDescription || undefined,
+                  quantity: rfqForm.quantity,
+                  unit: rfqForm.unit,
+                  specifications: rfqForm.specifications || undefined,
+                  requiredDeliveryDate: rfqForm.requiredDeliveryDate ? new Date(rfqForm.requiredDeliveryDate) : undefined,
+                  deliveryLocation: rfqForm.deliveryLocation || undefined,
+                  quoteDueDate: rfqForm.quoteDueDate ? new Date(rfqForm.quoteDueDate) : undefined,
+                  priority: rfqForm.priority as any,
+                  notes: rfqForm.notes || undefined,
+                });
+              }}
+              disabled={createRfq.isPending}
+            >
+              {createRfq.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Create RFQ
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Enter Quote Dialog */}
+      <Dialog open={isEnterQuoteOpen} onOpenChange={setIsEnterQuoteOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Enter Vendor Quote</DialogTitle>
+            <DialogDescription>Record a quote received from a vendor</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label>Vendor *</Label>
+              <Select value={quoteForm.vendorId} onValueChange={(v) => setQuoteForm({ ...quoteForm, vendorId: v })}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select vendor" />
+                </SelectTrigger>
+                <SelectContent>
+                  {selectedRfqInvitations?.map((inv: any) => (
+                    <SelectItem key={inv.vendorId} value={inv.vendorId.toString()}>
+                      {inv.vendor?.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Unit Price *</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={quoteForm.unitPrice}
+                  onChange={(e) => {
+                    const unitPrice = e.target.value;
+                    const qty = selectedRfq?.quantity || quoteForm.quantity;
+                    const total = unitPrice && qty ? (parseFloat(unitPrice) * parseFloat(qty)).toFixed(2) : '';
+                    setQuoteForm({ ...quoteForm, unitPrice, totalPrice: total });
+                  }}
+                />
+              </div>
+              <div>
+                <Label>Total Price</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={quoteForm.totalPrice}
+                  onChange={(e) => setQuoteForm({ ...quoteForm, totalPrice: e.target.value })}
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Lead Time (days)</Label>
+                <Input
+                  type="number"
+                  value={quoteForm.leadTimeDays}
+                  onChange={(e) => setQuoteForm({ ...quoteForm, leadTimeDays: e.target.value })}
+                />
+              </div>
+              <div>
+                <Label>Valid Until</Label>
+                <Input
+                  type="date"
+                  value={quoteForm.validUntil}
+                  onChange={(e) => setQuoteForm({ ...quoteForm, validUntil: e.target.value })}
+                />
+              </div>
+            </div>
+            <div>
+              <Label>Payment Terms</Label>
+              <Input
+                value={quoteForm.paymentTerms}
+                onChange={(e) => setQuoteForm({ ...quoteForm, paymentTerms: e.target.value })}
+                placeholder="e.g., Net 30, 50% upfront"
+              />
+            </div>
+            <div>
+              <Label>Notes</Label>
+              <Textarea
+                value={quoteForm.notes}
+                onChange={(e) => setQuoteForm({ ...quoteForm, notes: e.target.value })}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsEnterQuoteOpen(false)}>Cancel</Button>
+            <Button
+              onClick={() => {
+                if (!quoteForm.vendorId || !quoteForm.unitPrice) {
+                  toast.error('Vendor and unit price are required');
+                  return;
+                }
+                createQuote.mutate({
+                  rfqId: selectedRfqId!,
+                  vendorId: parseInt(quoteForm.vendorId),
+                  unitPrice: quoteForm.unitPrice,
+                  quantity: quoteForm.quantity || selectedRfq?.quantity,
+                  totalPrice: quoteForm.totalPrice || undefined,
+                  leadTimeDays: quoteForm.leadTimeDays ? parseInt(quoteForm.leadTimeDays) : undefined,
+                  validUntil: quoteForm.validUntil ? new Date(quoteForm.validUntil) : undefined,
+                  paymentTerms: quoteForm.paymentTerms || undefined,
+                  receivedVia: 'manual',
+                  notes: quoteForm.notes || undefined,
+                });
+              }}
+              disabled={createQuote.isPending}
+            >
+              {createQuote.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Save Quote
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
 // PO Detail Panel Component
 function PoDetailPanel({ po, onClose, onSendToSupplier, onStatusChange }: { 
   po: any; 
@@ -717,6 +1419,10 @@ export default function ProcurementHub() {
               <Package className="h-4 w-4" />
               Raw Materials
             </TabsTrigger>
+            <TabsTrigger value="quotes" className="gap-2">
+              <Mail className="h-4 w-4" />
+              Vendor Quotes
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="purchase-orders" className="mt-4">
@@ -812,6 +1518,9 @@ export default function ProcurementHub() {
             </Card>
           </TabsContent>
 
+          <TabsContent value="quotes" className="mt-4">
+            <VendorQuotesTab vendors={vendors || []} rawMaterials={rawMaterials || []} />
+          </TabsContent>
 
         </Tabs>
 

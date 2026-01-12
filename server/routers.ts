@@ -5396,6 +5396,521 @@ Provide your forecast in JSON format with the following structure:
   }),
 
   // ============================================
+  // VENDOR QUOTE MANAGEMENT (RFQ System)
+  // ============================================
+  vendorQuotes: router({
+    // Dashboard stats
+    dashboardStats: protectedProcedure.query(async () => {
+      const rfqs = await db.getVendorRfqs();
+      const quotes = await db.getVendorQuotes();
+      return {
+        totalRfqs: rfqs.length,
+        activeRfqs: rfqs.filter(r => ['sent', 'partially_received'].includes(r.status)).length,
+        totalQuotes: quotes.length,
+        pendingQuotes: quotes.filter(q => q.status === 'pending').length,
+        receivedQuotes: quotes.filter(q => q.status === 'received').length,
+      };
+    }),
+    
+    // RFQs
+    rfqs: router({
+      list: protectedProcedure
+        .input(z.object({ status: z.string().optional(), rawMaterialId: z.number().optional() }).optional())
+        .query(({ input }) => db.getVendorRfqs(input)),
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getVendorRfqById(input.id)),
+      create: opsProcedure
+        .input(z.object({
+          materialName: z.string().min(1),
+          rawMaterialId: z.number().optional(),
+          materialDescription: z.string().optional(),
+          quantity: z.string(),
+          unit: z.string(),
+          specifications: z.string().optional(),
+          requiredDeliveryDate: z.date().optional(),
+          deliveryLocation: z.string().optional(),
+          deliveryAddress: z.string().optional(),
+          incoterms: z.string().optional(),
+          quoteDueDate: z.date().optional(),
+          validityPeriod: z.number().optional(),
+          priority: z.enum(['low', 'normal', 'high', 'urgent']).optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const rfqNumber = await db.generateVendorRfqNumber();
+          const result = await db.createVendorRfq({ ...input, rfqNumber, createdById: ctx.user.id });
+          await createAuditLog(ctx.user.id, 'create', 'vendor_rfq', result.id, rfqNumber);
+          return result;
+        }),
+      update: opsProcedure
+        .input(z.object({
+          id: z.number(),
+          status: z.enum(['draft', 'sent', 'partially_received', 'all_received', 'awarded', 'cancelled', 'expired']).optional(),
+          materialName: z.string().optional(),
+          materialDescription: z.string().optional(),
+          quantity: z.string().optional(),
+          specifications: z.string().optional(),
+          requiredDeliveryDate: z.date().optional(),
+          quoteDueDate: z.date().optional(),
+          notes: z.string().optional(),
+          internalNotes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateVendorRfq(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'vendor_rfq', id);
+          return { success: true };
+        }),
+      
+      // Send RFQ to vendors via AI email
+      sendToVendors: opsProcedure
+        .input(z.object({
+          rfqId: z.number(),
+          vendorIds: z.array(z.number()),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const rfq = await db.getVendorRfqById(input.rfqId);
+          if (!rfq) throw new TRPCError({ code: 'NOT_FOUND', message: 'RFQ not found' });
+          
+          const results = { sent: 0, failed: 0, emails: [] as any[] };
+          
+          for (const vendorId of input.vendorIds) {
+            const vendor = await db.getVendorById(vendorId);
+            if (!vendor || !vendor.email) {
+              results.failed++;
+              continue;
+            }
+            
+            // Create invitation record
+            await db.createVendorRfqInvitation({
+              rfqId: input.rfqId,
+              vendorId,
+              status: 'pending',
+              invitedAt: new Date(),
+            });
+            
+            // Generate AI email content
+            const emailPrompt = `Generate a professional Request for Quote (RFQ) email to a vendor for the following material:
+
+RFQ Number: ${rfq.rfqNumber}
+Material: ${rfq.materialName}
+Description: ${rfq.materialDescription || 'N/A'}
+Quantity Required: ${rfq.quantity} ${rfq.unit}
+Specifications: ${rfq.specifications || 'Standard specifications'}
+Required Delivery Date: ${rfq.requiredDeliveryDate ? new Date(rfq.requiredDeliveryDate).toLocaleDateString() : 'Flexible'}
+Delivery Location: ${rfq.deliveryLocation || 'To be confirmed'}
+Incoterms: ${rfq.incoterms || 'FOB'}
+Priority: ${rfq.priority || 'Normal'}
+
+Please request:
+1. Unit price and total price
+2. Lead time / delivery schedule
+3. Minimum order quantity
+4. Payment terms
+5. Quote validity period
+
+Request a response by ${rfq.quoteDueDate ? new Date(rfq.quoteDueDate).toLocaleDateString() : '5 business days'}.
+
+Format the email professionally.`;
+
+            const response = await invokeLLM({
+              messages: [
+                { role: 'system', content: 'You are a procurement specialist drafting RFQ emails to vendors. Be professional, clear, and include all relevant material details.' },
+                { role: 'user', content: emailPrompt },
+              ],
+            });
+            
+            const rawEmailBody = response.choices[0]?.message?.content;
+            const emailBody = typeof rawEmailBody === 'string' ? rawEmailBody : 'Unable to generate email content.';
+            
+            const emailSubject = `Request for Quote: ${rfq.rfqNumber} - ${rfq.materialName}`;
+            let emailStatus: 'draft' | 'sent' | 'failed' = 'draft';
+            let deliveryError: string | undefined;
+            
+            // Try to send via SendGrid if configured
+            if (isEmailConfigured()) {
+              const sendResult = await sendEmail({
+                to: vendor.email,
+                subject: emailSubject,
+                text: emailBody,
+                html: formatEmailHtml(emailBody),
+              });
+              
+              if (sendResult.success) {
+                emailStatus = 'sent';
+                await db.updateVendorRfqInvitation(
+                  (await db.getVendorRfqInvitations(input.rfqId)).find(i => i.vendorId === vendorId)?.id || 0,
+                  { status: 'sent' }
+                );
+              } else {
+                emailStatus = 'failed';
+                deliveryError = sendResult.error;
+              }
+            }
+            
+            // Save the email record
+            const emailResult = await db.createVendorRfqEmail({
+              rfqId: input.rfqId,
+              vendorId,
+              direction: 'outbound',
+              emailType: 'rfq_request',
+              fromEmail: process.env.SENDGRID_FROM_EMAIL || 'procurement@company.com',
+              toEmail: vendor.email,
+              subject: emailSubject,
+              body: emailBody,
+              aiGenerated: true,
+              sendStatus: emailStatus,
+              sentAt: emailStatus === 'sent' ? new Date() : undefined,
+            });
+            
+            if (emailStatus === 'sent') {
+              results.sent++;
+            } else {
+              results.failed++;
+            }
+            results.emails.push({ 
+              vendorId, 
+              vendorName: vendor.name, 
+              emailId: emailResult.id,
+              status: emailStatus,
+              error: deliveryError,
+            });
+          }
+          
+          // Update RFQ status
+          await db.updateVendorRfq(input.rfqId, { status: 'sent' });
+          const emailConfigured = isEmailConfigured();
+          const auditMessage = emailConfigured 
+            ? `RFQ emails sent to ${results.sent} vendors` 
+            : `RFQ email drafts created for ${results.sent + results.failed} vendors (SendGrid not configured)`;
+          await createAuditLog(ctx.user.id, 'update', 'vendor_rfq', input.rfqId, auditMessage);
+          
+          return { ...results, emailConfigured };
+        }),
+      
+      // Send follow-up reminder
+      sendReminder: opsProcedure
+        .input(z.object({ rfqId: z.number(), vendorId: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const rfq = await db.getVendorRfqById(input.rfqId);
+          if (!rfq) throw new TRPCError({ code: 'NOT_FOUND', message: 'RFQ not found' });
+          
+          const vendor = await db.getVendorById(input.vendorId);
+          if (!vendor || !vendor.email) throw new TRPCError({ code: 'NOT_FOUND', message: 'Vendor not found or has no email' });
+          
+          const emailPrompt = `Generate a polite follow-up email for an RFQ that hasn't received a response:
+
+RFQ Number: ${rfq.rfqNumber}
+Material: ${rfq.materialName}
+Quantity: ${rfq.quantity} ${rfq.unit}
+Original Due Date: ${rfq.quoteDueDate ? new Date(rfq.quoteDueDate).toLocaleDateString() : 'N/A'}
+
+Ask if they received the original request and if they can provide a quote.`;
+
+          const response = await invokeLLM({
+            messages: [
+              { role: 'system', content: 'You are a procurement specialist sending a polite follow-up email.' },
+              { role: 'user', content: emailPrompt },
+            ],
+          });
+          
+          const emailBody = typeof response.choices[0]?.message?.content === 'string' 
+            ? response.choices[0].message.content 
+            : 'Unable to generate email content.';
+          
+          const emailSubject = `Follow-up: RFQ ${rfq.rfqNumber} - ${rfq.materialName}`;
+          let emailStatus: 'draft' | 'sent' | 'failed' = 'draft';
+          
+          if (isEmailConfigured()) {
+            const sendResult = await sendEmail({
+              to: vendor.email,
+              subject: emailSubject,
+              text: emailBody,
+              html: formatEmailHtml(emailBody),
+            });
+            emailStatus = sendResult.success ? 'sent' : 'failed';
+          }
+          
+          await db.createVendorRfqEmail({
+            rfqId: input.rfqId,
+            vendorId: input.vendorId,
+            direction: 'outbound',
+            emailType: 'follow_up',
+            fromEmail: process.env.SENDGRID_FROM_EMAIL || 'procurement@company.com',
+            toEmail: vendor.email,
+            subject: emailSubject,
+            body: emailBody,
+            aiGenerated: true,
+            sendStatus: emailStatus,
+            sentAt: emailStatus === 'sent' ? new Date() : undefined,
+          });
+          
+          // Update invitation reminder count
+          const invitations = await db.getVendorRfqInvitations(input.rfqId);
+          const invitation = invitations.find(i => i.vendorId === input.vendorId);
+          if (invitation) {
+            await db.updateVendorRfqInvitation(invitation.id, {
+              reminderSentAt: new Date(),
+              reminderCount: (invitation.reminderCount || 0) + 1,
+            });
+          }
+          
+          return { success: true, emailStatus };
+        }),
+      
+      // Get invitations for an RFQ
+      getInvitations: protectedProcedure
+        .input(z.object({ rfqId: z.number() }))
+        .query(({ input }) => db.getVendorRfqInvitations(input.rfqId)),
+    }),
+    
+    // Quotes
+    quotes: router({
+      list: protectedProcedure
+        .input(z.object({ rfqId: z.number().optional(), vendorId: z.number().optional(), status: z.string().optional() }).optional())
+        .query(({ input }) => db.getVendorQuotes(input)),
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getVendorQuoteById(input.id)),
+      getWithVendorInfo: protectedProcedure
+        .input(z.object({ rfqId: z.number() }))
+        .query(({ input }) => db.getVendorQuotesWithVendorInfo(input.rfqId)),
+      create: opsProcedure
+        .input(z.object({
+          rfqId: z.number(),
+          vendorId: z.number(),
+          quoteNumber: z.string().optional(),
+          unitPrice: z.string().optional(),
+          quantity: z.string().optional(),
+          totalPrice: z.string().optional(),
+          currency: z.string().optional(),
+          shippingCost: z.string().optional(),
+          handlingFee: z.string().optional(),
+          taxAmount: z.string().optional(),
+          otherCharges: z.string().optional(),
+          totalWithCharges: z.string().optional(),
+          leadTimeDays: z.number().optional(),
+          estimatedDeliveryDate: z.date().optional(),
+          minimumOrderQty: z.string().optional(),
+          validUntil: z.date().optional(),
+          paymentTerms: z.string().optional(),
+          receivedVia: z.enum(['email', 'portal', 'phone', 'manual']).optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createVendorQuote({ ...input, status: 'received' });
+          
+          // Update invitation status
+          const invitations = await db.getVendorRfqInvitations(input.rfqId);
+          const invitation = invitations.find(i => i.vendorId === input.vendorId);
+          if (invitation) {
+            await db.updateVendorRfqInvitation(invitation.id, { status: 'responded', respondedAt: new Date() });
+          }
+          
+          // Check if all invited vendors have responded
+          const updatedInvitations = await db.getVendorRfqInvitations(input.rfqId);
+          const allResponded = updatedInvitations.every(i => ['responded', 'declined', 'no_response'].includes(i.status));
+          if (allResponded && updatedInvitations.length > 0) {
+            await db.updateVendorRfq(input.rfqId, { status: 'all_received' });
+          } else {
+            await db.updateVendorRfq(input.rfqId, { status: 'partially_received' });
+          }
+          
+          // Rank quotes (simple ranking by price)
+          const allQuotes = await db.getVendorQuotes({ rfqId: input.rfqId });
+          const sortedQuotes = allQuotes
+            .filter(q => q.status === 'received')
+            .sort((a, b) => parseFloat(a.totalPrice || '999999') - parseFloat(b.totalPrice || '999999'));
+          for (let i = 0; i < sortedQuotes.length; i++) {
+            await db.updateVendorQuote(sortedQuotes[i].id, { overallRank: i + 1 });
+          }
+          
+          await createAuditLog(ctx.user.id, 'create', 'vendor_quote', result.id, `Quote from vendor ${input.vendorId}`);
+          return result;
+        }),
+      update: opsProcedure
+        .input(z.object({
+          id: z.number(),
+          status: z.enum(['pending', 'received', 'under_review', 'accepted', 'rejected', 'expired', 'converted_to_po']).optional(),
+          unitPrice: z.string().optional(),
+          quantity: z.string().optional(),
+          totalPrice: z.string().optional(),
+          leadTimeDays: z.number().optional(),
+          validUntil: z.date().optional(),
+          paymentTerms: z.string().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateVendorQuote(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'vendor_quote', id);
+          return { success: true };
+        }),
+      
+      // Accept quote and optionally convert to PO
+      accept: opsProcedure
+        .input(z.object({ id: z.number(), createPO: z.boolean().optional() }))
+        .mutation(async ({ input, ctx }) => {
+          const quote = await db.getVendorQuoteById(input.id);
+          if (!quote) throw new TRPCError({ code: 'NOT_FOUND', message: 'Quote not found' });
+          
+          // Mark quote as accepted
+          await db.updateVendorQuote(input.id, { status: 'accepted' });
+          
+          // Reject other quotes for this RFQ
+          const otherQuotes = await db.getVendorQuotes({ rfqId: quote.rfqId });
+          for (const q of otherQuotes) {
+            if (q.id !== input.id && q.status === 'received') {
+              await db.updateVendorQuote(q.id, { status: 'rejected' });
+            }
+          }
+          
+          // Update RFQ status
+          await db.updateVendorRfq(quote.rfqId, { status: 'awarded' });
+          
+          // Send award notification email
+          const vendor = await db.getVendorById(quote.vendorId);
+          const rfq = await db.getVendorRfqById(quote.rfqId);
+          if (vendor?.email && rfq && isEmailConfigured()) {
+            const emailBody = `Dear ${vendor.name},\n\nWe are pleased to inform you that your quote for ${rfq.materialName} (RFQ: ${rfq.rfqNumber}) has been accepted.\n\nWe will be in touch shortly with a formal Purchase Order.\n\nThank you for your competitive pricing.\n\nBest regards`;
+            await sendEmail({
+              to: vendor.email,
+              subject: `Quote Accepted: ${rfq.rfqNumber} - ${rfq.materialName}`,
+              text: emailBody,
+              html: formatEmailHtml(emailBody),
+            });
+            await db.createVendorRfqEmail({
+              rfqId: quote.rfqId,
+              vendorId: quote.vendorId,
+              quoteId: input.id,
+              direction: 'outbound',
+              emailType: 'award_notification',
+              fromEmail: process.env.SENDGRID_FROM_EMAIL || 'procurement@company.com',
+              toEmail: vendor.email,
+              subject: `Quote Accepted: ${rfq.rfqNumber}`,
+              body: emailBody,
+              aiGenerated: false,
+              sendStatus: 'sent',
+              sentAt: new Date(),
+            });
+          }
+          
+          let poId: number | undefined;
+          
+          // Create PO if requested
+          if (input.createPO && rfq) {
+            const poNumber = `PO-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+            const poResult = await db.createPurchaseOrder({
+              poNumber,
+              vendorId: quote.vendorId,
+              status: 'draft',
+              orderDate: new Date(),
+              subtotal: quote.totalPrice || '0',
+              totalAmount: quote.totalWithCharges || quote.totalPrice || '0',
+              notes: `Created from accepted quote ${quote.quoteNumber || quote.id} for RFQ ${rfq.rfqNumber}`,
+            });
+            poId = poResult.id;
+            
+            // Add line item if raw material is linked
+            if (rfq.rawMaterialId) {
+              await db.createPurchaseOrderItem({
+                purchaseOrderId: poResult.id,
+                productId: null,
+                description: rfq.materialName,
+                quantity: quote.quantity || rfq.quantity || '1',
+                unitPrice: quote.unitPrice || '0',
+                totalAmount: quote.totalPrice || '0',
+              });
+            }
+            
+            // Update quote with PO reference
+            await db.updateVendorQuote(input.id, { 
+              status: 'converted_to_po',
+              convertedToPOId: poResult.id,
+              convertedAt: new Date(),
+            });
+            
+            await createAuditLog(ctx.user.id, 'create', 'purchase_order', poResult.id, `Created from vendor quote ${input.id}`);
+          }
+          
+          await createAuditLog(ctx.user.id, 'update', 'vendor_quote', input.id, 'Quote accepted');
+          return { success: true, poId };
+        }),
+      
+      // Reject quote
+      reject: opsProcedure
+        .input(z.object({ id: z.number(), reason: z.string().optional(), sendNotification: z.boolean().optional() }))
+        .mutation(async ({ input, ctx }) => {
+          const quote = await db.getVendorQuoteById(input.id);
+          if (!quote) throw new TRPCError({ code: 'NOT_FOUND', message: 'Quote not found' });
+          
+          await db.updateVendorQuote(input.id, { status: 'rejected', notes: input.reason });
+          
+          // Send rejection notification if requested
+          if (input.sendNotification) {
+            const vendor = await db.getVendorById(quote.vendorId);
+            const rfq = await db.getVendorRfqById(quote.rfqId);
+            if (vendor?.email && rfq && isEmailConfigured()) {
+              const emailBody = `Dear ${vendor.name},\n\nThank you for submitting your quote for ${rfq.materialName} (RFQ: ${rfq.rfqNumber}).\n\nAfter careful consideration, we have decided to proceed with another supplier for this order.${input.reason ? `\n\nReason: ${input.reason}` : ''}\n\nWe appreciate your time and look forward to future opportunities.\n\nBest regards`;
+              await sendEmail({
+                to: vendor.email,
+                subject: `Quote Update: ${rfq.rfqNumber} - ${rfq.materialName}`,
+                text: emailBody,
+                html: formatEmailHtml(emailBody),
+              });
+              await db.createVendorRfqEmail({
+                rfqId: quote.rfqId,
+                vendorId: quote.vendorId,
+                quoteId: input.id,
+                direction: 'outbound',
+                emailType: 'rejection_notification',
+                fromEmail: process.env.SENDGRID_FROM_EMAIL || 'procurement@company.com',
+                toEmail: vendor.email,
+                subject: `Quote Update: ${rfq.rfqNumber}`,
+                body: emailBody,
+                aiGenerated: false,
+                sendStatus: 'sent',
+                sentAt: new Date(),
+              });
+            }
+          }
+          
+          await createAuditLog(ctx.user.id, 'update', 'vendor_quote', input.id, 'Quote rejected');
+          return { success: true };
+        }),
+      
+      // Get best quote for an RFQ
+      getBest: protectedProcedure
+        .input(z.object({ rfqId: z.number() }))
+        .query(({ input }) => db.getBestVendorQuote(input.rfqId)),
+      
+      // AI analyze and rank quotes
+      analyzeAndRank: opsProcedure
+        .input(z.object({ rfqId: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          // Rank quotes by price
+          const allQuotes = await db.getVendorQuotes({ rfqId: input.rfqId });
+          const sortedQuotes = allQuotes
+            .filter(q => q.status === 'received')
+            .sort((a, b) => parseFloat(a.totalPrice || '999999') - parseFloat(b.totalPrice || '999999'));
+          for (let i = 0; i < sortedQuotes.length; i++) {
+            await db.updateVendorQuote(sortedQuotes[i].id, { overallRank: i + 1 });
+          }
+          await createAuditLog(ctx.user.id, 'update', 'vendor_rfq', input.rfqId, 'AI analyzed and ranked quotes');
+          return { success: true };
+        }),
+    }),
+    
+    // Emails
+    emails: router({
+      list: protectedProcedure
+        .input(z.object({ rfqId: z.number().optional(), vendorId: z.number().optional() }).optional())
+        .query(({ input }) => db.getVendorRfqEmails(input)),
+    }),
+  }),
+
+  // ============================================
   // SHOPIFY INTEGRATION
   // ============================================
   shopify: router({
