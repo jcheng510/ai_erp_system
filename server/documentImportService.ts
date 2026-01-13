@@ -82,18 +82,16 @@ export interface ImportResult {
  * Parse uploaded document content (text extracted from PDF/Excel/CSV)
  */
 export async function parseUploadedDocument(
-  content: string,
+  fileUrl: string,
   filename: string,
-  documentHint?: "purchase_order" | "freight_invoice"
+  documentHint?: "purchase_order" | "freight_invoice",
+  mimeType?: string
 ): Promise<DocumentParseResult> {
   try {
-    const prompt = `You are an expert document parser for a business ERP system. Analyze the following document and extract structured data.
+    const prompt = `You are an expert document parser for a business ERP system. Analyze the attached document and extract structured data.
 
 DOCUMENT FILENAME: ${filename}
 DOCUMENT HINT: ${documentHint || "auto-detect"}
-
-DOCUMENT CONTENT:
-${content.substring(0, 15000)}
 
 INSTRUCTIONS:
 1. First, determine if this is a Purchase Order or a Freight Invoice
@@ -156,10 +154,22 @@ Return a JSON object with this structure:
 Only include the relevant object (purchaseOrder OR freightInvoice) based on document type.
 If document type is unknown, return both as null.`;
 
+    // Determine the appropriate mime type for the file
+    const effectiveMimeType = mimeType || (filename.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 
+      filename.toLowerCase().endsWith('.xlsx') ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' :
+      filename.toLowerCase().endsWith('.csv') ? 'text/csv' :
+      filename.toLowerCase().match(/\.(png|jpg|jpeg)$/i) ? 'image/jpeg' : 'application/pdf');
+    
     const response = await invokeLLM({
       messages: [
         { role: "system", content: "You are a document parsing AI that extracts structured data from business documents. Always respond with valid JSON." },
-        { role: "user", content: prompt }
+        { 
+          role: "user", 
+          content: [
+            { type: "text", text: prompt },
+            { type: "file_url", file_url: { url: fileUrl, mime_type: effectiveMimeType as any } }
+          ]
+        }
       ],
       response_format: {
         type: "json_schema",
@@ -251,7 +261,7 @@ If document type is unknown, return both as null.`;
       documentType: parsed.documentType,
       purchaseOrder: parsed.purchaseOrder,
       freightInvoice: parsed.freightInvoice,
-      rawText: content.substring(0, 5000)
+      rawText: `Document parsed from: ${fileUrl}`
     };
   } catch (error) {
     console.error("Document parse error:", error);

@@ -774,3 +774,6 @@
 - [x] Add clickable links for AI-generated items in AICommandBar (navigate to created records)
 - [x] Bulk email selection already implemented (selectedEmails state with checkboxes)
 - [x] Bulk delete/archive functionality already implemented (bulk action handlers)
+
+## Document Uploader Bug Fix
+- [x] Fix "Could not determine document type" error in document uploader

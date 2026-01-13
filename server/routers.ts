@@ -8904,8 +8904,11 @@ Ask if they received the original request and if they can provide a quote.`;
         const fileKey = `document-imports/${Date.now()}-${input.fileName}`;
         const { url } = await storagePut(fileKey, buffer, input.mimeType || 'application/octet-stream');
         
-        // Parse the document
-        const result = await parseUploadedDocument(url, input.fileName);
+        // Determine the mime type for LLM
+        const mimeType = input.mimeType || 'application/pdf';
+        
+        // Parse the document using LLM with file_url
+        const result = await parseUploadedDocument(url, input.fileName, undefined, mimeType);
         return { ...result, fileUrl: url };
       }),
 
