@@ -6531,3 +6531,152 @@ export async function generateVendorRfqNumber() {
   const count = result[0]?.count || 0;
   return `RFQ-${String(count + 1).padStart(6, '0')}`;
 }
+
+
+// ============================================
+// DOCUMENT IMPORT HELPERS
+// ============================================
+
+export async function getVendorByName(name: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(vendors).where(
+    sql`LOWER(${vendors.name}) = LOWER(${name}) OR LOWER(${vendors.name}) LIKE LOWER(${`%${name}%`})`
+  ).limit(1);
+  return result[0] || null;
+}
+
+export async function getPurchaseOrderByNumber(poNumber: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(purchaseOrders).where(
+    sql`${purchaseOrders.poNumber} = ${poNumber} OR ${purchaseOrders.poNumber} LIKE ${`%${poNumber}%`}`
+  ).limit(1);
+  return result[0] || null;
+}
+
+export async function updatePurchaseOrderFreight(poId: number, freightCost: string) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(purchaseOrders).set({ 
+    freightCost,
+    updatedAt: Date.now()
+  } as any).where(eq(purchaseOrders.id, poId));
+}
+
+// Freight history table functions
+export interface FreightHistoryData {
+  invoiceNumber: string;
+  carrierId: number;
+  invoiceDate: number;
+  shipmentDate?: number;
+  deliveryDate?: number;
+  origin?: string;
+  destination?: string;
+  trackingNumber?: string;
+  weight?: string;
+  dimensions?: string;
+  freightCharges: string;
+  fuelSurcharge?: string;
+  accessorialCharges?: string;
+  totalAmount: string;
+  currency?: string;
+  relatedPoId?: number;
+  notes?: string;
+  createdBy: number;
+}
+
+// Note: freightHistory table needs to be created in schema
+// For now, we'll store freight data in a JSON field or create records in freightBookings
+export async function createFreightHistory(data: FreightHistoryData) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  // Store as a freight booking with invoice data
+  const result = await db.insert(freightBookings).values({
+    rfqId: 0, // No RFQ for imported invoices
+    quoteId: 0, // No quote for imported invoices
+    carrierId: data.carrierId,
+    status: "completed",
+    bookingDate: data.invoiceDate,
+    pickupDate: data.shipmentDate,
+    deliveryDate: data.deliveryDate,
+    totalCost: data.totalAmount,
+    trackingNumber: data.trackingNumber,
+    notes: JSON.stringify({
+      invoiceNumber: data.invoiceNumber,
+      origin: data.origin,
+      destination: data.destination,
+      weight: data.weight,
+      dimensions: data.dimensions,
+      freightCharges: data.freightCharges,
+      fuelSurcharge: data.fuelSurcharge,
+      accessorialCharges: data.accessorialCharges,
+      currency: data.currency,
+      relatedPoId: data.relatedPoId,
+      importedInvoice: true
+    }),
+    createdBy: data.createdBy
+  } as any);
+  
+  return result[0].insertId;
+}
+
+// Document import log
+export interface DocumentImportLog {
+  filename: string;
+  documentType: string;
+  status: "success" | "failed" | "partial";
+  createdRecords: string; // JSON
+  updatedRecords: string; // JSON
+  warnings: string; // JSON
+  error?: string;
+  importedBy: number;
+  importedAt: number;
+}
+
+// For now, store import logs in audit_logs
+export async function createDocumentImportLog(data: DocumentImportLog) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  await db.insert(auditLogs).values({
+    userId: data.importedBy,
+    action: "create", // Use 'create' as the action type
+    entityType: `document_import_${data.documentType}`,
+    entityId: 0,
+    entityName: data.filename,
+    newValues: {
+      filename: data.filename,
+      status: data.status,
+      createdRecords: JSON.parse(data.createdRecords),
+      updatedRecords: JSON.parse(data.updatedRecords),
+      warnings: JSON.parse(data.warnings),
+      error: data.error
+    }
+  });
+}
+
+export async function getDocumentImportLogs(limit: number = 50) {
+  const db = await getDb();
+  if (!db) return [];
+  
+  const result = await db.select().from(auditLogs)
+    .where(sql`${auditLogs.entityType} LIKE 'document_import_%'`)
+    .orderBy(desc(auditLogs.createdAt))
+    .limit(limit);
+  
+  return result.map(log => {
+    const importData = (log.newValues as any) || {};
+    return {
+      id: log.id,
+      fileName: importData.fileName || log.entityName || 'Unknown',
+      documentType: log.entityType?.replace('document_import_', '') || 'unknown',
+      status: importData.status || (log.action === 'create' ? 'completed' : 'pending'),
+      recordsCreated: importData.recordsCreated || 0,
+      recordsUpdated: importData.recordsUpdated || 0,
+      createdAt: log.createdAt,
+      importData,
+    };
+  });
+}

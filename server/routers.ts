@@ -7,6 +7,7 @@ import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
 import { invokeLLM } from "./_core/llm";
 import { sendEmail, isEmailConfigured, formatEmailHtml } from "./_core/email";
 import { processEmailReply, analyzeEmail, generateEmailReply } from "./emailReplyService";
+import { parseUploadedDocument, importPurchaseOrder, importFreightInvoice, matchLineItemsToMaterials } from "./documentImportService";
 import * as db from "./db";
 import { storagePut } from "./storage";
 import { nanoid } from "nanoid";
@@ -8883,6 +8884,110 @@ Ask if they received the original request and if they can provide a quote.`;
         // Update PO status
         await db.updatePurchaseOrder(session.purchaseOrderId, { status: 'confirmed' });
         return { success: true };
+      }),
+  }),
+
+  // ============================================
+  // DOCUMENT IMPORT
+  // ============================================
+  documentImport: router({
+    // Parse uploaded document to extract data
+    parse: protectedProcedure
+      .input(z.object({
+        fileData: z.string(), // base64 encoded file
+        fileName: z.string(),
+        mimeType: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        // Upload to S3 first
+        const buffer = Buffer.from(input.fileData, 'base64');
+        const fileKey = `document-imports/${Date.now()}-${input.fileName}`;
+        const { url } = await storagePut(fileKey, buffer, input.mimeType || 'application/octet-stream');
+        
+        // Parse the document
+        const result = await parseUploadedDocument(url, input.fileName);
+        return { ...result, fileUrl: url };
+      }),
+
+    // Import a purchase order
+    importPO: protectedProcedure
+      .input(z.object({
+        poData: z.object({
+          poNumber: z.string(),
+          vendorName: z.string(),
+          vendorEmail: z.string().optional(),
+          orderDate: z.string(),
+          deliveryDate: z.string().optional(),
+          subtotal: z.number(),
+          totalAmount: z.number(),
+          notes: z.string().optional(),
+          status: z.string().optional(),
+          lineItems: z.array(z.object({
+            description: z.string(),
+            sku: z.string().optional(),
+            quantity: z.number(),
+            unit: z.string().optional(),
+            unitPrice: z.number(),
+            totalPrice: z.number(),
+          })),
+        }),
+        markAsReceived: z.boolean().default(false),
+        updateInventory: z.boolean().default(true),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return importPurchaseOrder(input.poData as any, ctx.user.id, input.markAsReceived);
+      }),
+
+    // Import a freight invoice
+    importFreightInvoice: protectedProcedure
+      .input(z.object({
+        invoiceData: z.object({
+          invoiceNumber: z.string(),
+          carrierName: z.string(),
+          carrierEmail: z.string().optional(),
+          invoiceDate: z.string(),
+          shipmentDate: z.string().optional(),
+          deliveryDate: z.string().optional(),
+          origin: z.string().optional(),
+          destination: z.string().optional(),
+          trackingNumber: z.string().optional(),
+          weight: z.string().optional(),
+          dimensions: z.string().optional(),
+          freightCharges: z.number(),
+          fuelSurcharge: z.number().optional(),
+          accessorialCharges: z.number().optional(),
+          totalAmount: z.number(),
+          currency: z.string().optional(),
+          relatedPoNumber: z.string().optional(),
+          notes: z.string().optional(),
+        }),
+        linkToPO: z.boolean().default(true),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return importFreightInvoice(input.invoiceData as any, ctx.user.id);
+      }),
+
+    // Get import history
+    getHistory: protectedProcedure
+      .input(z.object({ limit: z.number().default(50) }))
+      .query(async ({ input }) => {
+        return db.getDocumentImportLogs(input.limit);
+      }),
+
+    // Match line items to existing materials
+    matchMaterials: protectedProcedure
+      .input(z.object({
+        lineItems: z.array(z.object({
+          description: z.string(),
+          sku: z.string().optional(),
+          quantity: z.number(),
+          unit: z.string().optional(),
+          unitPrice: z.number(),
+          totalPrice: z.number(),
+        })),
+      }))
+      .mutation(async ({ input }) => {
+        return matchLineItemsToMaterials(input.lineItems);
       }),
   }),
 });

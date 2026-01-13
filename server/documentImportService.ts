@@ -1,0 +1,558 @@
+import { invokeLLM } from "./_core/llm";
+import * as db from "./db";
+
+// Types for document import
+export interface ImportedLineItem {
+  description: string;
+  quantity: number;
+  unit?: string;
+  unitPrice: number;
+  totalPrice: number;
+  sku?: string;
+  rawMaterialId?: number;
+}
+
+export interface ImportedPurchaseOrder {
+  poNumber: string;
+  vendorName: string;
+  vendorEmail?: string;
+  orderDate: string;
+  deliveryDate?: string;
+  status: "draft" | "sent" | "confirmed" | "shipped" | "received" | "completed";
+  lineItems: ImportedLineItem[];
+  subtotal: number;
+  taxAmount?: number;
+  shippingAmount?: number;
+  totalAmount: number;
+  currency?: string;
+  notes?: string;
+  confidence: number;
+}
+
+export interface ImportedFreightInvoice {
+  invoiceNumber: string;
+  carrierName: string;
+  carrierEmail?: string;
+  invoiceDate: string;
+  shipmentDate?: string;
+  deliveryDate?: string;
+  origin?: string;
+  destination?: string;
+  trackingNumber?: string;
+  weight?: string;
+  dimensions?: string;
+  freightCharges: number;
+  fuelSurcharge?: number;
+  accessorialCharges?: number;
+  totalAmount: number;
+  currency?: string;
+  relatedPoNumber?: string;
+  notes?: string;
+  confidence: number;
+}
+
+export interface DocumentParseResult {
+  success: boolean;
+  documentType: "purchase_order" | "freight_invoice" | "unknown";
+  purchaseOrder?: ImportedPurchaseOrder;
+  freightInvoice?: ImportedFreightInvoice;
+  rawText?: string;
+  error?: string;
+}
+
+export interface ImportResult {
+  success: boolean;
+  documentType: string;
+  createdRecords: {
+    type: string;
+    id: number;
+    name: string;
+  }[];
+  updatedRecords: {
+    type: string;
+    id: number;
+    name: string;
+    changes: string;
+  }[];
+  warnings: string[];
+  error?: string;
+}
+
+/**
+ * Parse uploaded document content (text extracted from PDF/Excel/CSV)
+ */
+export async function parseUploadedDocument(
+  content: string,
+  filename: string,
+  documentHint?: "purchase_order" | "freight_invoice"
+): Promise<DocumentParseResult> {
+  try {
+    const prompt = `You are an expert document parser for a business ERP system. Analyze the following document and extract structured data.
+
+DOCUMENT FILENAME: ${filename}
+DOCUMENT HINT: ${documentHint || "auto-detect"}
+
+DOCUMENT CONTENT:
+${content.substring(0, 15000)}
+
+INSTRUCTIONS:
+1. First, determine if this is a Purchase Order or a Freight Invoice
+2. Extract all relevant structured data
+3. For Purchase Orders: extract PO number, vendor info, line items with quantities/prices, dates, totals
+4. For Freight Invoices: extract invoice number, carrier info, shipment details, charges breakdown
+5. Match line item descriptions to common raw materials if possible
+6. Assign a confidence score (0-100) based on extraction completeness
+
+Return a JSON object with this structure:
+{
+  "documentType": "purchase_order" | "freight_invoice" | "unknown",
+  "confidence": 85,
+  "purchaseOrder": {
+    "poNumber": "PO-12345",
+    "vendorName": "Supplier Inc",
+    "vendorEmail": "supplier@example.com",
+    "orderDate": "2025-01-10",
+    "deliveryDate": "2025-01-20",
+    "status": "received",
+    "lineItems": [
+      {
+        "description": "Coconut Oil",
+        "quantity": 1000,
+        "unit": "kg",
+        "unitPrice": 2.50,
+        "totalPrice": 2500.00,
+        "sku": "CO-001"
+      }
+    ],
+    "subtotal": 2500.00,
+    "taxAmount": 200.00,
+    "shippingAmount": 150.00,
+    "totalAmount": 2850.00,
+    "currency": "USD",
+    "notes": "Any special notes"
+  },
+  "freightInvoice": {
+    "invoiceNumber": "FI-98765",
+    "carrierName": "FastFreight Logistics",
+    "carrierEmail": "billing@fastfreight.com",
+    "invoiceDate": "2025-01-15",
+    "shipmentDate": "2025-01-10",
+    "deliveryDate": "2025-01-14",
+    "origin": "Los Angeles, CA",
+    "destination": "Chicago, IL",
+    "trackingNumber": "FF123456789",
+    "weight": "5000 lbs",
+    "dimensions": "48x40x48 in",
+    "freightCharges": 1200.00,
+    "fuelSurcharge": 180.00,
+    "accessorialCharges": 75.00,
+    "totalAmount": 1455.00,
+    "currency": "USD",
+    "relatedPoNumber": "PO-12345",
+    "notes": "Liftgate delivery"
+  }
+}
+
+Only include the relevant object (purchaseOrder OR freightInvoice) based on document type.
+If document type is unknown, return both as null.`;
+
+    const response = await invokeLLM({
+      messages: [
+        { role: "system", content: "You are a document parsing AI that extracts structured data from business documents. Always respond with valid JSON." },
+        { role: "user", content: prompt }
+      ],
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "document_parse_result",
+          strict: true,
+          schema: {
+            type: "object",
+            properties: {
+              documentType: { type: "string", enum: ["purchase_order", "freight_invoice", "unknown"] },
+              confidence: { type: "number" },
+              purchaseOrder: {
+                type: ["object", "null"],
+                properties: {
+                  poNumber: { type: "string" },
+                  vendorName: { type: "string" },
+                  vendorEmail: { type: "string" },
+                  orderDate: { type: "string" },
+                  deliveryDate: { type: "string" },
+                  status: { type: "string" },
+                  lineItems: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      properties: {
+                        description: { type: "string" },
+                        quantity: { type: "number" },
+                        unit: { type: "string" },
+                        unitPrice: { type: "number" },
+                        totalPrice: { type: "number" },
+                        sku: { type: "string" }
+                      },
+                      required: ["description", "quantity", "unitPrice", "totalPrice"],
+                      additionalProperties: false
+                    }
+                  },
+                  subtotal: { type: "number" },
+                  taxAmount: { type: "number" },
+                  shippingAmount: { type: "number" },
+                  totalAmount: { type: "number" },
+                  currency: { type: "string" },
+                  notes: { type: "string" }
+                },
+                required: ["poNumber", "vendorName", "orderDate", "lineItems", "totalAmount"],
+                additionalProperties: false
+              },
+              freightInvoice: {
+                type: ["object", "null"],
+                properties: {
+                  invoiceNumber: { type: "string" },
+                  carrierName: { type: "string" },
+                  carrierEmail: { type: "string" },
+                  invoiceDate: { type: "string" },
+                  shipmentDate: { type: "string" },
+                  deliveryDate: { type: "string" },
+                  origin: { type: "string" },
+                  destination: { type: "string" },
+                  trackingNumber: { type: "string" },
+                  weight: { type: "string" },
+                  dimensions: { type: "string" },
+                  freightCharges: { type: "number" },
+                  fuelSurcharge: { type: "number" },
+                  accessorialCharges: { type: "number" },
+                  totalAmount: { type: "number" },
+                  currency: { type: "string" },
+                  relatedPoNumber: { type: "string" },
+                  notes: { type: "string" }
+                },
+                required: ["invoiceNumber", "carrierName", "invoiceDate", "totalAmount"],
+                additionalProperties: false
+              }
+            },
+            required: ["documentType", "confidence"],
+            additionalProperties: false
+          }
+        }
+      }
+    });
+
+    const content_str = response.choices[0]?.message?.content;
+    if (!content_str || typeof content_str !== 'string') {
+      return { success: false, documentType: "unknown", error: "No response from AI" };
+    }
+
+    const parsed = JSON.parse(content_str);
+    
+    return {
+      success: true,
+      documentType: parsed.documentType,
+      purchaseOrder: parsed.purchaseOrder,
+      freightInvoice: parsed.freightInvoice,
+      rawText: content.substring(0, 5000)
+    };
+  } catch (error) {
+    console.error("Document parse error:", error);
+    return {
+      success: false,
+      documentType: "unknown",
+      error: error instanceof Error ? error.message : "Unknown parsing error"
+    };
+  }
+}
+
+/**
+ * Match line items to existing raw materials
+ */
+export async function matchLineItemsToMaterials(
+  lineItems: ImportedLineItem[]
+): Promise<ImportedLineItem[]> {
+  const rawMaterials = await db.getRawMaterials();
+  
+  return lineItems.map(item => {
+    // Try to match by description or SKU
+    const match = rawMaterials.find(rm => {
+      const descMatch = rm.name.toLowerCase().includes(item.description.toLowerCase()) ||
+                       item.description.toLowerCase().includes(rm.name.toLowerCase());
+      const skuMatch = item.sku && rm.sku && rm.sku.toLowerCase() === item.sku.toLowerCase();
+      return descMatch || skuMatch;
+    });
+    
+    return {
+      ...item,
+      rawMaterialId: match?.id
+    };
+  });
+}
+
+/**
+ * Import a parsed purchase order into the system
+ */
+export async function importPurchaseOrder(
+  po: ImportedPurchaseOrder,
+  userId: number,
+  markAsReceived: boolean = true
+): Promise<ImportResult> {
+  const createdRecords: ImportResult["createdRecords"] = [];
+  const updatedRecords: ImportResult["updatedRecords"] = [];
+  const warnings: string[] = [];
+
+  try {
+    // 1. Find or create vendor
+    let vendor = await db.getVendorByName(po.vendorName);
+    if (!vendor) {
+      const vendorResult = await db.createVendor({
+        name: po.vendorName,
+        email: po.vendorEmail || "",
+        type: "supplier",
+        status: "active"
+      });
+      vendor = await db.getVendorById(vendorResult.id) || null;
+      createdRecords.push({ type: "vendor", id: vendorResult.id, name: po.vendorName });
+    }
+
+    // 2. Match line items to raw materials
+    const matchedItems = await matchLineItemsToMaterials(po.lineItems);
+    
+    // 3. Create raw materials for unmatched items
+    for (const item of matchedItems) {
+      if (!item.rawMaterialId) {
+        const materialResult = await db.createRawMaterial({
+          name: item.description,
+          sku: item.sku || `RM-${Date.now()}`,
+          unit: item.unit || "EA",
+          unitCost: item.unitPrice.toString(),
+          preferredVendorId: vendor!.id
+        });
+        item.rawMaterialId = materialResult.id;
+        createdRecords.push({ type: "raw_material", id: materialResult.id, name: item.description });
+      }
+    }
+
+    // 4. Create the purchase order
+    const poResult = await db.createPurchaseOrder({
+      poNumber: po.poNumber,
+      vendorId: vendor!.id,
+      status: markAsReceived ? "received" : "confirmed",
+      orderDate: new Date(po.orderDate),
+      expectedDate: po.deliveryDate ? new Date(po.deliveryDate) : undefined,
+      subtotal: po.subtotal.toString(),
+      totalAmount: po.totalAmount.toString(),
+      notes: po.notes,
+      createdBy: userId
+    });
+    createdRecords.push({ type: "purchase_order", id: poResult.id, name: po.poNumber });
+
+    // 5. Create PO line items
+    for (const item of matchedItems) {
+      await db.createPurchaseOrderItem({
+        purchaseOrderId: poResult.id,
+        productId: null, // Raw material items don't have product IDs
+        description: item.description,
+        quantity: item.quantity.toString(),
+        unitPrice: item.unitPrice.toString(),
+        totalAmount: item.totalPrice.toString()
+      });
+    }
+
+    // 6. If marking as received, update inventory
+    if (markAsReceived) {
+      for (const item of matchedItems) {
+        if (item.rawMaterialId) {
+          // Get current stock and add received quantity
+          const material = await db.getRawMaterialById(item.rawMaterialId);
+          if (material) {
+            const currentReceived = parseFloat(material.quantityReceived || '0');
+            const newReceived = currentReceived + item.quantity;
+            await db.updateRawMaterial(item.rawMaterialId, {
+              quantityReceived: newReceived.toString(),
+              lastReceivedDate: new Date(),
+              lastReceivedQty: item.quantity.toString(),
+              receivingStatus: 'received'
+            } as any);
+            updatedRecords.push({
+              type: "raw_material",
+              id: item.rawMaterialId,
+              name: material.name,
+              changes: `Received: +${item.quantity} (total received: ${newReceived})`
+            });
+          }
+        }
+      }
+    }
+
+    return {
+      success: true,
+      documentType: "purchase_order",
+      createdRecords,
+      updatedRecords,
+      warnings
+    };
+  } catch (error) {
+    return {
+      success: false,
+      documentType: "purchase_order",
+      createdRecords,
+      updatedRecords,
+      warnings,
+      error: error instanceof Error ? error.message : "Import failed"
+    };
+  }
+}
+
+/**
+ * Import a parsed freight invoice into the system
+ */
+export async function importFreightInvoice(
+  invoice: ImportedFreightInvoice,
+  userId: number
+): Promise<ImportResult> {
+  const createdRecords: ImportResult["createdRecords"] = [];
+  const updatedRecords: ImportResult["updatedRecords"] = [];
+  const warnings: string[] = [];
+
+  try {
+    // 1. Find or create carrier as vendor
+    let carrier = await db.getVendorByName(invoice.carrierName);
+    if (!carrier) {
+      const carrierResult = await db.createVendor({
+        name: invoice.carrierName,
+        email: invoice.carrierEmail || "",
+        type: "service", // Use 'service' for carriers since 'carrier' is not a valid type
+        status: "active"
+      });
+      carrier = await db.getVendorById(carrierResult.id) || null;
+      createdRecords.push({ type: "vendor", id: carrierResult.id, name: invoice.carrierName });
+    }
+
+    // 2. Try to find related PO if specified
+    let relatedPoId: number | undefined;
+    if (invoice.relatedPoNumber) {
+      const po = await db.findPurchaseOrderByNumber(invoice.relatedPoNumber);
+      if (po) {
+        relatedPoId = po.id;
+      } else {
+        warnings.push(`Related PO ${invoice.relatedPoNumber} not found`);
+      }
+    }
+
+    // 3. Create freight history record
+    const freightId = await db.createFreightHistory({
+      invoiceNumber: invoice.invoiceNumber,
+      carrierId: carrier!.id,
+      invoiceDate: new Date(invoice.invoiceDate).getTime(),
+      shipmentDate: invoice.shipmentDate ? new Date(invoice.shipmentDate).getTime() : undefined,
+      deliveryDate: invoice.deliveryDate ? new Date(invoice.deliveryDate).getTime() : undefined,
+      origin: invoice.origin,
+      destination: invoice.destination,
+      trackingNumber: invoice.trackingNumber,
+      weight: invoice.weight,
+      dimensions: invoice.dimensions,
+      freightCharges: invoice.freightCharges.toString(),
+      fuelSurcharge: invoice.fuelSurcharge?.toString(),
+      accessorialCharges: invoice.accessorialCharges?.toString(),
+      totalAmount: invoice.totalAmount.toString(),
+      currency: invoice.currency || "USD",
+      relatedPoId,
+      notes: invoice.notes,
+      createdBy: userId
+    });
+    createdRecords.push({ type: "freight_history", id: freightId, name: invoice.invoiceNumber });
+
+    // 4. If related to a PO, update the PO with freight cost
+    if (relatedPoId) {
+      await db.updatePurchaseOrder(relatedPoId, { freightCost: invoice.totalAmount.toString() } as any);
+      updatedRecords.push({
+        type: "purchase_order",
+        id: relatedPoId,
+        name: invoice.relatedPoNumber!,
+        changes: `Freight cost added: $${invoice.totalAmount}`
+      });
+    }
+
+    return {
+      success: true,
+      documentType: "freight_invoice",
+      createdRecords,
+      updatedRecords,
+      warnings
+    };
+  } catch (error) {
+    return {
+      success: false,
+      documentType: "freight_invoice",
+      createdRecords,
+      updatedRecords,
+      warnings,
+      error: error instanceof Error ? error.message : "Import failed"
+    };
+  }
+}
+
+/**
+ * Process multiple documents in bulk
+ */
+export async function bulkImportDocuments(
+  documents: { content: string; filename: string; hint?: "purchase_order" | "freight_invoice" }[],
+  userId: number,
+  markPOsAsReceived: boolean = true
+): Promise<{
+  totalProcessed: number;
+  successful: number;
+  failed: number;
+  results: ImportResult[];
+}> {
+  const results: ImportResult[] = [];
+  let successful = 0;
+  let failed = 0;
+
+  for (const doc of documents) {
+    const parseResult = await parseUploadedDocument(doc.content, doc.filename, doc.hint);
+    
+    if (!parseResult.success) {
+      results.push({
+        success: false,
+        documentType: "unknown",
+        createdRecords: [],
+        updatedRecords: [],
+        warnings: [],
+        error: parseResult.error || "Failed to parse document"
+      });
+      failed++;
+      continue;
+    }
+
+    let importResult: ImportResult;
+    
+    if (parseResult.documentType === "purchase_order" && parseResult.purchaseOrder) {
+      importResult = await importPurchaseOrder(parseResult.purchaseOrder, userId, markPOsAsReceived);
+    } else if (parseResult.documentType === "freight_invoice" && parseResult.freightInvoice) {
+      importResult = await importFreightInvoice(parseResult.freightInvoice, userId);
+    } else {
+      importResult = {
+        success: false,
+        documentType: parseResult.documentType,
+        createdRecords: [],
+        updatedRecords: [],
+        warnings: [],
+        error: "Unknown document type"
+      };
+    }
+
+    results.push(importResult);
+    if (importResult.success) {
+      successful++;
+    } else {
+      failed++;
+    }
+  }
+
+  return {
+    totalProcessed: documents.length,
+    successful,
+    failed,
+    results
+  };
+}

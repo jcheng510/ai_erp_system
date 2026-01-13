@@ -743,3 +743,15 @@
 - [x] Enable/disable auto-reply per category
 - [x] Add delay option before auto-reply
 - [x] Log auto-replies in email history
+
+## Historical Document Import System
+- [x] Create document upload infrastructure for POs and freight invoices
+- [x] Build AI-powered document parser for various formats (PDF, Excel, CSV)
+- [x] Create PO import processor to extract vendor, materials, quantities, prices
+- [x] Update inventory records from imported POs (mark as received)
+- [x] Create freight invoice import processor for carrier, costs, shipment details
+- [x] Build freight history tracking from imported invoices
+- [x] Create import preview UI with data validation
+- [x] Add import confirmation with edit capability before commit
+- [x] Create import history log to track all imports
+- [ ] Add bulk import support for multiple documents
