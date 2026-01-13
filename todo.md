@@ -755,3 +755,12 @@
 - [x] Add import confirmation with edit capability before commit
 - [x] Create import history log to track all imports
 - [ ] Add bulk import support for multiple documents
+
+## Google Drive Document Import
+- [x] Add Google Drive tab to Document Import page
+- [x] Implement folder browser using existing Google OAuth
+- [x] List files in selected folder (PDFs, Excel, CSV)
+- [x] Enable batch selection of multiple files
+- [x] Download and process selected files through AI parser
+- [x] Show batch import progress with per-file status
+- [x] Add import results summary for batch operations

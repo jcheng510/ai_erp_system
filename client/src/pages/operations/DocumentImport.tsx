@@ -11,7 +11,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
-import { Upload, FileText, Truck, Package, AlertCircle, CheckCircle, Clock, Edit2, X, ChevronRight, History, Loader2 } from "lucide-react";
+import { Upload, FileText, Truck, Package, AlertCircle, CheckCircle, Clock, Edit2, X, ChevronRight, History, Loader2, FolderOpen, Cloud, ChevronLeft, File, RefreshCw } from "lucide-react";
 import { useDropzone } from "react-dropzone";
 
 interface ParsedLineItem {
@@ -62,6 +62,21 @@ interface ParsedFreightInvoice {
   confidence: number;
 }
 
+interface DriveFile {
+  id: string;
+  name: string;
+  mimeType: string;
+  size?: string;
+  modifiedTime?: string;
+  webViewLink?: string;
+}
+
+interface DriveFolder {
+  id: string;
+  name: string;
+  modifiedTime?: string;
+}
+
 export default function DocumentImport() {
   const [activeTab, setActiveTab] = useState("upload");
   const [uploadType, setUploadType] = useState<"po" | "freight">("po");
@@ -73,12 +88,34 @@ export default function DocumentImport() {
   const [updateInventory, setUpdateInventory] = useState(true);
   const [linkToPO, setLinkToPO] = useState(true);
   const [editingLineItem, setEditingLineItem] = useState<number | null>(null);
+  
+  // Google Drive state
+  const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
+  const [folderPath, setFolderPath] = useState<Array<{ id: string | null; name: string }>>([{ id: null, name: "My Drive" }]);
+  const [selectedFiles, setSelectedFiles] = useState<DriveFile[]>([]);
+  const [isBatchProcessing, setIsBatchProcessing] = useState(false);
+  const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0 });
+  const [batchResults, setBatchResults] = useState<Array<{ fileName: string; success: boolean; error?: string; data?: any }>>([]);
 
   const parseMutation = trpc.documentImport.parse.useMutation();
   const importPOMutation = trpc.documentImport.importPO.useMutation();
   const importFreightMutation = trpc.documentImport.importFreightInvoice.useMutation();
   const matchMaterialsMutation = trpc.documentImport.matchMaterials.useMutation();
   const historyQuery = trpc.documentImport.getHistory.useQuery({ limit: 50 });
+  
+  // Google Drive queries
+  const googleConnectionQuery = trpc.sheetsImport.getConnectionStatus.useQuery();
+  const googleAuthUrlQuery = trpc.sheetsImport.getAuthUrl.useQuery();
+  const driveFoldersQuery = trpc.documentImport.listDriveFolders.useQuery(
+    { parentFolderId: currentFolderId || undefined },
+    { enabled: googleConnectionQuery.data?.connected && activeTab === "drive" }
+  );
+  const driveFilesQuery = trpc.documentImport.listDriveFiles.useQuery(
+    { folderId: currentFolderId || "root" },
+    { enabled: googleConnectionQuery.data?.connected && activeTab === "drive" && !!currentFolderId }
+  );
+  const parseFromDriveMutation = trpc.documentImport.parseFromDrive.useMutation();
+  const batchParseFromDriveMutation = trpc.documentImport.batchParseFromDrive.useMutation();
 
   const onDrop = useCallback(async (acceptedFiles: File[]) => {
     if (acceptedFiles.length === 0) return;
@@ -207,6 +244,10 @@ export default function DocumentImport() {
           <TabsTrigger value="upload" className="gap-2">
             <Upload className="h-4 w-4" />
             Upload Documents
+          </TabsTrigger>
+          <TabsTrigger value="drive" className="gap-2">
+            <Cloud className="h-4 w-4" />
+            Google Drive
           </TabsTrigger>
           <TabsTrigger value="history" className="gap-2">
             <History className="h-4 w-4" />
@@ -384,6 +425,287 @@ export default function DocumentImport() {
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        {/* Google Drive Tab */}
+        <TabsContent value="drive" className="space-y-6">
+          {!googleConnectionQuery.data?.connected ? (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Cloud className="h-5 w-5" />
+                  Connect Google Drive
+                </CardTitle>
+                <CardDescription>
+                  Connect your Google account to import documents directly from Google Drive folders
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {googleAuthUrlQuery.data?.url ? (
+                  <Button asChild>
+                    <a href={googleAuthUrlQuery.data.url}>
+                      <Cloud className="h-4 w-4 mr-2" />
+                      Connect Google Drive
+                    </a>
+                  </Button>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    Google OAuth is not configured. Please add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to enable this feature.
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="grid gap-6 md:grid-cols-3">
+              {/* Folder Browser */}
+              <Card className="md:col-span-2">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-lg">Browse Folders</CardTitle>
+                    <Button 
+                      variant="ghost" 
+                      size="sm"
+                      onClick={() => {
+                        driveFoldersQuery.refetch();
+                        driveFilesQuery.refetch();
+                      }}
+                    >
+                      <RefreshCw className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  {/* Breadcrumb */}
+                  <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                    {folderPath.map((folder, index) => (
+                      <div key={folder.id || 'root'} className="flex items-center">
+                        {index > 0 && <ChevronRight className="h-4 w-4 mx-1" />}
+                        <button
+                          onClick={() => {
+                            setCurrentFolderId(folder.id);
+                            setFolderPath(folderPath.slice(0, index + 1));
+                            setSelectedFiles([]);
+                          }}
+                          className="hover:text-foreground hover:underline"
+                        >
+                          {folder.name}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  {driveFoldersQuery.isLoading ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader2 className="h-6 w-6 animate-spin" />
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {/* Folders */}
+                      {driveFoldersQuery.data?.folders && driveFoldersQuery.data.folders.length > 0 && (
+                        <div>
+                          <Label className="text-xs text-muted-foreground mb-2 block">Folders</Label>
+                          <div className="grid gap-2">
+                            {driveFoldersQuery.data.folders.map((folder: DriveFolder) => (
+                              <button
+                                key={folder.id}
+                                onClick={() => {
+                                  setCurrentFolderId(folder.id);
+                                  setFolderPath([...folderPath, { id: folder.id, name: folder.name }]);
+                                  setSelectedFiles([]);
+                                }}
+                                className="flex items-center gap-3 p-3 rounded-lg border hover:bg-accent text-left"
+                              >
+                                <FolderOpen className="h-5 w-5 text-yellow-500" />
+                                <span className="font-medium">{folder.name}</span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Files */}
+                      {driveFilesQuery.data?.files && driveFilesQuery.data.files.length > 0 && (
+                        <div>
+                          <Label className="text-xs text-muted-foreground mb-2 block">Files</Label>
+                          <div className="grid gap-2">
+                            {driveFilesQuery.data.files.map((file: DriveFile) => (
+                              <div
+                                key={file.id}
+                                className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer ${
+                                  selectedFiles.some(f => f.id === file.id) ? 'bg-primary/10 border-primary' : 'hover:bg-accent'
+                                }`}
+                                onClick={() => {
+                                  setSelectedFiles(prev => 
+                                    prev.some(f => f.id === file.id)
+                                      ? prev.filter(f => f.id !== file.id)
+                                      : [...prev, file]
+                                  );
+                                }}
+                              >
+                                <Checkbox 
+                                  checked={selectedFiles.some(f => f.id === file.id)}
+                                  onCheckedChange={() => {}}
+                                />
+                                <File className="h-5 w-5 text-blue-500" />
+                                <div className="flex-1 min-w-0">
+                                  <p className="font-medium truncate">{file.name}</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    {file.modifiedTime && new Date(file.modifiedTime).toLocaleDateString()}
+                                  </p>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {!driveFoldersQuery.data?.folders?.length && !driveFilesQuery.data?.files?.length && currentFolderId && (
+                        <div className="text-center py-8 text-muted-foreground">
+                          This folder is empty or contains no supported files
+                        </div>
+                      )}
+
+                      {!currentFolderId && (
+                        <div className="text-center py-8 text-muted-foreground">
+                          Select a folder to browse its contents
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Selected Files Panel */}
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-lg">Selected Files</CardTitle>
+                  <CardDescription>
+                    {selectedFiles.length} file{selectedFiles.length !== 1 ? 's' : ''} selected
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {selectedFiles.length === 0 ? (
+                    <div className="text-center py-8 text-muted-foreground text-sm">
+                      Click on files to select them for import
+                    </div>
+                  ) : (
+                    <>
+                      <div className="space-y-2 max-h-[300px] overflow-y-auto">
+                        {selectedFiles.map(file => (
+                          <div key={file.id} className="flex items-center gap-2 p-2 rounded bg-muted">
+                            <File className="h-4 w-4 text-blue-500 flex-shrink-0" />
+                            <span className="text-sm truncate flex-1">{file.name}</span>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 w-6 p-0"
+                              onClick={() => setSelectedFiles(prev => prev.filter(f => f.id !== file.id))}
+                            >
+                              <X className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+
+                      <Button 
+                        className="w-full"
+                        disabled={isBatchProcessing}
+                        onClick={async () => {
+                          setIsBatchProcessing(true);
+                          setBatchProgress({ current: 0, total: selectedFiles.length });
+                          setBatchResults([]);
+
+                          try {
+                            const result = await batchParseFromDriveMutation.mutateAsync({
+                              files: selectedFiles.map(f => ({
+                                fileId: f.id,
+                                fileName: f.name,
+                                mimeType: f.mimeType,
+                              })),
+                            });
+
+                            const results = result.results.map(r => ({
+                              fileName: r.fileName,
+                              success: r.success,
+                              error: r.error,
+                              data: r.data,
+                            }));
+
+                            setBatchResults(results);
+                            
+                            const successCount = results.filter(r => r.success).length;
+                            if (successCount === results.length) {
+                              toast.success(`Successfully parsed all ${successCount} files`);
+                            } else {
+                              toast.warning(`Parsed ${successCount} of ${results.length} files`);
+                            }
+                          } catch (error) {
+                            console.error('Batch parse error:', error);
+                            toast.error('Failed to process files from Google Drive');
+                          } finally {
+                            setIsBatchProcessing(false);
+                          }
+                        }}
+                      >
+                        {isBatchProcessing ? (
+                          <>
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            Processing...
+                          </>
+                        ) : (
+                          <>
+                            <Upload className="h-4 w-4 mr-2" />
+                            Import {selectedFiles.length} File{selectedFiles.length !== 1 ? 's' : ''}
+                          </>
+                        )}
+                      </Button>
+                    </>
+                  )}
+
+                  {/* Batch Results */}
+                  {batchResults.length > 0 && (
+                    <div className="space-y-2 border-t pt-4">
+                      <Label className="text-xs text-muted-foreground">Import Results</Label>
+                      {batchResults.map((result, index) => (
+                        <div 
+                          key={index}
+                          className={`flex items-center gap-2 p-2 rounded text-sm ${
+                            result.success ? 'bg-green-500/10' : 'bg-red-500/10'
+                          }`}
+                        >
+                          {result.success ? (
+                            <CheckCircle className="h-4 w-4 text-green-500 flex-shrink-0" />
+                          ) : (
+                            <AlertCircle className="h-4 w-4 text-red-500 flex-shrink-0" />
+                          )}
+                          <span className="truncate flex-1">{result.fileName}</span>
+                          {result.success && result.data && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 px-2"
+                              onClick={() => {
+                                if (result.data.documentType === 'purchase_order' && result.data.purchaseOrder) {
+                                  setParsedPO(result.data.purchaseOrder);
+                                  setUploadType('po');
+                                  setShowPreview(true);
+                                } else if (result.data.documentType === 'freight_invoice' && result.data.freightInvoice) {
+                                  setParsedFreight(result.data.freightInvoice);
+                                  setUploadType('freight');
+                                  setShowPreview(true);
+                                }
+                              }}
+                            >
+                              Review
+                            </Button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          )}
         </TabsContent>
       </Tabs>
 

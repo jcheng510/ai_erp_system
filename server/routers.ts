@@ -8989,6 +8989,310 @@ Ask if they received the original request and if they can provide a quote.`;
       .mutation(async ({ input }) => {
         return matchLineItemsToMaterials(input.lineItems);
       }),
+
+    // List folders from Google Drive
+    listDriveFolders: protectedProcedure
+      .input(z.object({ 
+        parentFolderId: z.string().optional(),
+        pageToken: z.string().optional() 
+      }).optional())
+      .query(async ({ ctx, input }) => {
+        const token = await db.getGoogleOAuthToken(ctx.user.id);
+        if (!token) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Google account not connected' });
+        }
+        
+        // Refresh token if needed
+        let accessToken = token.accessToken;
+        if (token.expiresAt && new Date(token.expiresAt) < new Date() && token.refreshToken) {
+          const clientId = process.env.GOOGLE_CLIENT_ID;
+          const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+          
+          if (clientId && clientSecret) {
+            const refreshResponse = await fetch('https://oauth2.googleapis.com/token', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+              body: new URLSearchParams({
+                client_id: clientId,
+                client_secret: clientSecret,
+                refresh_token: token.refreshToken,
+                grant_type: 'refresh_token',
+              }),
+            });
+            
+            if (refreshResponse.ok) {
+              const refreshData = await refreshResponse.json();
+              accessToken = refreshData.access_token;
+              await db.upsertGoogleOAuthToken({
+                userId: ctx.user.id,
+                accessToken: refreshData.access_token,
+                expiresAt: new Date(Date.now() + refreshData.expires_in * 1000),
+              });
+            }
+          }
+        }
+        
+        // Build query for folders
+        const parentQuery = input?.parentFolderId 
+          ? `'${input.parentFolderId}' in parents` 
+          : `'root' in parents`;
+        const query = `mimeType='application/vnd.google-apps.folder' and ${parentQuery} and trashed=false`;
+        
+        const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,modifiedTime)&orderBy=name&pageSize=100${input?.pageToken ? `&pageToken=${input.pageToken}` : ''}`;
+        
+        const response = await fetch(url, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        
+        if (!response.ok) {
+          if (response.status === 401) {
+            throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Google token expired. Please reconnect your account.' });
+          }
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to list folders' });
+        }
+        
+        const data = await response.json();
+        return {
+          folders: data.files || [],
+          nextPageToken: data.nextPageToken,
+        };
+      }),
+
+    // List files in a Google Drive folder (PDFs, Excel, CSV, images)
+    listDriveFiles: protectedProcedure
+      .input(z.object({ 
+        folderId: z.string(),
+        pageToken: z.string().optional() 
+      }))
+      .query(async ({ ctx, input }) => {
+        const token = await db.getGoogleOAuthToken(ctx.user.id);
+        if (!token) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Google account not connected' });
+        }
+        
+        // Refresh token if needed
+        let accessToken = token.accessToken;
+        if (token.expiresAt && new Date(token.expiresAt) < new Date() && token.refreshToken) {
+          const clientId = process.env.GOOGLE_CLIENT_ID;
+          const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+          
+          if (clientId && clientSecret) {
+            const refreshResponse = await fetch('https://oauth2.googleapis.com/token', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+              body: new URLSearchParams({
+                client_id: clientId,
+                client_secret: clientSecret,
+                refresh_token: token.refreshToken,
+                grant_type: 'refresh_token',
+              }),
+            });
+            
+            if (refreshResponse.ok) {
+              const refreshData = await refreshResponse.json();
+              accessToken = refreshData.access_token;
+              await db.upsertGoogleOAuthToken({
+                userId: ctx.user.id,
+                accessToken: refreshData.access_token,
+                expiresAt: new Date(Date.now() + refreshData.expires_in * 1000),
+              });
+            }
+          }
+        }
+        
+        // Query for supported file types
+        const mimeTypes = [
+          "mimeType='application/pdf'",
+          "mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'",
+          "mimeType='application/vnd.ms-excel'",
+          "mimeType='text/csv'",
+          "mimeType='image/jpeg'",
+          "mimeType='image/png'",
+        ].join(' or ');
+        const query = `'${input.folderId}' in parents and (${mimeTypes}) and trashed=false`;
+        
+        const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,size,modifiedTime,webViewLink)&orderBy=name&pageSize=100${input.pageToken ? `&pageToken=${input.pageToken}` : ''}`;
+        
+        const response = await fetch(url, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        
+        if (!response.ok) {
+          if (response.status === 401) {
+            throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Google token expired. Please reconnect your account.' });
+          }
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to list files' });
+        }
+        
+        const data = await response.json();
+        return {
+          files: data.files || [],
+          nextPageToken: data.nextPageToken,
+        };
+      }),
+
+    // Download and parse a file from Google Drive
+    parseFromDrive: protectedProcedure
+      .input(z.object({
+        fileId: z.string(),
+        fileName: z.string(),
+        mimeType: z.string(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const token = await db.getGoogleOAuthToken(ctx.user.id);
+        if (!token) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Google account not connected' });
+        }
+        
+        // Refresh token if needed
+        let accessToken = token.accessToken;
+        if (token.expiresAt && new Date(token.expiresAt) < new Date() && token.refreshToken) {
+          const clientId = process.env.GOOGLE_CLIENT_ID;
+          const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+          
+          if (clientId && clientSecret) {
+            const refreshResponse = await fetch('https://oauth2.googleapis.com/token', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+              body: new URLSearchParams({
+                client_id: clientId,
+                client_secret: clientSecret,
+                refresh_token: token.refreshToken,
+                grant_type: 'refresh_token',
+              }),
+            });
+            
+            if (refreshResponse.ok) {
+              const refreshData = await refreshResponse.json();
+              accessToken = refreshData.access_token;
+              await db.upsertGoogleOAuthToken({
+                userId: ctx.user.id,
+                accessToken: refreshData.access_token,
+                expiresAt: new Date(Date.now() + refreshData.expires_in * 1000),
+              });
+            }
+          }
+        }
+        
+        // Download file content
+        const downloadUrl = `https://www.googleapis.com/drive/v3/files/${input.fileId}?alt=media`;
+        const response = await fetch(downloadUrl, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        
+        if (!response.ok) {
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to download file from Google Drive' });
+        }
+        
+        const buffer = Buffer.from(await response.arrayBuffer());
+        
+        // Upload to S3
+        const fileKey = `document-imports/gdrive-${Date.now()}-${input.fileName}`;
+        const { url } = await storagePut(fileKey, buffer, input.mimeType);
+        
+        // Parse the document
+        const result = await parseUploadedDocument(url, input.fileName);
+        return { ...result, fileUrl: url, sourceFileId: input.fileId };
+      }),
+
+    // Batch parse multiple files from Google Drive
+    batchParseFromDrive: protectedProcedure
+      .input(z.object({
+        files: z.array(z.object({
+          fileId: z.string(),
+          fileName: z.string(),
+          mimeType: z.string(),
+        })),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const token = await db.getGoogleOAuthToken(ctx.user.id);
+        if (!token) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Google account not connected' });
+        }
+        
+        // Refresh token if needed
+        let accessToken = token.accessToken;
+        if (token.expiresAt && new Date(token.expiresAt) < new Date() && token.refreshToken) {
+          const clientId = process.env.GOOGLE_CLIENT_ID;
+          const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+          
+          if (clientId && clientSecret) {
+            const refreshResponse = await fetch('https://oauth2.googleapis.com/token', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+              body: new URLSearchParams({
+                client_id: clientId,
+                client_secret: clientSecret,
+                refresh_token: token.refreshToken,
+                grant_type: 'refresh_token',
+              }),
+            });
+            
+            if (refreshResponse.ok) {
+              const refreshData = await refreshResponse.json();
+              accessToken = refreshData.access_token;
+              await db.upsertGoogleOAuthToken({
+                userId: ctx.user.id,
+                accessToken: refreshData.access_token,
+                expiresAt: new Date(Date.now() + refreshData.expires_in * 1000),
+              });
+            }
+          }
+        }
+        
+        const results: Array<{
+          fileId: string;
+          fileName: string;
+          success: boolean;
+          data?: any;
+          error?: string;
+        }> = [];
+        
+        for (const file of input.files) {
+          try {
+            // Download file content
+            const downloadUrl = `https://www.googleapis.com/drive/v3/files/${file.fileId}?alt=media`;
+            const response = await fetch(downloadUrl, {
+              headers: { Authorization: `Bearer ${accessToken}` },
+            });
+            
+            if (!response.ok) {
+              results.push({
+                fileId: file.fileId,
+                fileName: file.fileName,
+                success: false,
+                error: 'Failed to download file',
+              });
+              continue;
+            }
+            
+            const buffer = Buffer.from(await response.arrayBuffer());
+            
+            // Upload to S3
+            const fileKey = `document-imports/gdrive-${Date.now()}-${file.fileName}`;
+            const { url } = await storagePut(fileKey, buffer, file.mimeType);
+            
+            // Parse the document
+            const parseResult = await parseUploadedDocument(url, file.fileName);
+            
+            results.push({
+              fileId: file.fileId,
+              fileName: file.fileName,
+              success: true,
+              data: { ...parseResult, fileUrl: url },
+            });
+          } catch (error: any) {
+            results.push({
+              fileId: file.fileId,
+              fileName: file.fileName,
+              success: false,
+              error: error.message || 'Unknown error',
+            });
+          }
+        }
+        
+        return { results };
+      }),
   }),
 });
 
