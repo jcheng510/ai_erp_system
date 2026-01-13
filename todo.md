@@ -685,3 +685,15 @@
 - [x] Add direct "New" button to BOMs tab
 - [x] Add direct "New" button to Work Orders tab
 - [ ] Add direct "New" button to Locations tab
+
+## AI Email Reply Automation
+- [x] Create email reply generation service using LLM
+- [x] Add email context analysis for appropriate tone and content
+- [x] Integrate with SendGrid email service for delivery
+- [x] Update AI agent task execution to handle email replies
+- [x] Add email reply preview and approval flow
+- [x] Create AI Reply button in Email Inbox page
+- [x] Add AI Reply dialog with preview and edit
+- [x] Add option to send immediately or queue for approval
+- [x] Write tests for email reply generation
+- [x] Test full email reply workflow

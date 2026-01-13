@@ -39,7 +39,10 @@ import {
   Inbox,
   Settings,
   Loader2,
-  Zap
+  Zap,
+  Reply,
+  Sparkles,
+  Send
 } from "lucide-react";
 
 // Category display configuration
@@ -97,6 +100,17 @@ export default function EmailInbox() {
   const [selectedPreset, setSelectedPreset] = useState<string>("");
 
   // Approval options
+  // AI Reply state
+  const [showAiReplyDialog, setShowAiReplyDialog] = useState(false);
+  const [generatedReply, setGeneratedReply] = useState<{
+    subject: string;
+    body: string;
+    tone: string;
+    confidence: number;
+    suggestedActions?: string[];
+  } | null>(null);
+  const [isGeneratingReply, setIsGeneratingReply] = useState(false);
+
   const [approvalOptions, setApprovalOptions] = useState({
     createVendor: false,
     createTransaction: false,
@@ -243,6 +257,85 @@ export default function EmailInbox() {
     },
   });
 
+  // AI Email Reply mutations
+  const generateReplyMutation = trpc.aiAgent.generateEmailReply.useMutation({
+    onSuccess: (result) => {
+      setGeneratedReply(result);
+      setShowAiReplyDialog(true);
+      setIsGeneratingReply(false);
+    },
+    onError: (error) => {
+      toast.error(`Failed to generate reply: ${error.message}`);
+      setIsGeneratingReply(false);
+    },
+  });
+
+  const sendReplyMutation = trpc.aiAgent.sendEmailReply.useMutation({
+    onSuccess: (result) => {
+      if (result.emailSent) {
+        toast.success("Email reply sent successfully!");
+        setShowAiReplyDialog(false);
+        setGeneratedReply(null);
+      } else {
+        toast.error("Failed to send email reply");
+      }
+    },
+    onError: (error) => {
+      toast.error(`Error sending reply: ${error.message}`);
+    },
+  });
+
+  const createReplyTaskMutation = trpc.aiAgent.createEmailReplyTask.useMutation({
+    onSuccess: () => {
+      toast.success("Email reply task created for approval");
+      setShowAiReplyDialog(false);
+      setGeneratedReply(null);
+    },
+    onError: (error) => {
+      toast.error(`Error creating task: ${error.message}`);
+    },
+  });
+
+  // Handle AI reply generation
+  const handleGenerateAiReply = async () => {
+    if (!emailDetail) return;
+    setIsGeneratingReply(true);
+    generateReplyMutation.mutate({
+      originalEmail: {
+        from: emailDetail.fromEmail,
+        subject: emailDetail.subject || '',
+        body: emailDetail.bodyText || '',
+        emailId: emailDetail.id,
+      },
+    });
+  };
+
+  // Handle sending the AI-generated reply
+  const handleSendReply = (autoSend: boolean) => {
+    if (!emailDetail || !generatedReply) return;
+    
+    if (autoSend) {
+      sendReplyMutation.mutate({
+        originalEmail: {
+          from: emailDetail.fromEmail,
+          subject: emailDetail.subject || '',
+          body: emailDetail.bodyText || '',
+          emailId: emailDetail.id,
+        },
+        autoSend: true,
+      });
+    } else {
+      // Create task for approval queue
+      createReplyTaskMutation.mutate({
+        to: emailDetail.fromEmail,
+        originalSubject: emailDetail.subject || '',
+        originalBody: emailDetail.bodyText || '',
+        emailId: emailDetail.id,
+        priority: emailDetail.priority === 'high' ? 'high' : 'medium',
+      });
+    }
+  };
+
   // IMAP presets
   const imapPresets: Record<string, { host: string; port: number }> = {
     gmail: { host: "imap.gmail.com", port: 993 },
@@ -356,6 +449,7 @@ export default function EmailInbox() {
   };
 
   return (
+    <>
     <div className="p-6 space-y-6">
         <div className="flex items-center justify-between">
           <div>
@@ -944,7 +1038,26 @@ export default function EmailInbox() {
                       )}
 
                       {/* Actions */}
-                      <div className="flex gap-2 pt-4">
+                      <div className="flex gap-2 pt-4 flex-wrap">
+                        <Button
+                          variant="default"
+                          size="sm"
+                          onClick={() => handleGenerateAiReply()}
+                          disabled={isGeneratingReply}
+                          className="bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700"
+                        >
+                          {isGeneratingReply ? (
+                            <>
+                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                              Generating...
+                            </>
+                          ) : (
+                            <>
+                              <Sparkles className="h-4 w-4 mr-2" />
+                              AI Reply
+                            </>
+                          )}
+                        </Button>
                         <Button
                           variant="outline"
                           size="sm"
@@ -1231,5 +1344,104 @@ export default function EmailInbox() {
           </TabsContent>
         </Tabs>
       </div>
+
+      {/* AI Reply Dialog */}
+      <Dialog open={showAiReplyDialog} onOpenChange={setShowAiReplyDialog}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="h-5 w-5 text-violet-500" />
+              AI-Generated Reply
+            </DialogTitle>
+            <DialogDescription>
+              Review and send the AI-generated email reply
+            </DialogDescription>
+          </DialogHeader>
+
+          {generatedReply && (
+            <div className="space-y-4">
+              {/* Reply Metadata */}
+              <div className="flex items-center gap-4 text-sm">
+                <Badge variant="outline" className="capitalize">
+                  {generatedReply.tone} tone
+                </Badge>
+                <span className="text-muted-foreground">
+                  Confidence: {generatedReply.confidence}%
+                </span>
+              </div>
+
+              {/* Subject */}
+              <div className="space-y-2">
+                <Label>Subject</Label>
+                <Input
+                  value={generatedReply.subject}
+                  onChange={(e) => setGeneratedReply({ ...generatedReply, subject: e.target.value })}
+                />
+              </div>
+
+              {/* Body */}
+              <div className="space-y-2">
+                <Label>Message</Label>
+                <Textarea
+                  value={generatedReply.body}
+                  onChange={(e) => setGeneratedReply({ ...generatedReply, body: e.target.value })}
+                  rows={10}
+                  className="font-mono text-sm"
+                />
+              </div>
+
+              {/* Suggested Actions */}
+              {generatedReply.suggestedActions && generatedReply.suggestedActions.length > 0 && (
+                <div className="space-y-2">
+                  <Label className="text-muted-foreground">Suggested Follow-up Actions</Label>
+                  <div className="flex flex-wrap gap-2">
+                    {generatedReply.suggestedActions.map((action, i) => (
+                      <Badge key={i} variant="secondary">{action}</Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Original Email Preview */}
+              {emailDetail && (
+                <div className="border-t pt-4">
+                  <Label className="text-muted-foreground text-xs">Replying to:</Label>
+                  <p className="text-sm text-muted-foreground truncate">
+                    {emailDetail.fromEmail} - {emailDetail.subject}
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              onClick={() => handleSendReply(false)}
+              disabled={createReplyTaskMutation.isPending}
+            >
+              {createReplyTaskMutation.isPending ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Clock className="h-4 w-4 mr-2" />
+              )}
+              Queue for Approval
+            </Button>
+            <Button
+              onClick={() => handleSendReply(true)}
+              disabled={sendReplyMutation.isPending}
+              className="bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700"
+            >
+              {sendReplyMutation.isPending ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Send className="h-4 w-4 mr-2" />
+              )}
+              Send Now
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

@@ -382,6 +382,7 @@ export default function ManufacturingHub() {
   }), [inventory, boms, workOrders, locations]);
 
   return (
+    <>
     <div className="p-6 space-y-4">
         {/* Header */}
         <div className="flex items-center justify-between">
@@ -603,5 +604,6 @@ export default function ManufacturingHub() {
           onCreated={() => refetchWorkOrders()}
         />
       </div>
+    </>
   );
 }

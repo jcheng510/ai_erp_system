@@ -6,6 +6,7 @@ import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
 import { invokeLLM } from "./_core/llm";
 import { sendEmail, isEmailConfigured, formatEmailHtml } from "./_core/email";
+import { processEmailReply, analyzeEmail, generateEmailReply } from "./emailReplyService";
 import * as db from "./db";
 import { storagePut } from "./storage";
 import { nanoid } from "nanoid";
@@ -2876,13 +2877,37 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
               }
               
               case 'reply_email': {
-                // AI-generated email reply
-                const replyResult = await sendEmail({
-                  to: taskData.to,
-                  subject: taskData.subject || `Re: ${taskData.originalSubject || 'Your inquiry'}`,
-                  html: taskData.body || taskData.content,
-                });
-                result = { emailSent: replyResult.success, messageId: replyResult.messageId, to: taskData.to };
+                // AI-generated email reply with LLM
+                if (taskData.generateWithAI !== false) {
+                  // Use AI to generate the reply
+                  const emailReplyResult = await processEmailReply({
+                    originalEmail: {
+                      from: taskData.to, // The recipient is who we're replying to
+                      subject: taskData.originalSubject || 'Your inquiry',
+                      body: taskData.originalBody || '',
+                      emailId: taskData.emailId,
+                    },
+                    autoSend: true,
+                    companyName: taskData.companyName || 'Our Company',
+                    senderName: taskData.senderName || ctx.user.name,
+                    senderTitle: taskData.senderTitle,
+                  });
+                  result = {
+                    emailSent: emailReplyResult.emailSent,
+                    messageId: emailReplyResult.messageId,
+                    to: taskData.to,
+                    generatedReply: emailReplyResult.generatedReply,
+                    aiGenerated: true,
+                  };
+                } else {
+                  // Send pre-written reply
+                  const replyResult = await sendEmail({
+                    to: taskData.to,
+                    subject: taskData.subject || `Re: ${taskData.originalSubject || 'Your inquiry'}`,
+                    html: formatEmailHtml(taskData.body || taskData.content || ''),
+                  });
+                  result = { emailSent: replyResult.success, messageId: replyResult.messageId, to: taskData.to, aiGenerated: false };
+                }
                 break;
               }
               
@@ -3208,6 +3233,123 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
         });
         
         return task;
+      }),
+    
+    // AI Email Reply Generation
+    analyzeEmail: protectedProcedure
+      .input(z.object({
+        from: z.string(),
+        subject: z.string(),
+        body: z.string(),
+      }))
+      .mutation(async ({ input }) => {
+        return analyzeEmail(input);
+      }),
+    
+    generateEmailReply: protectedProcedure
+      .input(z.object({
+        originalEmail: z.object({
+          from: z.string(),
+          subject: z.string(),
+          body: z.string(),
+          emailId: z.number().optional(),
+        }),
+        companyName: z.string().optional(),
+        senderName: z.string().optional(),
+        senderTitle: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return generateEmailReply({
+          originalEmail: input.originalEmail,
+          companyContext: {
+            companyName: input.companyName || 'Our Company',
+            senderName: input.senderName || ctx.user.name || 'Customer Service',
+            senderTitle: input.senderTitle,
+          },
+        });
+      }),
+    
+    sendEmailReply: protectedProcedure
+      .input(z.object({
+        originalEmail: z.object({
+          from: z.string(),
+          subject: z.string(),
+          body: z.string(),
+          emailId: z.number().optional(),
+        }),
+        autoSend: z.boolean().default(false),
+        companyName: z.string().optional(),
+        senderName: z.string().optional(),
+        senderTitle: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return processEmailReply({
+          originalEmail: input.originalEmail,
+          autoSend: input.autoSend,
+          companyName: input.companyName,
+          senderName: input.senderName || ctx.user.name || 'Customer Service',
+          senderTitle: input.senderTitle,
+        });
+      }),
+    
+    // Create email reply task for approval queue
+    createEmailReplyTask: protectedProcedure
+      .input(z.object({
+        to: z.string(),
+        originalSubject: z.string(),
+        originalBody: z.string(),
+        emailId: z.number().optional(),
+        priority: z.enum(['low', 'medium', 'high', 'urgent']).default('medium'),
+        companyName: z.string().optional(),
+        senderName: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        // First generate a preview of the reply
+        const preview = await generateEmailReply({
+          originalEmail: {
+            from: input.to,
+            subject: input.originalSubject,
+            body: input.originalBody,
+          },
+          companyContext: {
+            companyName: input.companyName || 'Our Company',
+            senderName: input.senderName || ctx.user.name || 'Customer Service',
+          },
+        });
+        
+        // Create task with the generated reply for approval
+        const task = await db.createAiAgentTask({
+          taskType: 'reply_email',
+          priority: input.priority,
+          taskData: JSON.stringify({
+            to: input.to,
+            originalSubject: input.originalSubject,
+            originalBody: input.originalBody,
+            emailId: input.emailId,
+            generatedSubject: preview.subject,
+            generatedBody: preview.body,
+            tone: preview.tone,
+            suggestedActions: preview.suggestedActions,
+            companyName: input.companyName,
+            senderName: input.senderName || ctx.user.name || 'Customer Service',
+            generateWithAI: true,
+          }),
+          aiReasoning: `AI-generated reply to email from ${input.to}. Tone: ${preview.tone}. Confidence: ${preview.confidence}%`,
+          aiConfidence: preview.confidence.toFixed(2),
+          relatedEntityType: 'email',
+          relatedEntityId: input.emailId || 0,
+          requiresApproval: true,
+        });
+        
+        await db.createAiAgentLog({
+          taskId: task.id,
+          action: 'email_reply_generated',
+          status: 'info',
+          message: `Email reply generated for ${input.to}`,
+          details: JSON.stringify({ subject: preview.subject, tone: preview.tone }),
+        });
+        
+        return { task, preview };
       }),
   }),
 
