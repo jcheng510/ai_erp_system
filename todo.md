@@ -697,3 +697,49 @@
 - [x] Add option to send immediately or queue for approval
 - [x] Write tests for email reply generation
 - [x] Test full email reply workflow
+
+## Quick Create for All Items
+- [x] Add New button to Inventory tab with location assignment
+- [x] Add New button to Locations tab
+- [x] Add New button to Customers tab (via QuickCreateDialog)
+- [x] Add New button to Products tab (via QuickCreateDialog)
+- [ ] Add New button to Invoices tab
+- [ ] Add New button to Contracts tab
+- [ ] Add New button to Projects tab
+
+## Immediate AI Action Execution
+- [x] Add "Approve & Execute Now" button to AI task cards
+- [x] Execute approved tasks immediately without queue navigation
+- [x] Show execution result feedback inline
+
+## Sent Email Tracking
+- [x] Add "Sent" tab to Email Inbox
+- [x] Track all outbound emails (RFQ requests, PO notifications, etc.)
+- [x] Link sent emails to their source entities (PO, RFQ, Invoice)
+- [x] Track reply threading - match incoming replies to sent emails
+- [x] Show email conversation view with sent/received messages
+
+## Clickable Generated Items
+- [ ] Make AI-created vendors clickable with link to vendor detail
+- [ ] Make AI-created materials clickable with link to material detail
+- [ ] Make AI-created products clickable with link to product detail
+- [ ] Make AI-created customers clickable with link to customer detail
+- [ ] Show entity links in AI task completion messages
+
+## Email Delete/Archive and Smart Folders
+- [x] Add delete button to email actions
+- [x] Add archive button to email actions  
+- [x] Create smart folders: Sales, Raw Materials, Copackers, Freight, General
+- [x] Add folder sidebar to Email Inbox
+- [x] Auto-categorize emails into folders based on content/sender
+- [x] Add folder filter to email list view
+- [ ] Add bulk delete/archive for selected emails
+
+## Auto-Reply Rules
+- [x] Create auto_reply_rules database table
+- [x] Add Auto-Reply Rules settings page
+- [x] Configure rules by email category (Invoice, PO, RFQ, etc.)
+- [x] Set custom reply templates per category
+- [x] Enable/disable auto-reply per category
+- [x] Add delay option before auto-reply
+- [x] Log auto-replies in email history

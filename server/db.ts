@@ -35,7 +35,7 @@ import {
   // Reconciliation
   reconciliationRuns, reconciliationLines,
   // Email scanning
-  inboundEmails, emailAttachments, parsedDocuments, parsedDocumentLineItems,
+  inboundEmails, emailAttachments, parsedDocuments, parsedDocumentLineItems, autoReplyRules, sentEmails,
   // Data room
   dataRooms, dataRoomFolders, dataRoomDocuments, dataRoomLinks, dataRoomVisitors, documentViews, dataRoomInvitations,
   // NDA e-signatures
@@ -4473,6 +4473,18 @@ export async function updateInboundEmailStatus(
   await db.update(inboundEmails).set(updates).where(eq(inboundEmails.id, id));
 }
 
+export async function deleteInboundEmail(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  // Delete related documents first
+  await db.delete(parsedDocuments).where(eq(parsedDocuments.emailId, id));
+  // Delete related attachments
+  await db.delete(emailAttachments).where(eq(emailAttachments.emailId, id));
+  // Delete the email
+  await db.delete(inboundEmails).where(eq(inboundEmails.id, id));
+}
+
 export async function createEmailAttachment(input: InsertEmailAttachment) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -4496,6 +4508,206 @@ export async function updateAttachmentProcessed(id: number, extractedText?: stri
     isProcessed: true,
     extractedText: extractedText || null
   }).where(eq(emailAttachments.id, id));
+}
+
+// Auto-reply rules
+export async function getAutoReplyRules(options?: { isEnabled?: boolean; category?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  
+  const conditions = [];
+  if (options?.isEnabled !== undefined) {
+    conditions.push(eq(autoReplyRules.isEnabled, options.isEnabled));
+  }
+  if (options?.category) {
+    conditions.push(eq(autoReplyRules.category, options.category as any));
+  }
+  
+  let query = db.select().from(autoReplyRules);
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as any;
+  }
+  return query.orderBy(desc(autoReplyRules.priority));
+}
+
+export async function getAutoReplyRuleById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  
+  const result = await db.select().from(autoReplyRules).where(eq(autoReplyRules.id, id));
+  return result[0] || null;
+}
+
+export async function createAutoReplyRule(input: {
+  name: string;
+  category: string;
+  replyTemplate: string;
+  senderPattern?: string;
+  subjectPattern?: string;
+  bodyKeywords?: string[];
+  minConfidence?: string;
+  replySubjectPrefix?: string;
+  tone?: string;
+  includeOriginal?: boolean;
+  delayMinutes?: number;
+  autoSend?: boolean;
+  createTask?: boolean;
+  notifyOwner?: boolean;
+  priority?: number;
+  createdBy?: number;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  const result = await db.insert(autoReplyRules).values({
+    ...input,
+    category: input.category as any,
+    tone: (input.tone || 'professional') as any,
+    bodyKeywords: input.bodyKeywords ? JSON.stringify(input.bodyKeywords) : null,
+  } as any);
+  return { id: result[0].insertId };
+}
+
+export async function updateAutoReplyRule(id: number, updates: {
+  name?: string;
+  category?: string;
+  isEnabled?: boolean;
+  priority?: number;
+  senderPattern?: string;
+  subjectPattern?: string;
+  bodyKeywords?: string[];
+  minConfidence?: string;
+  replyTemplate?: string;
+  replySubjectPrefix?: string;
+  tone?: string;
+  includeOriginal?: boolean;
+  delayMinutes?: number;
+  autoSend?: boolean;
+  createTask?: boolean;
+  notifyOwner?: boolean;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  const updateData: any = { ...updates };
+  if (updates.bodyKeywords) {
+    updateData.bodyKeywords = JSON.stringify(updates.bodyKeywords);
+  }
+  
+  await db.update(autoReplyRules).set(updateData).where(eq(autoReplyRules.id, id));
+}
+
+export async function deleteAutoReplyRule(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  await db.delete(autoReplyRules).where(eq(autoReplyRules.id, id));
+}
+
+export async function incrementAutoReplyRuleTriggered(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  await db.update(autoReplyRules).set({
+    timesTriggered: sql`${autoReplyRules.timesTriggered} + 1`,
+    lastTriggeredAt: new Date(),
+  }).where(eq(autoReplyRules.id, id));
+}
+
+// Sent emails tracking
+export async function getSentEmails(options?: {
+  relatedEntityType?: string;
+  relatedEntityId?: number;
+  status?: string;
+  limit?: number;
+  offset?: number;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+  
+  const conditions = [];
+  if (options?.relatedEntityType) {
+    conditions.push(eq(sentEmails.relatedEntityType, options.relatedEntityType));
+  }
+  if (options?.relatedEntityId) {
+    conditions.push(eq(sentEmails.relatedEntityId, options.relatedEntityId));
+  }
+  if (options?.status) {
+    conditions.push(eq(sentEmails.status, options.status as any));
+  }
+  
+  let query = db.select().from(sentEmails);
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as any;
+  }
+  return query.orderBy(desc(sentEmails.createdAt)).limit(options?.limit || 100);
+}
+
+export async function getSentEmailById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  
+  const result = await db.select().from(sentEmails).where(eq(sentEmails.id, id));
+  return result[0] || null;
+}
+
+export async function createSentEmail(input: {
+  inboundEmailId?: number;
+  relatedEntityType?: string;
+  relatedEntityId?: number;
+  toEmail: string;
+  toName?: string;
+  fromEmail: string;
+  fromName?: string;
+  subject: string;
+  bodyHtml?: string;
+  bodyText?: string;
+  status?: string;
+  sentBy?: number;
+  aiGenerated?: boolean;
+  aiTaskId?: number;
+  threadId?: string;
+  metadata?: any;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  const result = await db.insert(sentEmails).values({
+    ...input,
+    status: (input.status || 'queued') as any,
+  } as any);
+  return { id: result[0].insertId };
+}
+
+export async function updateSentEmailStatus(id: number, status: string, errorMessage?: string, messageId?: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  const updates: any = { status };
+  if (status === 'sent') {
+    updates.sentAt = new Date();
+  } else if (status === 'delivered') {
+    updates.deliveredAt = new Date();
+  }
+  if (errorMessage) updates.errorMessage = errorMessage;
+  if (messageId) updates.messageId = messageId;
+  
+  await db.update(sentEmails).set(updates).where(eq(sentEmails.id, id));
+}
+
+export async function getEmailThread(threadId: string) {
+  const db = await getDb();
+  if (!db) return { inbound: [], outbound: [] };
+  
+  const inbound = await db.select().from(inboundEmails)
+    .where(sql`JSON_EXTRACT(metadata, '$.threadId') = ${threadId}`)
+    .orderBy(desc(inboundEmails.receivedAt));
+  
+  const outbound = await db.select().from(sentEmails)
+    .where(eq(sentEmails.threadId, threadId))
+    .orderBy(desc(sentEmails.createdAt));
+  
+  return { inbound, outbound };
 }
 
 export async function createParsedDocument(input: InsertParsedDocument) {

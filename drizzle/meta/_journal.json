@@ -148,6 +148,20 @@
       "when": 1768260193124,
       "tag": "0020_cuddly_talisman",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "5",
+      "when": 1768267195402,
+      "tag": "0021_premium_tinkerer",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "5",
+      "when": 1768268016939,
+      "tag": "0022_tired_cyclops",
+      "breakpoints": true
     }
   ]
 }

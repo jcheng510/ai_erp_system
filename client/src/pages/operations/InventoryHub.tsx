@@ -28,8 +28,10 @@ import {
   Send,
   AlertCircle,
   RefreshCw,
+  Plus,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { QuickCreateDialog } from "@/components/QuickCreateDialog";
 
 // Types
 interface InventoryItem {
@@ -81,6 +83,8 @@ export default function InventoryHub() {
   const [showShipmentDialog, setShowShipmentDialog] = useState(false);
   const [showProductionDialog, setShowProductionDialog] = useState(false);
   const [selectedItem, setSelectedItem] = useState<any>(null);
+  const [showNewInventoryDialog, setShowNewInventoryDialog] = useState(false);
+  const [showNewLocationDialog, setShowNewLocationDialog] = useState(false);
 
   // Data fetching
   const { data: warehouses, isLoading: warehousesLoading } = trpc.warehouses.list.useQuery();
@@ -387,6 +391,16 @@ export default function InventoryHub() {
             By Location
           </TabsTrigger>
         </TabsList>
+
+        {/* Quick Create Buttons */}
+        <div className="flex gap-2 mt-4">
+          <Button onClick={() => setShowNewInventoryDialog(true)} size="sm">
+            <Plus className="h-4 w-4 mr-1" /> New Inventory Item
+          </Button>
+          <Button onClick={() => setShowNewLocationDialog(true)} size="sm" variant="outline">
+            <Plus className="h-4 w-4 mr-1" /> New Location
+          </Button>
+        </div>
 
         {/* Exceptions View */}
         <TabsContent value="exceptions" className="mt-6">
@@ -1159,6 +1173,26 @@ export default function InventoryHub() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Quick Create Dialogs */}
+      <QuickCreateDialog
+        entityType="inventory"
+        open={showNewInventoryDialog}
+        onOpenChange={setShowNewInventoryDialog}
+        onCreated={() => {
+          utils.inventory.invalidate();
+          setShowNewInventoryDialog(false);
+        }}
+      />
+      <QuickCreateDialog
+        entityType="location"
+        open={showNewLocationDialog}
+        onOpenChange={setShowNewLocationDialog}
+        onCreated={() => {
+          utils.warehouses.invalidate();
+          setShowNewLocationDialog(false);
+        }}
+      />
     </div>
   );
 }

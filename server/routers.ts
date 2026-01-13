@@ -6859,6 +6859,109 @@ Ask if they received the original request and if they can provide a quote.`;
         return { success: true };
       }),
 
+    // Delete email permanently
+    deleteEmail: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input }) => {
+        await db.deleteInboundEmail(input.id);
+        return { success: true };
+      }),
+
+    // Auto-reply rules
+    getAutoReplyRules: protectedProcedure
+      .input(z.object({
+        isEnabled: z.boolean().optional(),
+        category: z.string().optional(),
+      }).optional())
+      .query(async ({ input }) => {
+        return db.getAutoReplyRules(input);
+      }),
+
+    getAutoReplyRule: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        return db.getAutoReplyRuleById(input.id);
+      }),
+
+    createAutoReplyRule: protectedProcedure
+      .input(z.object({
+        name: z.string().min(1),
+        category: z.string(),
+        replyTemplate: z.string().min(1),
+        senderPattern: z.string().optional(),
+        subjectPattern: z.string().optional(),
+        bodyKeywords: z.array(z.string()).optional(),
+        minConfidence: z.string().optional(),
+        replySubjectPrefix: z.string().optional(),
+        tone: z.enum(["professional", "friendly", "formal"]).optional(),
+        includeOriginal: z.boolean().optional(),
+        delayMinutes: z.number().optional(),
+        autoSend: z.boolean().optional(),
+        createTask: z.boolean().optional(),
+        notifyOwner: z.boolean().optional(),
+        priority: z.number().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return db.createAutoReplyRule({ ...input, createdBy: ctx.user.id });
+      }),
+
+    updateAutoReplyRule: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        name: z.string().optional(),
+        category: z.string().optional(),
+        isEnabled: z.boolean().optional(),
+        priority: z.number().optional(),
+        senderPattern: z.string().optional(),
+        subjectPattern: z.string().optional(),
+        bodyKeywords: z.array(z.string()).optional(),
+        minConfidence: z.string().optional(),
+        replyTemplate: z.string().optional(),
+        replySubjectPrefix: z.string().optional(),
+        tone: z.enum(["professional", "friendly", "formal"]).optional(),
+        includeOriginal: z.boolean().optional(),
+        delayMinutes: z.number().optional(),
+        autoSend: z.boolean().optional(),
+        createTask: z.boolean().optional(),
+        notifyOwner: z.boolean().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { id, ...updates } = input;
+        await db.updateAutoReplyRule(id, updates);
+        return { success: true };
+      }),
+
+    deleteAutoReplyRule: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input }) => {
+        await db.deleteAutoReplyRule(input.id);
+        return { success: true };
+      }),
+
+    // Sent emails tracking
+    getSentEmails: protectedProcedure
+      .input(z.object({
+        relatedEntityType: z.string().optional(),
+        relatedEntityId: z.number().optional(),
+        status: z.string().optional(),
+        limit: z.number().optional(),
+      }).optional())
+      .query(async ({ input }) => {
+        return db.getSentEmails(input);
+      }),
+
+    getSentEmail: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        return db.getSentEmailById(input.id);
+      }),
+
+    getEmailThread: protectedProcedure
+      .input(z.object({ threadId: z.string() }))
+      .query(async ({ input }) => {
+        return db.getEmailThread(input.threadId);
+      }),
+
     // Reparse email
     reparseEmail: protectedProcedure
       .input(z.object({ id: z.number() }))

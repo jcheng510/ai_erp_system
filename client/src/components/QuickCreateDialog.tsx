@@ -18,11 +18,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Loader2, Plus, Building, Package, FileText, Wrench, Box, Users } from "lucide-react";
+import { Loader2, Plus, Building, Package, FileText, Wrench, Box, Users, MapPin, Layers } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 
-type EntityType = "vendor" | "material" | "bom" | "workOrder" | "rfq" | "product" | "customer";
+type EntityType = "vendor" | "material" | "bom" | "workOrder" | "rfq" | "product" | "customer" | "inventory" | "location";
 
 // Product select field component
 function ProductSelectField({ value, onChange }: { value?: number; onChange: (value: number) => void }) {
@@ -76,6 +76,31 @@ function BomSelectField({ value, productId, onChange }: { value?: number; produc
   );
 }
 
+// Warehouse select field component
+function WarehouseSelectField({ value, onChange }: { value?: number; onChange: (value: number) => void }) {
+  const { data: warehouses } = trpc.warehouses.list.useQuery();
+  return (
+    <Select
+      value={value?.toString() || ""}
+      onValueChange={(v) => onChange(parseInt(v))}
+    >
+      <SelectTrigger>
+        <SelectValue placeholder="Select a location..." />
+      </SelectTrigger>
+      <SelectContent>
+        {warehouses?.map((wh: any) => (
+          <SelectItem key={wh.id} value={wh.id.toString()}>
+            {wh.name} ({wh.type})
+          </SelectItem>
+        ))}
+        {(!warehouses || warehouses.length === 0) && (
+          <div className="p-2 text-sm text-muted-foreground text-center">No locations found</div>
+        )}
+      </SelectContent>
+    </Select>
+  );
+}
+
 interface QuickCreateDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -91,7 +116,7 @@ const entityConfig: Record<EntityType, {
   fields: Array<{
     name: string;
     label: string;
-    type: "text" | "email" | "number" | "textarea" | "select" | "productSelect" | "bomSelect";
+    type: "text" | "email" | "number" | "textarea" | "select" | "productSelect" | "bomSelect" | "warehouseSelect";
     placeholder?: string;
     required?: boolean;
     options?: Array<{ value: string; label: string }>;
@@ -198,6 +223,33 @@ const entityConfig: Record<EntityType, {
       ]},
     ],
   },
+  inventory: {
+    title: "Create New Inventory Item",
+    description: "Add inventory for a product at a location",
+    icon: <Layers className="h-5 w-5" />,
+    fields: [
+      { name: "productId", label: "Product", type: "productSelect", required: true },
+      { name: "warehouseId", label: "Location", type: "warehouseSelect", required: true },
+      { name: "quantity", label: "Initial Quantity", type: "number", placeholder: "100", required: true },
+    ],
+  },
+  location: {
+    title: "Create New Location",
+    description: "Add a new warehouse or storage location",
+    icon: <MapPin className="h-5 w-5" />,
+    fields: [
+      { name: "name", label: "Location Name", type: "text", placeholder: "e.g., Main Warehouse", required: true },
+      { name: "type", label: "Location Type", type: "select", required: true, options: [
+        { value: "warehouse", label: "Warehouse" },
+        { value: "production", label: "Production Facility" },
+        { value: "cold_storage", label: "Cold Storage" },
+        { value: "distribution", label: "Distribution Center" },
+        { value: "retail", label: "Retail Location" },
+      ]},
+      { name: "address", label: "Address", type: "textarea", placeholder: "123 Industrial Blvd, City, State" },
+      { name: "capacity", label: "Capacity (units)", type: "number", placeholder: "10000" },
+    ],
+  },
 };
 
 export function QuickCreateDialog({
@@ -293,6 +345,32 @@ export function QuickCreateDialog({
     },
   });
 
+  const createInventory = trpc.inventory.create.useMutation({
+    onSuccess: (data) => {
+      toast.success("Inventory item created successfully");
+      utils.inventory.list.invalidate();
+      onCreated?.(data);
+      onOpenChange(false);
+      setFormData({});
+    },
+    onError: (error) => {
+      toast.error(`Failed to create inventory: ${error.message}`);
+    },
+  });
+
+  const createWarehouse = trpc.warehouses.create.useMutation({
+    onSuccess: (data) => {
+      toast.success("Location created successfully");
+      utils.warehouses.list.invalidate();
+      onCreated?.(data);
+      onOpenChange(false);
+      setFormData({});
+    },
+    onError: (error) => {
+      toast.error(`Failed to create location: ${error.message}`);
+    },
+  });
+
   const handleSubmit = useCallback(async () => {
     setIsSubmitting(true);
     try {
@@ -364,11 +442,30 @@ export function QuickCreateDialog({
             type: formData.type || "business",
           });
           break;
+        case "inventory":
+          if (!formData.productId || !formData.warehouseId) {
+            toast.error("Please select a product and location");
+            return;
+          }
+          await createInventory.mutateAsync({
+            productId: formData.productId,
+            warehouseId: formData.warehouseId,
+            quantity: formData.quantity?.toString() || "0",
+          });
+          break;
+        case "location":
+          await createWarehouse.mutateAsync({
+            name: formData.name,
+            type: formData.type || "warehouse",
+            address: formData.address || undefined,
+            notes: formData.capacity ? `Capacity: ${formData.capacity} units` : undefined,
+          });
+          break;
       }
     } finally {
       setIsSubmitting(false);
     }
-  }, [entityType, formData, createVendor, createMaterial, createBom, createWorkOrder, createProduct, createCustomer]);
+  }, [entityType, formData, createVendor, createMaterial, createBom, createWorkOrder, createProduct, createCustomer, createInventory, createWarehouse]);
 
   const handleFieldChange = (name: string, value: any) => {
     setFormData((prev) => ({ ...prev, [name]: value }));
@@ -379,7 +476,7 @@ export function QuickCreateDialog({
     .every((f) => {
       const value = formData[f.name];
       // For select fields (productSelect, bomSelect), check for truthy value
-      if (f.type === 'productSelect' || f.type === 'bomSelect' || f.type === 'select') {
+      if (f.type === 'productSelect' || f.type === 'bomSelect' || f.type === 'warehouseSelect' || f.type === 'select') {
         return value !== undefined && value !== null && value !== '';
       }
       // For text fields, check for non-empty string
@@ -437,6 +534,11 @@ export function QuickCreateDialog({
                 <BomSelectField
                   value={formData[field.name]}
                   productId={formData.productId}
+                  onChange={(value) => handleFieldChange(field.name, value)}
+                />
+              ) : field.type === "warehouseSelect" ? (
+                <WarehouseSelectField
+                  value={formData[field.name]}
                   onChange={(value) => handleFieldChange(field.name, value)}
                 />
               ) : (

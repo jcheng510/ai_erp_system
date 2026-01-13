@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
+import { AutoReplyRulesTab } from "@/components/AutoReplyRulesTab";
+import { SentEmailsTab } from "@/components/SentEmailsTab";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -42,7 +44,12 @@ import {
   Zap,
   Reply,
   Sparkles,
-  Send
+  Send,
+  Trash2,
+  FolderOpen,
+  Users,
+  Factory,
+  MoreHorizontal
 } from "lucide-react";
 
 // Category display configuration
@@ -75,6 +82,9 @@ export default function EmailInbox() {
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [priorityFilter, setPriorityFilter] = useState<string>("all");
   const [documentTypeFilter, setDocumentTypeFilter] = useState<string>("all");
+  const [activeFolder, setActiveFolder] = useState<string>("all");
+  const [selectedEmails, setSelectedEmails] = useState<Set<number>>(new Set());
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   // Form state for manual email submission
   const [emailForm, setEmailForm] = useState({
@@ -205,7 +215,21 @@ export default function EmailInbox() {
     onSuccess: () => {
       toast.success("Email archived");
       setSelectedEmail(null);
+      setSelectedEmails(new Set());
       utils.emailScanning.list.invalidate();
+    },
+  });
+
+  const deleteEmailMutation = trpc.emailScanning.deleteEmail.useMutation({
+    onSuccess: () => {
+      toast.success("Email deleted");
+      setSelectedEmail(null);
+      setSelectedEmails(new Set());
+      setShowDeleteConfirm(false);
+      utils.emailScanning.list.invalidate();
+    },
+    onError: (error) => {
+      toast.error(`Failed to delete: ${error.message}`);
     },
   });
 
@@ -806,9 +830,69 @@ export default function EmailInbox() {
               <FileText className="h-4 w-4" />
               Parsed Documents
             </TabsTrigger>
+            <TabsTrigger value="auto-reply" className="gap-2">
+              <Zap className="h-4 w-4" />
+              Auto-Reply Rules
+            </TabsTrigger>
+            <TabsTrigger value="sent" className="gap-2">
+              <Send className="h-4 w-4" />
+              Sent
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="inbox" className="space-y-4">
+            {/* Smart Folders */}
+            <div className="flex flex-wrap gap-2 mb-4">
+              <Button
+                variant={activeFolder === "all" ? "default" : "outline"}
+                size="sm"
+                onClick={() => { setActiveFolder("all"); setCategoryFilter("all"); }}
+              >
+                <Inbox className="h-4 w-4 mr-1" />
+                All
+              </Button>
+              <Button
+                variant={activeFolder === "sales" ? "default" : "outline"}
+                size="sm"
+                onClick={() => { setActiveFolder("sales"); setCategoryFilter("purchase_order"); }}
+              >
+                <Users className="h-4 w-4 mr-1" />
+                Sales
+              </Button>
+              <Button
+                variant={activeFolder === "raw_materials" ? "default" : "outline"}
+                size="sm"
+                onClick={() => { setActiveFolder("raw_materials"); setCategoryFilter("invoice"); }}
+              >
+                <Package className="h-4 w-4 mr-1" />
+                Raw Materials
+              </Button>
+              <Button
+                variant={activeFolder === "copackers" ? "default" : "outline"}
+                size="sm"
+                onClick={() => { setActiveFolder("copackers"); setCategoryFilter("receipt"); }}
+              >
+                <Factory className="h-4 w-4 mr-1" />
+                Copackers
+              </Button>
+              <Button
+                variant={activeFolder === "freight" ? "default" : "outline"}
+                size="sm"
+                onClick={() => { setActiveFolder("freight"); setCategoryFilter("shipping_confirmation"); }}
+              >
+                <Truck className="h-4 w-4 mr-1" />
+                Freight
+              </Button>
+              <Button
+                variant={activeFolder === "archived" ? "default" : "outline"}
+                size="sm"
+                onClick={() => { setActiveFolder("archived"); setStatusFilter("archived"); }}
+              >
+                <Archive className="h-4 w-4 mr-1" />
+                Archived
+              </Button>
+            </div>
+
             <div className="flex items-center gap-4 flex-wrap">
               <Select value={statusFilter} onValueChange={setStatusFilter}>
                 <SelectTrigger className="w-[150px]">
@@ -1074,6 +1158,15 @@ export default function EmailInbox() {
                         >
                           <Archive className="h-4 w-4 mr-2" />
                           Archive
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="text-destructive hover:text-destructive"
+                          onClick={() => setShowDeleteConfirm(true)}
+                        >
+                          <Trash2 className="h-4 w-4 mr-2" />
+                          Delete
                         </Button>
                       </div>
                     </div>
@@ -1342,6 +1435,16 @@ export default function EmailInbox() {
               </Card>
             </div>
           </TabsContent>
+
+          {/* Auto-Reply Rules Tab */}
+          <TabsContent value="auto-reply" className="space-y-4">
+            <AutoReplyRulesTab />
+          </TabsContent>
+
+          {/* Sent Emails Tab */}
+          <TabsContent value="sent" className="space-y-4">
+            <SentEmailsTab />
+          </TabsContent>
         </Tabs>
       </div>
 
@@ -1438,6 +1541,35 @@ export default function EmailInbox() {
                 <Send className="h-4 w-4 mr-2" />
               )}
               Send Now
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Email</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete this email? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowDeleteConfirm(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => selectedEmail && deleteEmailMutation.mutate({ id: selectedEmail })}
+              disabled={deleteEmailMutation.isPending}
+            >
+              {deleteEmailMutation.isPending ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Trash2 className="h-4 w-4 mr-2" />
+              )}
+              Delete
             </Button>
           </DialogFooter>
         </DialogContent>

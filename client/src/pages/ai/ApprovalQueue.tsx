@@ -241,6 +241,7 @@ export default function ApprovalQueue() {
                 </Button>
                 <Button
                   size="sm"
+                  variant="outline"
                   onClick={() => handleApprove(task.id)}
                   disabled={approveMutation.isPending}
                 >
@@ -250,6 +251,22 @@ export default function ApprovalQueue() {
                     <CheckCircle className="h-4 w-4 mr-1" />
                   )}
                   Approve
+                </Button>
+                <Button
+                  size="sm"
+                  className="bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700"
+                  onClick={async () => {
+                    await handleApprove(task.id);
+                    setTimeout(() => handleExecute(task.id), 500);
+                  }}
+                  disabled={approveMutation.isPending || executeMutation.isPending}
+                >
+                  {(approveMutation.isPending || executeMutation.isPending) ? (
+                    <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                  ) : (
+                    <Play className="h-4 w-4 mr-1" />
+                  )}
+                  Approve & Execute
                 </Button>
               </div>
             )}

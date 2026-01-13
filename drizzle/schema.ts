@@ -946,6 +946,76 @@ export const parsedDocuments = mysqlTable("parsed_documents", {
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
+// Auto-reply rules for email automation
+export const autoReplyRules = mysqlTable("auto_reply_rules", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  category: emailCategoryEnum.notNull(), // Which email category triggers this rule
+  isEnabled: boolean("isEnabled").default(true).notNull(),
+  priority: int("priority").default(0).notNull(), // Higher = runs first
+  
+  // Conditions
+  senderPattern: varchar("senderPattern", { length: 255 }), // Regex or wildcard for sender email
+  subjectPattern: varchar("subjectPattern", { length: 255 }), // Regex or wildcard for subject
+  bodyKeywords: json("bodyKeywords"), // Array of keywords that must be present
+  minConfidence: decimal("minConfidence", { precision: 5, scale: 2 }).default("0.7"), // Min category confidence
+  
+  // Reply configuration
+  replyTemplate: text("replyTemplate").notNull(), // Template with {{placeholders}}
+  replySubjectPrefix: varchar("replySubjectPrefix", { length: 100 }).default("Re:"),
+  tone: mysqlEnum("tone", ["professional", "friendly", "formal"]).default("professional"),
+  includeOriginal: boolean("includeOriginal").default(true),
+  
+  // Timing
+  delayMinutes: int("delayMinutes").default(0), // Delay before sending (0 = immediate)
+  
+  // Actions
+  autoSend: boolean("autoSend").default(false), // If false, queue for approval
+  createTask: boolean("createTask").default(true), // Create AI agent task
+  notifyOwner: boolean("notifyOwner").default(false),
+  
+  // Stats
+  timesTriggered: int("timesTriggered").default(0),
+  lastTriggeredAt: timestamp("lastTriggeredAt"),
+  
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type AutoReplyRule = typeof autoReplyRules.$inferSelect;
+export type InsertAutoReplyRule = typeof autoReplyRules.$inferInsert;
+
+// Sent/Outbound emails for tracking
+export const sentEmails = mysqlTable("sent_emails", {
+  id: int("id").autoincrement().primaryKey(),
+  inboundEmailId: int("inboundEmailId"), // If this is a reply to an inbound email
+  relatedEntityType: varchar("relatedEntityType", { length: 50 }), // 'purchase_order', 'invoice', 'rfq', etc.
+  relatedEntityId: int("relatedEntityId"), // ID of the related entity
+  toEmail: varchar("toEmail", { length: 255 }).notNull(),
+  toName: varchar("toName", { length: 255 }),
+  fromEmail: varchar("fromEmail", { length: 255 }).notNull(),
+  fromName: varchar("fromName", { length: 255 }),
+  subject: varchar("subject", { length: 500 }).notNull(),
+  bodyHtml: text("bodyHtml"),
+  bodyText: text("bodyText"),
+  status: mysqlEnum("status", ["queued", "sent", "delivered", "failed", "bounced"]).default("queued").notNull(),
+  sentAt: timestamp("sentAt"),
+  deliveredAt: timestamp("deliveredAt"),
+  errorMessage: text("errorMessage"),
+  messageId: varchar("messageId", { length: 255 }), // Email provider message ID
+  threadId: varchar("threadId", { length: 255 }), // For threading replies
+  sentBy: int("sentBy"), // User who sent it
+  aiGenerated: boolean("aiGenerated").default(false),
+  aiTaskId: int("aiTaskId"), // Link to AI agent task if AI-generated
+  metadata: json("metadata"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type SentEmail = typeof sentEmails.$inferSelect;
+export type InsertSentEmail = typeof sentEmails.$inferInsert;
+
 export const parsedDocumentLineItems = mysqlTable("parsed_document_line_items", {
   id: int("id").autoincrement().primaryKey(),
   documentId: int("documentId").notNull(),
