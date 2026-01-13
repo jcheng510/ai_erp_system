@@ -556,7 +556,7 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
   const [query, setQuery] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [response, setResponse] = useState<string | null>(null);
-  const [taskCreated, setTaskCreated] = useState<{ id: number; status: string } | null>(null);
+  const [taskCreated, setTaskCreated] = useState<{ id: number; status: string; taskType?: string } | null>(null);
   const [showSuggestions, setShowSuggestions] = useState(true);
   const [vendorSuggestion, setVendorSuggestion] = useState<VendorSuggestion | null>(null);
   const [debouncedMaterialName, setDebouncedMaterialName] = useState<string | null>(null);
@@ -602,7 +602,7 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
   // AI Agent task creation mutation
   const createTask = trpc.aiAgent.tasks.create.useMutation({
     onSuccess: (data) => {
-      setTaskCreated({ id: data.id, status: data.status || 'pending_approval' });
+      setTaskCreated({ id: data.id, status: data.status || 'pending_approval', taskType: data.taskType });
       setIsLoading(false);
       toast.success(`AI Task created: ${data.taskType}`, {
         description: data.status === "pending_approval" 
@@ -982,7 +982,92 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
                   View Queue
                 </Button>
               </div>
-              <div className="mt-4 flex gap-2">
+              <div className="mt-4 flex gap-2 flex-wrap">
+                {/* Quick navigation based on task type */}
+                {taskCreated.taskType === "generate_po" && (
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={() => {
+                      setLocation("/procurement");
+                      onOpenChange(false);
+                    }}
+                  >
+                    <ArrowRight className="h-4 w-4 mr-1" /> Go to Purchase Orders
+                  </Button>
+                )}
+                {taskCreated.taskType === "send_rfq" && (
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={() => {
+                      setLocation("/logistics");
+                      onOpenChange(false);
+                    }}
+                  >
+                    <ArrowRight className="h-4 w-4 mr-1" /> Go to Freight RFQs
+                  </Button>
+                )}
+                {taskCreated.taskType === "create_vendor" && (
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={() => {
+                      setLocation("/procurement");
+                      onOpenChange(false);
+                    }}
+                  >
+                    <ArrowRight className="h-4 w-4 mr-1" /> Go to Vendors
+                  </Button>
+                )}
+                {taskCreated.taskType === "create_material" && (
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={() => {
+                      setLocation("/procurement");
+                      onOpenChange(false);
+                    }}
+                  >
+                    <ArrowRight className="h-4 w-4 mr-1" /> Go to Raw Materials
+                  </Button>
+                )}
+                {taskCreated.taskType === "create_product" && (
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={() => {
+                      setLocation("/sales");
+                      onOpenChange(false);
+                    }}
+                  >
+                    <ArrowRight className="h-4 w-4 mr-1" /> Go to Products
+                  </Button>
+                )}
+                {taskCreated.taskType === "create_customer" && (
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={() => {
+                      setLocation("/sales");
+                      onOpenChange(false);
+                    }}
+                  >
+                    <ArrowRight className="h-4 w-4 mr-1" /> Go to Customers
+                  </Button>
+                )}
+                {taskCreated.taskType === "create_work_order" && (
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={() => {
+                      setLocation("/manufacturing");
+                      onOpenChange(false);
+                    }}
+                  >
+                    <ArrowRight className="h-4 w-4 mr-1" /> Go to Work Orders
+                  </Button>
+                )}
                 <Button
                   variant="outline"
                   size="sm"
@@ -1308,6 +1393,20 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
             });
           }
           utils.vendors.list.invalidate();
+          toast.success(
+            <div className="flex items-center gap-2">
+              <span>Vendor "{vendor.name}" created!</span>
+              <button
+                className="text-blue-600 hover:underline font-medium"
+                onClick={() => {
+                  setLocation("/procurement");
+                  onOpenChange(false);
+                }}
+              >
+                View in Procurement
+              </button>
+            </div>
+          );
         }}
       />
       <QuickCreateDialog
@@ -1326,24 +1425,64 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
           }
           setMaterialSearch("");
           utils.rawMaterials.list.invalidate();
+          toast.success(
+            <div className="flex items-center gap-2">
+              <span>Material "{material.name}" created!</span>
+              <button
+                className="text-blue-600 hover:underline font-medium"
+                onClick={() => {
+                  setLocation("/procurement");
+                  onOpenChange(false);
+                }}
+              >
+                View in Procurement
+              </button>
+            </div>
+          );
         }}
       />
       <QuickCreateDialog
         open={showQuickCreateProduct}
         onOpenChange={setShowQuickCreateProduct}
         entityType="product"
-        onCreated={() => {
+        onCreated={(product) => {
           utils.products.list.invalidate();
-          toast.success("Product created! You can now use it in BOMs and work orders.");
+          toast.success(
+            <div className="flex items-center gap-2">
+              <span>Product created!</span>
+              <button
+                className="text-blue-600 hover:underline font-medium"
+                onClick={() => {
+                  setLocation("/sales");
+                  onOpenChange(false);
+                }}
+              >
+                View in Sales Hub
+              </button>
+            </div>
+          );
         }}
       />
       <QuickCreateDialog
         open={showQuickCreateCustomer}
         onOpenChange={setShowQuickCreateCustomer}
         entityType="customer"
-        onCreated={() => {
+        onCreated={(customer) => {
           utils.customers.list.invalidate();
-          toast.success("Customer created! You can now create orders for them.");
+          toast.success(
+            <div className="flex items-center gap-2">
+              <span>Customer created!</span>
+              <button
+                className="text-blue-600 hover:underline font-medium"
+                onClick={() => {
+                  setLocation("/sales");
+                  onOpenChange(false);
+                }}
+              >
+                View in Sales Hub
+              </button>
+            </div>
+          );
         }}
       />
     </Dialog>

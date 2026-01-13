@@ -703,9 +703,9 @@
 - [x] Add New button to Locations tab
 - [x] Add New button to Customers tab (via QuickCreateDialog)
 - [x] Add New button to Products tab (via QuickCreateDialog)
-- [ ] Add New button to Invoices tab
-- [ ] Add New button to Contracts tab
-- [ ] Add New button to Projects tab
+- [x] Add New button to Invoices tab (already exists as Create Invoice)
+- [x] Add New button to Contracts tab (already exists as New Contract)
+- [x] Add New button to Projects tab (already exists as New Project)
 
 ## Immediate AI Action Execution
 - [x] Add "Approve & Execute Now" button to AI task cards
@@ -720,11 +720,11 @@
 - [x] Show email conversation view with sent/received messages
 
 ## Clickable Generated Items
-- [ ] Make AI-created vendors clickable with link to vendor detail
-- [ ] Make AI-created materials clickable with link to material detail
-- [ ] Make AI-created products clickable with link to product detail
-- [ ] Make AI-created customers clickable with link to customer detail
-- [ ] Show entity links in AI task completion messages
+- [x] Make AI-created vendors clickable with link to vendor detail
+- [x] Make AI-created materials clickable with link to material detail
+- [x] Make AI-created products clickable with link to product detail
+- [x] Make AI-created customers clickable with link to customer detail
+- [x] Show entity links in AI task completion messages
 
 ## Email Delete/Archive and Smart Folders
 - [x] Add delete button to email actions
@@ -733,7 +733,7 @@
 - [x] Add folder sidebar to Email Inbox
 - [x] Auto-categorize emails into folders based on content/sender
 - [x] Add folder filter to email list view
-- [ ] Add bulk delete/archive for selected emails
+- [x] Add bulk delete/archive for selected emails
 
 ## Auto-Reply Rules
 - [x] Create auto_reply_rules database table
@@ -764,3 +764,13 @@
 - [x] Download and process selected files through AI parser
 - [x] Show batch import progress with per-file status
 - [x] Add import results summary for batch operations
+
+
+## Bug Fixes and Improvements (January 2026)
+- [x] Fix TypeScript errors in aiAgentScheduler.ts (correct field names and db import)
+- [x] Fix JSX structure errors in EmailInbox.tsx (missing closing div tag)
+- [x] Verify Contracts page has New button (already implemented)
+- [x] Verify Projects page has New button (already implemented)
+- [x] Add clickable links for AI-generated items in AICommandBar (navigate to created records)
+- [x] Bulk email selection already implemented (selectedEmails state with checkboxes)
+- [x] Bulk delete/archive functionality already implemented (bulk action handlers)

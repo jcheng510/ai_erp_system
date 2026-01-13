@@ -34,7 +34,12 @@ import {
   Bot,
   Eye,
   Loader2,
+  ExternalLink,
+  Users,
+  Building2,
+  Boxes,
 } from "lucide-react";
+import { Link } from "wouter";
 import { toast } from "sonner";
 
 function formatDate(value: string | Date | null | undefined) {
@@ -184,16 +189,40 @@ export default function ApprovalQueue() {
                 {/* Task-specific details */}
                 {task.taskType === "generate_po" && (
                   <div className="text-sm text-muted-foreground space-y-1">
-                    <p><strong>Vendor:</strong> {taskData.vendorName || "Unknown"}</p>
-                    <p><strong>Material:</strong> {taskData.materialName || "Unknown"}</p>
+                    <p><strong>Vendor:</strong> {taskData.vendorId ? (
+                      <Link href={`/operations/procurement-hub?tab=vendors&id=${taskData.vendorId}`} className="text-primary hover:underline inline-flex items-center gap-1">
+                        {taskData.vendorName || "Unknown"}
+                        <ExternalLink className="h-3 w-3" />
+                      </Link>
+                    ) : (taskData.vendorName || "Unknown")}</p>
+                    <p><strong>Material:</strong> {taskData.materialId ? (
+                      <Link href={`/operations/procurement-hub?tab=materials&id=${taskData.materialId}`} className="text-primary hover:underline inline-flex items-center gap-1">
+                        {taskData.materialName || "Unknown"}
+                        <ExternalLink className="h-3 w-3" />
+                      </Link>
+                    ) : (taskData.materialName || "Unknown")}</p>
                     <p><strong>Quantity:</strong> {taskData.quantity} | <strong>Total:</strong> {formatCurrency(taskData.totalAmount)}</p>
                     {taskData.expectedDate && <p><strong>Expected:</strong> {formatDate(taskData.expectedDate)}</p>}
+                    {task.resultData && (
+                      <p className="mt-2 p-2 bg-green-50 rounded border border-green-200">
+                        <strong>Created:</strong>{" "}
+                        <Link href={`/operations/procurement-hub?tab=orders&id=${JSON.parse(task.resultData).poId}`} className="text-green-700 hover:underline inline-flex items-center gap-1">
+                          PO #{JSON.parse(task.resultData).poNumber}
+                          <ExternalLink className="h-3 w-3" />
+                        </Link>
+                      </p>
+                    )}
                   </div>
                 )}
                 
                 {task.taskType === "send_rfq" && (
                   <div className="text-sm text-muted-foreground space-y-1">
-                    <p><strong>Material:</strong> {taskData.materialName || "Unknown"}</p>
+                    <p><strong>Material:</strong> {taskData.materialId ? (
+                      <Link href={`/operations/procurement-hub?tab=materials&id=${taskData.materialId}`} className="text-primary hover:underline inline-flex items-center gap-1">
+                        {taskData.materialName || "Unknown"}
+                        <ExternalLink className="h-3 w-3" />
+                      </Link>
+                    ) : (taskData.materialName || "Unknown")}</p>
                     <p><strong>Quantity:</strong> {taskData.quantity}</p>
                     <p><strong>Vendors:</strong> {taskData.vendorIds?.length || 0} selected</p>
                   </div>
@@ -203,6 +232,80 @@ export default function ApprovalQueue() {
                   <div className="text-sm text-muted-foreground space-y-1">
                     <p><strong>To:</strong> {taskData.to || "Unknown"}</p>
                     <p><strong>Subject:</strong> {taskData.subject || "No subject"}</p>
+                    {task.resultData && (
+                      <p className="mt-2 p-2 bg-green-50 rounded border border-green-200">
+                        <strong>Sent:</strong>{" "}
+                        <Link href="/operations/email-inbox?tab=sent" className="text-green-700 hover:underline inline-flex items-center gap-1">
+                          View in Sent Emails
+                          <ExternalLink className="h-3 w-3" />
+                        </Link>
+                      </p>
+                    )}
+                  </div>
+                )}
+                
+                {/* Entity creation tasks with result links */}
+                {task.taskType === "create_vendor" && (
+                  <div className="text-sm text-muted-foreground space-y-1">
+                    <p><strong>Vendor Name:</strong> {taskData.name || "Unknown"}</p>
+                    {taskData.email && <p><strong>Email:</strong> {taskData.email}</p>}
+                    {task.resultData && (
+                      <p className="mt-2 p-2 bg-green-50 rounded border border-green-200">
+                        <strong>Created:</strong>{" "}
+                        <Link href={`/operations/procurement-hub?tab=vendors&id=${JSON.parse(task.resultData).vendorId}`} className="text-green-700 hover:underline inline-flex items-center gap-1">
+                          View Vendor
+                          <ExternalLink className="h-3 w-3" />
+                        </Link>
+                      </p>
+                    )}
+                  </div>
+                )}
+                
+                {task.taskType === "create_material" && (
+                  <div className="text-sm text-muted-foreground space-y-1">
+                    <p><strong>Material Name:</strong> {taskData.name || "Unknown"}</p>
+                    {taskData.sku && <p><strong>SKU:</strong> {taskData.sku}</p>}
+                    {task.resultData && (
+                      <p className="mt-2 p-2 bg-green-50 rounded border border-green-200">
+                        <strong>Created:</strong>{" "}
+                        <Link href={`/operations/procurement-hub?tab=materials&id=${JSON.parse(task.resultData).materialId}`} className="text-green-700 hover:underline inline-flex items-center gap-1">
+                          View Material
+                          <ExternalLink className="h-3 w-3" />
+                        </Link>
+                      </p>
+                    )}
+                  </div>
+                )}
+                
+                {task.taskType === "create_product" && (
+                  <div className="text-sm text-muted-foreground space-y-1">
+                    <p><strong>Product Name:</strong> {taskData.name || "Unknown"}</p>
+                    {taskData.sku && <p><strong>SKU:</strong> {taskData.sku}</p>}
+                    {task.resultData && (
+                      <p className="mt-2 p-2 bg-green-50 rounded border border-green-200">
+                        <strong>Created:</strong>{" "}
+                        <Link href={`/sales/products?id=${JSON.parse(task.resultData).productId}`} className="text-green-700 hover:underline inline-flex items-center gap-1">
+                          View Product
+                          <ExternalLink className="h-3 w-3" />
+                        </Link>
+                      </p>
+                    )}
+                  </div>
+                )}
+                
+                {task.taskType === "create_customer" && (
+                  <div className="text-sm text-muted-foreground space-y-1">
+                    <p><strong>Customer Name:</strong> {taskData.name || "Unknown"}</p>
+                    {taskData.email && <p><strong>Email:</strong> {taskData.email}</p>}
+                    {task.resultData && (
+                      <p className="mt-2 p-2 bg-green-50 rounded border border-green-200">
+                        <strong>Created:</strong>{" "}
+                        <Link href={`/sales/customers?id=${JSON.parse(task.resultData).customerId}`} className="text-green-700 hover:underline inline-flex items-center gap-1">
+                          View Customer
+                          <ExternalLink className="h-3 w-3" />
+                        </Link>
+                      </p>
+                    )}
                   </div>
                 )}
                 
