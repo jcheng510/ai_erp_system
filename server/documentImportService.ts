@@ -87,6 +87,7 @@ export async function parseUploadedDocument(
   documentHint?: "purchase_order" | "freight_invoice",
   mimeType?: string
 ): Promise<DocumentParseResult> {
+  console.log("[DocumentImport] Starting parse for:", filename, "URL:", fileUrl, "mimeType:", mimeType);
   try {
     const prompt = `You are an expert document parser for a business ERP system. Analyze the attached document and extract structured data.
 
@@ -154,107 +155,213 @@ Return a JSON object with this structure:
 Only include the relevant object (purchaseOrder OR freightInvoice) based on document type.
 If document type is unknown, return both as null.`;
 
-    // Determine the appropriate mime type for the file
-    const effectiveMimeType = mimeType || (filename.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 
-      filename.toLowerCase().endsWith('.xlsx') ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' :
-      filename.toLowerCase().endsWith('.csv') ? 'text/csv' :
-      filename.toLowerCase().match(/\.(png|jpg|jpeg)$/i) ? 'image/jpeg' : 'application/pdf');
+    // Determine file type
+    const isImage = filename.toLowerCase().match(/\.(png|jpg|jpeg|gif|webp)$/i);
+    const isPdf = filename.toLowerCase().endsWith('.pdf');
+    const isCsv = filename.toLowerCase().endsWith('.csv');
     
-    const response = await invokeLLM({
+    // Build the message content
+    let messageContent: any[];
+    
+    if (isImage) {
+      // For images, download and convert to base64 data URL
+      try {
+        console.log("[DocumentImport] Downloading image from:", fileUrl);
+        const response = await fetch(fileUrl);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch image: ${response.status}`);
+        }
+        const arrayBuffer = await response.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        const base64 = buffer.toString('base64');
+        const ext = filename.toLowerCase().match(/\.(png|jpg|jpeg|gif|webp)$/i)?.[1] || 'png';
+        const mimeTypeMap: Record<string, string> = {
+          'png': 'image/png',
+          'jpg': 'image/jpeg',
+          'jpeg': 'image/jpeg',
+          'gif': 'image/gif',
+          'webp': 'image/webp'
+        };
+        const imageMimeType = mimeTypeMap[ext] || 'image/png';
+        const dataUrl = `data:${imageMimeType};base64,${base64}`;
+        console.log("[DocumentImport] Converted image to base64 data URL, length:", dataUrl.length);
+        messageContent = [
+          { type: "text", text: prompt },
+          { type: "image_url", image_url: { url: dataUrl, detail: "high" } }
+        ];
+      } catch (fetchError) {
+        console.error("[DocumentImport] Failed to fetch/convert image:", fetchError);
+        return { success: false, documentType: "unknown", error: "Failed to process image file" };
+      }
+    } else if (isPdf) {
+      // For PDFs, use file_url content type
+      console.log("[DocumentImport] Using file_url for PDF");
+      messageContent = [
+        { type: "text", text: prompt },
+        { type: "file_url", file_url: { url: fileUrl, mime_type: "application/pdf" as any } }
+      ];
+    } else {
+      // For CSV/Excel/text files, download and extract text content
+      try {
+        console.log("[DocumentImport] Fetching document content from URL:", fileUrl);
+        const response = await fetch(fileUrl);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch document: ${response.status}`);
+        }
+        const textContent = await response.text();
+        console.log("[DocumentImport] Extracted text content length:", textContent.length);
+        messageContent = [
+          { type: "text", text: `${prompt}\n\nDOCUMENT CONTENT:\n${textContent.substring(0, 50000)}` }
+        ];
+      } catch (fetchError) {
+        console.error("[DocumentImport] Failed to fetch document:", fetchError);
+        return { success: false, documentType: "unknown", error: "Failed to read document content" };
+      }
+    }
+    
+    console.log("[DocumentImport] Sending to LLM with content type:", isImage ? "image_url (base64)" : isPdf ? "file_url" : "text");
+    console.log("[DocumentImport] Message content structure:", JSON.stringify(messageContent.map((m: any) => ({ type: m.type, hasUrl: !!m.image_url?.url || !!m.file_url?.url }))));
+    
+    // For images, we need to use a simpler approach without strict JSON schema
+    // because some models don't support image_url with response_format
+    const useSimpleFormat = isImage;
+    console.log("[DocumentImport] Using simple format (no response_format):", useSimpleFormat);
+    
+    let response;
+    response = await invokeLLM({
       messages: [
-        { role: "system", content: "You are a document parsing AI that extracts structured data from business documents. Always respond with valid JSON." },
+        { role: "system", content: useSimpleFormat 
+          ? "You are a document parsing AI. Analyze the image and extract structured data. IMPORTANT: You MUST respond with ONLY valid JSON, no other text. The JSON must have this structure: {\"documentType\": \"purchase_order\" or \"freight_invoice\" or \"unknown\", \"confidence\": 0.0-1.0, \"purchaseOrder\": {...} or null, \"freightInvoice\": {...} or null}"
+          : "You are a document parsing AI that extracts structured data from business documents. Always respond with valid JSON." },
         { 
           role: "user", 
-          content: [
-            { type: "text", text: prompt },
-            { type: "file_url", file_url: { url: fileUrl, mime_type: effectiveMimeType as any } }
-          ]
+          content: messageContent
         }
       ],
-      response_format: {
-        type: "json_schema",
-        json_schema: {
-          name: "document_parse_result",
-          strict: true,
-          schema: {
-            type: "object",
-            properties: {
-              documentType: { type: "string", enum: ["purchase_order", "freight_invoice", "unknown"] },
-              confidence: { type: "number" },
-              purchaseOrder: {
-                type: ["object", "null"],
-                properties: {
-                  poNumber: { type: "string" },
-                  vendorName: { type: "string" },
-                  vendorEmail: { type: "string" },
-                  orderDate: { type: "string" },
-                  deliveryDate: { type: "string" },
-                  status: { type: "string" },
-                  lineItems: {
-                    type: "array",
-                    items: {
-                      type: "object",
-                      properties: {
-                        description: { type: "string" },
-                        quantity: { type: "number" },
-                        unit: { type: "string" },
-                        unitPrice: { type: "number" },
-                        totalPrice: { type: "number" },
-                        sku: { type: "string" }
-                      },
-                      required: ["description", "quantity", "unitPrice", "totalPrice"],
-                      additionalProperties: false
-                    }
+      // Only use response_format for non-image content
+      // Some models don't support image_url with strict JSON schema
+      ...(useSimpleFormat ? {} : {
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "document_parse_result",
+            strict: true,
+            schema: {
+              type: "object",
+              properties: {
+                documentType: { type: "string", enum: ["purchase_order", "freight_invoice", "unknown"] },
+                confidence: { type: "number" },
+                purchaseOrder: {
+                  type: ["object", "null"],
+                  properties: {
+                    poNumber: { type: "string" },
+                    vendorName: { type: "string" },
+                    vendorEmail: { type: "string" },
+                    orderDate: { type: "string" },
+                    deliveryDate: { type: "string" },
+                    status: { type: "string" },
+                    lineItems: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        properties: {
+                          description: { type: "string" },
+                          quantity: { type: "number" },
+                          unit: { type: "string" },
+                          unitPrice: { type: "number" },
+                          totalPrice: { type: "number" },
+                          sku: { type: "string" }
+                        },
+                        required: ["description", "quantity", "unitPrice", "totalPrice"],
+                        additionalProperties: false
+                      }
+                    },
+                    subtotal: { type: "number" },
+                    taxAmount: { type: "number" },
+                    shippingAmount: { type: "number" },
+                    totalAmount: { type: "number" },
+                    currency: { type: "string" },
+                    notes: { type: "string" }
                   },
-                  subtotal: { type: "number" },
-                  taxAmount: { type: "number" },
-                  shippingAmount: { type: "number" },
-                  totalAmount: { type: "number" },
-                  currency: { type: "string" },
-                  notes: { type: "string" }
+                  required: ["poNumber", "vendorName", "orderDate", "lineItems", "totalAmount"],
+                  additionalProperties: false
                 },
-                required: ["poNumber", "vendorName", "orderDate", "lineItems", "totalAmount"],
-                additionalProperties: false
+                freightInvoice: {
+                  type: ["object", "null"],
+                  properties: {
+                    invoiceNumber: { type: "string" },
+                    carrierName: { type: "string" },
+                    carrierEmail: { type: "string" },
+                    invoiceDate: { type: "string" },
+                    shipmentDate: { type: "string" },
+                    deliveryDate: { type: "string" },
+                    origin: { type: "string" },
+                    destination: { type: "string" },
+                    trackingNumber: { type: "string" },
+                    weight: { type: "string" },
+                    dimensions: { type: "string" },
+                    freightCharges: { type: "number" },
+                    fuelSurcharge: { type: "number" },
+                    accessorialCharges: { type: "number" },
+                    totalAmount: { type: "number" },
+                    currency: { type: "string" },
+                    relatedPoNumber: { type: "string" },
+                    notes: { type: "string" }
+                  },
+                  required: ["invoiceNumber", "carrierName", "invoiceDate", "totalAmount"],
+                  additionalProperties: false
+                }
               },
-              freightInvoice: {
-                type: ["object", "null"],
-                properties: {
-                  invoiceNumber: { type: "string" },
-                  carrierName: { type: "string" },
-                  carrierEmail: { type: "string" },
-                  invoiceDate: { type: "string" },
-                  shipmentDate: { type: "string" },
-                  deliveryDate: { type: "string" },
-                  origin: { type: "string" },
-                  destination: { type: "string" },
-                  trackingNumber: { type: "string" },
-                  weight: { type: "string" },
-                  dimensions: { type: "string" },
-                  freightCharges: { type: "number" },
-                  fuelSurcharge: { type: "number" },
-                  accessorialCharges: { type: "number" },
-                  totalAmount: { type: "number" },
-                  currency: { type: "string" },
-                  relatedPoNumber: { type: "string" },
-                  notes: { type: "string" }
-                },
-                required: ["invoiceNumber", "carrierName", "invoiceDate", "totalAmount"],
-                additionalProperties: false
-              }
-            },
-            required: ["documentType", "confidence"],
-            additionalProperties: false
+              required: ["documentType", "confidence"],
+              additionalProperties: false
+            }
           }
         }
-      }
+      })
     });
 
-    const content_str = response.choices[0]?.message?.content;
-    if (!content_str || typeof content_str !== 'string') {
-      return { success: false, documentType: "unknown", error: "No response from AI" };
+    console.log("[DocumentImport] LLM response received:", JSON.stringify(response, null, 2).substring(0, 500));
+    
+    if (!response || !response.choices || response.choices.length === 0) {
+      console.error("[DocumentImport] Invalid LLM response structure:", response);
+      return { success: false, documentType: "unknown", error: "Invalid response from AI - no choices returned" };
     }
-
-    const parsed = JSON.parse(content_str);
+    
+    const content_str = response.choices[0]?.message?.content;
+    if (!content_str) {
+      console.error("[DocumentImport] No content in LLM response:", response.choices[0]);
+      return { success: false, documentType: "unknown", error: "No content in AI response" };
+    }
+    
+    // Handle both string and array content
+    let contentText: string;
+    if (typeof content_str === 'string') {
+      contentText = content_str;
+    } else if (Array.isArray(content_str)) {
+      // Extract text from content array
+      const textPart = content_str.find((p: any) => p.type === 'text');
+      contentText = textPart?.text || JSON.stringify(content_str);
+    } else {
+      contentText = JSON.stringify(content_str);
+    }
+    
+    console.log("[DocumentImport] Raw content:", contentText.substring(0, 300));
+    
+    // Strip markdown code blocks if present
+    let jsonText = contentText.trim();
+    if (jsonText.startsWith('```json')) {
+      jsonText = jsonText.slice(7); // Remove ```json
+    } else if (jsonText.startsWith('```')) {
+      jsonText = jsonText.slice(3); // Remove ```
+    }
+    if (jsonText.endsWith('```')) {
+      jsonText = jsonText.slice(0, -3); // Remove trailing ```
+    }
+    jsonText = jsonText.trim();
+    
+    console.log("[DocumentImport] Cleaned JSON:", jsonText.substring(0, 500));
+    const parsed = JSON.parse(jsonText);
+    console.log("[DocumentImport] Parsed result:", JSON.stringify(parsed, null, 2).substring(0, 1000));
     
     return {
       success: true,

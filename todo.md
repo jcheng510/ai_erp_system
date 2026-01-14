@@ -777,3 +777,4 @@
 
 ## Document Uploader Bug Fix
 - [x] Fix "Could not determine document type" error in document uploader
+- [x] Debug document uploader still failing after initial fix - Fixed error handling in FileReader callback

@@ -123,11 +123,13 @@ export default function DocumentImport() {
     const file = acceptedFiles[0];
     setIsUploading(true);
     
-    try {
-      // Convert file to base64
-      const reader = new FileReader();
-      reader.onload = async () => {
+    // Convert file to base64
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
         const base64 = (reader.result as string).split(",")[1];
+        
+        console.log("[DocumentImport] Uploading file:", file.name, "type:", file.type);
         
         const result = await parseMutation.mutateAsync({
           fileData: base64,
@@ -135,38 +137,59 @@ export default function DocumentImport() {
           mimeType: file.type,
         });
         
+        console.log("[DocumentImport] Parse result:", result);
+        
         if (result.documentType === "purchase_order" && result.purchaseOrder) {
           // Match line items to materials
-          const matchedItems = await matchMaterialsMutation.mutateAsync({
-            lineItems: result.purchaseOrder.lineItems,
-          });
-          
-          setParsedPO({
-            ...result.purchaseOrder,
-            lineItems: matchedItems.map((item: any) => ({
-              ...item,
-              matchedMaterialId: item.rawMaterialId,
-              matchedMaterialName: item.rawMaterialId ? item.description : undefined,
-            })),
-          });
+          try {
+            const matchedItems = await matchMaterialsMutation.mutateAsync({
+              lineItems: result.purchaseOrder.lineItems,
+            });
+            
+            setParsedPO({
+              ...result.purchaseOrder,
+              lineItems: matchedItems.map((item: any) => ({
+                ...item,
+                matchedMaterialId: item.rawMaterialId,
+                matchedMaterialName: item.rawMaterialId ? item.description : undefined,
+              })),
+            });
+          } catch (matchError) {
+            console.error("[DocumentImport] Material matching error:", matchError);
+            // Still show the PO without material matching
+            setParsedPO({
+              ...result.purchaseOrder,
+              lineItems: result.purchaseOrder.lineItems.map((item: any) => ({
+                ...item,
+                matchedMaterialId: undefined,
+                matchedMaterialName: undefined,
+              })),
+            });
+          }
           setUploadType("po");
+          setShowPreview(true);
         } else if (result.documentType === "freight_invoice" && result.freightInvoice) {
           setParsedFreight(result.freightInvoice);
           setUploadType("freight");
+          setShowPreview(true);
         } else {
           toast.error("Could not determine document type. Please try again or manually enter the data.");
         }
-        
-        setShowPreview(true);
+      } catch (error) {
+        console.error("[DocumentImport] Upload error:", error);
+        toast.error("Failed to parse document. Please try again.");
+      } finally {
         setIsUploading(false);
-      };
-      
-      reader.readAsDataURL(file);
-    } catch (error) {
-      console.error("Upload error:", error);
-      toast.error("Failed to parse document. Please try again.");
+      }
+    };
+    
+    reader.onerror = () => {
+      console.error("[DocumentImport] File read error");
+      toast.error("Failed to read file. Please try again.");
       setIsUploading(false);
-    }
+    };
+    
+    reader.readAsDataURL(file);
   }, [parseMutation, matchMaterialsMutation]);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
