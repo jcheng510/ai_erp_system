@@ -173,7 +173,15 @@ export default function DocumentImport() {
           setUploadType("freight");
           setShowPreview(true);
         } else {
-          toast.error("Could not determine document type. Please try again or manually enter the data.");
+          console.error("[DocumentImport] Unknown document type or missing data:", {
+            documentType: result.documentType,
+            hasPurchaseOrder: !!result.purchaseOrder,
+            hasFreightInvoice: !!result.freightInvoice,
+            success: result.success,
+            error: result.error,
+            fullResult: result
+          });
+          toast.error(result.error || "Could not determine document type. Please try again or manually enter the data.");
         }
       } catch (error) {
         console.error("[DocumentImport] Upload error:", error);

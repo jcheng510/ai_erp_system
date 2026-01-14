@@ -780,5 +780,11 @@
 - [x] Debug document uploader still failing after initial fix - Fixed error handling in FileReader callback
 
 ## PDF Support for Document Uploader
-- [x] Implement PDF-to-image conversion on the server (using pdftoppm)
+- [x] Implement PDF-to-image conversion on the server (using pdftoppm - sandbox only)
 - [x] Test PDF upload and verify parsing works
+- [x] Fix PDF processing for production (replaced pdftoppm with pdfjs-dist text extraction)
+
+## Document Uploader Bug (User Report)
+- [x] Debug "Could not determine document type" error still occurring for user uploads
+- [x] Root cause: pdftoppm command-line tool not available in production environment
+- [x] Solution: Use pdfjs-dist pure JavaScript library for PDF text extraction
