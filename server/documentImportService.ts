@@ -1,5 +1,9 @@
 import { invokeLLM } from "./_core/llm";
 import * as db from "./db";
+import { writeFileSync, readFileSync, unlinkSync, mkdirSync, existsSync } from "fs";
+import { join } from "path";
+import { tmpdir } from "os";
+import { execSync } from "child_process";
 
 // Types for document import
 export interface ImportedLineItem {
@@ -194,12 +198,69 @@ If document type is unknown, return both as null.`;
         return { success: false, documentType: "unknown", error: "Failed to process image file" };
       }
     } else if (isPdf) {
-      // For PDFs, use file_url content type
-      console.log("[DocumentImport] Using file_url for PDF");
-      messageContent = [
-        { type: "text", text: prompt },
-        { type: "file_url", file_url: { url: fileUrl, mime_type: "application/pdf" as any } }
-      ];
+      // For PDFs, convert to image first using pdftoppm (poppler-utils)
+      console.log("[DocumentImport] Converting PDF to image using pdftoppm");
+      try {
+        // Download the PDF
+        const response = await fetch(fileUrl);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch PDF: ${response.status}`);
+        }
+        const arrayBuffer = await response.arrayBuffer();
+        const pdfBuffer = Buffer.from(arrayBuffer);
+        console.log("[DocumentImport] Downloaded PDF, size:", pdfBuffer.length);
+        
+        // Create temp directory and files
+        const tempDir = join(tmpdir(), 'pdf_convert_' + Date.now());
+        if (!existsSync(tempDir)) {
+          mkdirSync(tempDir, { recursive: true });
+        }
+        
+        const pdfPath = join(tempDir, 'input.pdf');
+        const outputPrefix = join(tempDir, 'output');
+        
+        // Write PDF to temp file
+        writeFileSync(pdfPath, pdfBuffer);
+        
+        // Convert PDF to PNG using pdftoppm
+        try {
+          execSync(`pdftoppm -png -r 200 -singlefile "${pdfPath}" "${outputPrefix}"`, {
+            timeout: 30000,
+            stdio: 'pipe'
+          });
+        } catch (execError) {
+          console.error("[DocumentImport] pdftoppm failed:", execError);
+          throw new Error("PDF conversion failed");
+        }
+        
+        // Read the generated PNG
+        const pngPath = outputPrefix + '.png';
+        if (!existsSync(pngPath)) {
+          throw new Error("PDF conversion produced no output");
+        }
+        
+        const pngBuffer = readFileSync(pngPath);
+        const base64 = pngBuffer.toString('base64');
+        console.log("[DocumentImport] Converted PDF to image, base64 length:", base64.length);
+        
+        // Use the base64 image like we do for regular images
+        const dataUrl = `data:image/png;base64,${base64}`;
+        messageContent = [
+          { type: "text", text: prompt },
+          { type: "image_url", image_url: { url: dataUrl, detail: "high" } }
+        ];
+        
+        // Clean up temp directory
+        try {
+          const fs = await import('fs/promises');
+          await fs.rm(tempDir, { recursive: true, force: true });
+        } catch (cleanupError) {
+          console.warn("[DocumentImport] Failed to cleanup temp directory:", cleanupError);
+        }
+      } catch (pdfError) {
+        console.error("[DocumentImport] Failed to convert PDF:", pdfError);
+        return { success: false, documentType: "unknown", error: `Failed to process PDF: ${pdfError instanceof Error ? pdfError.message : 'Unknown error'}` };
+      }
     } else {
       // For CSV/Excel/text files, download and extract text content
       try {
@@ -219,12 +280,12 @@ If document type is unknown, return both as null.`;
       }
     }
     
-    console.log("[DocumentImport] Sending to LLM with content type:", isImage ? "image_url (base64)" : isPdf ? "file_url" : "text");
+    console.log("[DocumentImport] Sending to LLM with content type:", isImage ? "image_url (base64)" : isPdf ? "image_url (from PDF)" : "text");
     console.log("[DocumentImport] Message content structure:", JSON.stringify(messageContent.map((m: any) => ({ type: m.type, hasUrl: !!m.image_url?.url || !!m.file_url?.url }))));
     
-    // For images, we need to use a simpler approach without strict JSON schema
+    // For images and PDFs (converted to images), we need to use a simpler approach without strict JSON schema
     // because some models don't support image_url with response_format
-    const useSimpleFormat = isImage;
+    const useSimpleFormat = isImage || isPdf;
     console.log("[DocumentImport] Using simple format (no response_format):", useSimpleFormat);
     
     let response;
