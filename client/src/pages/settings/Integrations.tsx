@@ -101,6 +101,9 @@ export default function IntegrationsPage() {
       const errorMessages: Record<string, string> = {
         'missing_params': 'Missing required parameters from Shopify',
         'not_configured': 'Shopify integration is not configured. Please contact your administrator.',
+        'not_authenticated': 'You must be logged in to connect a Shopify store',
+        'user_mismatch': 'User session mismatch during OAuth flow',
+        'company_mismatch': 'Company mismatch during OAuth flow',
         'invalid_domain': 'Invalid Shopify domain',
         'invalid_state': 'Invalid OAuth state parameter',
         'shop_mismatch': 'Shop domain mismatch in OAuth flow',

@@ -119,15 +119,39 @@ async function startServer() {
     }
 
     try {
+      // Authenticate the user from session
+      const { sdk } = await import('./sdk');
+      let user;
+      try {
+        user = await sdk.authenticateRequest(req);
+      } catch (error) {
+        return res.redirect('/settings/integrations?shopify_error=not_authenticated');
+      }
+
+      if (!user) {
+        return res.redirect('/settings/integrations?shopify_error=not_authenticated');
+      }
+
       // Validate state parameter
       const stateParts = (state as string).split(':');
-      if (stateParts.length < 3) {
+      if (stateParts.length < 4) {
         return res.redirect('/settings/integrations?shopify_error=invalid_state');
       }
 
       const stateUserId = parseInt(stateParts[0]);
-      const stateShop = stateParts[1];
-      const stateTimestamp = parseInt(stateParts[2]);
+      const stateCompanyId = stateParts[1] !== 'undefined' ? parseInt(stateParts[1]) : undefined;
+      const stateShop = stateParts[2];
+      const stateTimestamp = parseInt(stateParts[3]);
+
+      // Verify user ID matches
+      if (stateUserId !== user.id) {
+        return res.redirect('/settings/integrations?shopify_error=user_mismatch');
+      }
+
+      // Verify company ID matches (if user has one)
+      if (user.companyId && stateCompanyId !== user.companyId) {
+        return res.redirect('/settings/integrations?shopify_error=company_mismatch');
+      }
 
       // Validate shop domain
       let shopDomain = (shop as string).trim().toLowerCase();
@@ -183,8 +207,8 @@ async function startServer() {
       // Import db functions
       const { upsertShopifyStore, createSyncLog } = await import('../db');
       
-      // We don't have companyId in state for now, but we could add it in the future
-      let companyId: number | undefined;
+      // Use the company ID from the authenticated user
+      const companyId = user.companyId || undefined;
 
       // Import encryption function
       const { encrypt } = await import('../_core/crypto');
