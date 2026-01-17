@@ -2031,8 +2031,10 @@ export const appRouter = router({
     }),
 
     // Shopify OAuth integration
+    // Provides secure OAuth-based connection to Shopify stores for order and inventory sync
     shopify: router({
       // Initiate OAuth flow
+      // Returns the Shopify authorization URL for the user to visit
       initiateOAuth: protectedProcedure
         .input(z.object({
           shop: z.string().min(1), // shop domain like 'mystore.myshopify.com'
