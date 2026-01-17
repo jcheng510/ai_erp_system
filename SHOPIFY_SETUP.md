@@ -100,9 +100,9 @@ Once a store is connected, you can configure:
 
 ## Security Notes
 
-1. **Access Tokens**: Shopify access tokens are stored securely in the database. In production, consider encrypting these tokens at rest.
+1. **Access Token Encryption**: Shopify access tokens are encrypted using AES-256-CBC encryption before being stored in the database. The encryption key is derived from the `JWT_SECRET` environment variable. Ensure you have a strong, unique `JWT_SECRET` configured.
 
-2. **OAuth Flow**: The integration uses OAuth 2.0 for secure authentication. No manual token entry is required.
+2. **OAuth Flow**: The integration uses OAuth 2.0 for secure authentication. No manual token entry is required, reducing the risk of token exposure.
 
 3. **Scope Limitation**: The integration only requests the minimum required scopes for its functionality.
 

@@ -172,12 +172,16 @@ async function startServer() {
         }
       }
 
+      // Import encryption function
+      const { encrypt } = await import('../_core/crypto');
+      const encryptedToken = encrypt(accessToken);
+
       // Store the Shopify connection
       await upsertShopifyStore(shopDomain, {
         companyId,
         storeDomain: shopDomain,
         storeName: shopInfo.shop.name || shopDomain,
-        accessToken: accessToken,
+        accessToken: encryptedToken,
         apiVersion: '2024-01',
         isEnabled: true,
         syncInventory: true,

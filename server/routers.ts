@@ -11,6 +11,7 @@ import { parseUploadedDocument, importPurchaseOrder, importFreightInvoice, match
 import * as db from "./db";
 import { storagePut } from "./storage";
 import { nanoid } from "nanoid";
+import { encrypt, decrypt } from "./_core/crypto";
 
 // Role-based access middleware
 const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
@@ -2125,12 +2126,15 @@ export const appRouter = router({
           const shopInfo = await shopInfoResponse.json();
           const shop = shopInfo.shop;
 
+          // Encrypt the access token before storing
+          const encryptedToken = encrypt(accessToken);
+
           // Store or update the Shopify store connection
           const result = await db.upsertShopifyStore(shopDomain, {
             companyId: ctx.user.companyId || undefined,
             storeDomain: shopDomain,
             storeName: shop.name || shopDomain,
-            accessToken: accessToken, // TODO: Encrypt in production
+            accessToken: encryptedToken,
             apiVersion: '2024-01',
             isEnabled: true,
             syncInventory: true,
@@ -2199,10 +2203,13 @@ export const appRouter = router({
             throw new TRPCError({ code: 'BAD_REQUEST', message: 'Store has no access token' });
           }
 
+          // Decrypt the access token
+          const accessToken = decrypt(store.accessToken);
+
           // Test by fetching shop info
           const response = await fetch(`https://${store.storeDomain}/admin/api/${store.apiVersion}/shop.json`, {
             headers: {
-              'X-Shopify-Access-Token': store.accessToken,
+              'X-Shopify-Access-Token': accessToken,
               'Content-Type': 'application/json',
             },
           });
