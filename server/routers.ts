@@ -13,6 +13,11 @@ import { storagePut } from "./storage";
 import { nanoid } from "nanoid";
 import { encrypt, decrypt } from "./_core/crypto";
 
+// Constants
+const SHOPIFY_API_VERSION = process.env.SHOPIFY_API_VERSION || '2024-01';
+const SHOPIFY_SCOPES = 'read_products,write_products,read_orders,write_orders,read_inventory,write_inventory';
+const OAUTH_STATE_MAX_AGE_MS = 10 * 60 * 1000; // 10 minutes
+
 // Role-based access middleware
 const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
   if (ctx.user.role !== 'admin') {
@@ -2057,10 +2062,9 @@ export const appRouter = router({
 
           // Build OAuth URL
           const redirectUri = `${process.env.VITE_APP_URL || process.env.APP_URL || 'http://localhost:3000'}/api/shopify/callback`;
-          const scopes = 'read_products,write_products,read_orders,write_orders,read_inventory,write_inventory';
           const state = `${ctx.user.id}:${ctx.user.companyId || 'undefined'}:${shopDomain}:${Date.now()}`; // Include user ID, company ID, shop, and timestamp
 
-          const authUrl = `https://${shopDomain}/admin/oauth/authorize?client_id=${clientId}&scope=${scopes}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}&grant_options[]=per-user`;
+          const authUrl = `https://${shopDomain}/admin/oauth/authorize?client_id=${clientId}&scope=${SHOPIFY_SCOPES}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}&grant_options[]=per-user`;
 
           return { 
             authUrl,
@@ -2115,8 +2119,7 @@ export const appRouter = router({
           }
 
           // Check state is not too old (10 minutes max)
-          const maxAge = 10 * 60 * 1000; // 10 minutes in milliseconds
-          if (Date.now() - stateTimestamp > maxAge) {
+          if (Date.now() - stateTimestamp > OAUTH_STATE_MAX_AGE_MS) {
             throw new TRPCError({ code: 'BAD_REQUEST', message: 'OAuth state has expired. Please try again.' });
           }
 
@@ -2170,7 +2173,7 @@ export const appRouter = router({
             storeDomain: shopDomain,
             storeName: shop.name || shopDomain,
             accessToken: encryptedToken,
-            apiVersion: '2024-01',
+            apiVersion: SHOPIFY_API_VERSION,
             isEnabled: true,
             syncInventory: true,
             syncOrders: true,
