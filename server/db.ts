@@ -3711,6 +3711,20 @@ export async function updateShopifyStore(id: number, data: Partial<InsertShopify
   await db.update(shopifyStores).set(data).where(eq(shopifyStores.id, id));
 }
 
+export async function upsertShopifyStore(storeDomain: string, data: InsertShopifyStore) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  const existing = await getShopifyStoreByDomain(storeDomain);
+  if (existing) {
+    await updateShopifyStore(existing.id, data);
+    return { id: existing.id, isNew: false };
+  } else {
+    const result = await createShopifyStore(data);
+    return { id: result.id, isNew: true };
+  }
+}
+
 // Webhook Events
 export async function createWebhookEvent(data: InsertWebhookEvent) {
   const db = await getDb();

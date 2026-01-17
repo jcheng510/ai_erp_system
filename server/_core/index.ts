@@ -102,6 +102,104 @@ async function startServer() {
       res.redirect('/import?error=oauth_failed');
     }
   });
+
+  // Shopify OAuth callback
+  app.get('/api/shopify/callback', async (req, res) => {
+    const { code, shop, state } = req.query;
+    
+    if (!code || !shop) {
+      return res.redirect('/settings/integrations?shopify_error=missing_params');
+    }
+
+    const clientId = process.env.SHOPIFY_CLIENT_ID;
+    const clientSecret = process.env.SHOPIFY_CLIENT_SECRET;
+    
+    if (!clientId || !clientSecret) {
+      return res.redirect('/settings/integrations?shopify_error=not_configured');
+    }
+
+    try {
+      // Validate shop domain
+      let shopDomain = (shop as string).trim().toLowerCase();
+      if (!shopDomain.endsWith('.myshopify.com')) {
+        return res.redirect('/settings/integrations?shopify_error=invalid_domain');
+      }
+
+      // Exchange code for access token
+      const tokenUrl = `https://${shopDomain}/admin/oauth/access_token`;
+      const tokenResponse = await fetch(tokenUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          client_id: clientId,
+          client_secret: clientSecret,
+          code: code as string,
+        }),
+      });
+
+      if (!tokenResponse.ok) {
+        console.error('Token exchange failed:', await tokenResponse.text());
+        return res.redirect('/settings/integrations?shopify_error=token_exchange_failed');
+      }
+
+      const tokenData = await tokenResponse.json();
+      const accessToken = tokenData.access_token;
+
+      // Fetch shop info to get the store name
+      const shopInfoResponse = await fetch(`https://${shopDomain}/admin/api/2024-01/shop.json`, {
+        headers: {
+          'X-Shopify-Access-Token': accessToken,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!shopInfoResponse.ok) {
+        return res.redirect('/settings/integrations?shopify_error=failed_to_fetch_shop_info');
+      }
+
+      const shopInfo = await shopInfoResponse.json();
+      
+      // Import db functions
+      const { upsertShopifyStore, createSyncLog } = await import('../db');
+      
+      // Extract user ID from state if available
+      let companyId: number | undefined;
+      if (state && typeof state === 'string') {
+        const parts = state.split(':');
+        if (parts.length > 0) {
+          // For now, we don't have companyId in state, but we can add it later
+          // companyId = parseInt(parts[1]) || undefined;
+        }
+      }
+
+      // Store the Shopify connection
+      await upsertShopifyStore(shopDomain, {
+        companyId,
+        storeDomain: shopDomain,
+        storeName: shopInfo.shop.name || shopDomain,
+        accessToken: accessToken,
+        apiVersion: '2024-01',
+        isEnabled: true,
+        syncInventory: true,
+        syncOrders: true,
+        inventoryAuthority: 'hybrid',
+      });
+
+      // Log the connection
+      await createSyncLog({
+        integration: 'shopify',
+        action: 'store_connected',
+        status: 'success',
+        details: `Connected store: ${shopInfo.shop.name} (${shopDomain})`,
+      });
+
+      res.redirect('/settings/integrations?shopify_success=connected&shop=' + encodeURIComponent(shopInfo.shop.name));
+    } catch (error) {
+      console.error('Shopify OAuth error:', error);
+      res.redirect('/settings/integrations?shopify_error=oauth_failed');
+    }
+  });
+
   // tRPC API
   app.use(
     "/api/trpc",

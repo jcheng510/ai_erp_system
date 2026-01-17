@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import * as React from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,11 +32,8 @@ import {
 export default function IntegrationsPage() {
   const [testEmail, setTestEmail] = useState("");
   const [showAddShopify, setShowAddShopify] = useState(false);
-  const [newShopifyStore, setNewShopifyStore] = useState({
-    storeName: "",
-    storeDomain: "",
-    accessToken: "",
-  });
+  const [shopifyShopDomain, setShopifyShopDomain] = useState("");
+  const [shopifyConnecting, setShopifyConnecting] = useState(false);
 
   const { data: status, isLoading, refetch } = trpc.integrations.getStatus.useQuery();
   const { data: syncHistory } = trpc.integrations.getSyncHistory.useQuery({ limit: 20 });
@@ -50,12 +48,78 @@ export default function IntegrationsPage() {
     },
   });
 
+  const shopifyInitiateOAuthMutation = trpc.integrations.shopify.initiateOAuth.useMutation({
+    onSuccess: (data) => {
+      // Redirect to Shopify OAuth page
+      window.location.href = data.authUrl;
+    },
+    onError: (error) => {
+      toast.error(error.message);
+      setShopifyConnecting(false);
+    },
+  });
+
+  const shopifyDisconnectMutation = trpc.integrations.shopify.disconnect.useMutation({
+    onSuccess: () => {
+      toast.success("Store disconnected successfully");
+      refetch();
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const shopifyTestConnectionMutation = trpc.integrations.shopify.testConnection.useMutation({
+    onSuccess: (data) => {
+      toast.success(data.message);
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
   const clearHistoryMutation = trpc.integrations.clearSyncHistory.useMutation({
     onSuccess: () => {
       toast.success("Sync history cleared");
       refetch();
     },
   });
+
+  // Check for OAuth callback success/error in URL
+  React.useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const shopifySuccess = params.get('shopify_success');
+    const shopifyError = params.get('shopify_error');
+    const shopName = params.get('shop');
+
+    if (shopifySuccess === 'connected') {
+      toast.success(`Successfully connected to ${shopName || 'Shopify store'}!`);
+      refetch();
+      // Clean up URL
+      window.history.replaceState({}, '', '/settings/integrations');
+    } else if (shopifyError) {
+      const errorMessages: Record<string, string> = {
+        'missing_params': 'Missing required parameters from Shopify',
+        'not_configured': 'Shopify integration is not configured. Please contact your administrator.',
+        'invalid_domain': 'Invalid Shopify domain',
+        'token_exchange_failed': 'Failed to exchange authorization code for access token',
+        'failed_to_fetch_shop_info': 'Failed to fetch shop information',
+        'oauth_failed': 'OAuth authentication failed',
+      };
+      toast.error(errorMessages[shopifyError] || 'Failed to connect Shopify store');
+      // Clean up URL
+      window.history.replaceState({}, '', '/settings/integrations');
+    }
+  }, [refetch]);
+
+  const handleConnectShopify = () => {
+    if (!shopifyShopDomain.trim()) {
+      toast.error("Please enter your Shopify store domain");
+      return;
+    }
+    setShopifyConnecting(true);
+    shopifyInitiateOAuthMutation.mutate({ shop: shopifyShopDomain });
+  };
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -258,58 +322,59 @@ export default function IntegrationsPage() {
                     </DialogTrigger>
                     <DialogContent>
                       <DialogHeader>
-                        <DialogTitle>Add Shopify Store</DialogTitle>
+                        <DialogTitle>Connect Shopify Store</DialogTitle>
                         <DialogDescription>
-                          Connect a new Shopify store to sync orders and inventory
+                          Enter your Shopify store domain to securely connect via OAuth
                         </DialogDescription>
                       </DialogHeader>
                       <div className="space-y-4 py-4">
                         <div className="space-y-2">
-                          <Label htmlFor="storeName">Store Name</Label>
+                          <Label htmlFor="shopDomain">Shopify Store Domain</Label>
                           <Input
-                            id="storeName"
-                            placeholder="My Store"
-                            value={newShopifyStore.storeName}
-                            onChange={(e) => setNewShopifyStore({ ...newShopifyStore, storeName: e.target.value })}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="storeDomain">Store Domain</Label>
-                          <Input
-                            id="storeDomain"
+                            id="shopDomain"
                             placeholder="mystore.myshopify.com"
-                            value={newShopifyStore.storeDomain}
-                            onChange={(e) => setNewShopifyStore({ ...newShopifyStore, storeDomain: e.target.value })}
+                            value={shopifyShopDomain}
+                            onChange={(e) => setShopifyShopDomain(e.target.value)}
+                            disabled={shopifyConnecting}
                           />
                           <p className="text-xs text-muted-foreground">
-                            Your Shopify store domain (e.g., mystore.myshopify.com)
+                            Enter your store name or full domain (e.g., "mystore" or "mystore.myshopify.com")
                           </p>
                         </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="accessToken">Access Token</Label>
-                          <Input
-                            id="accessToken"
-                            type="password"
-                            placeholder="shpat_..."
-                            value={newShopifyStore.accessToken}
-                            onChange={(e) => setNewShopifyStore({ ...newShopifyStore, accessToken: e.target.value })}
-                          />
-                          <p className="text-xs text-muted-foreground">
-                            Create a private app in Shopify Admin → Settings → Apps → Develop apps
+                        <div className="p-4 bg-blue-50 dark:bg-blue-950/20 rounded-lg border border-blue-200 dark:border-blue-800">
+                          <h4 className="font-medium text-sm mb-2 text-blue-900 dark:text-blue-100">Secure OAuth Connection</h4>
+                          <p className="text-xs text-blue-700 dark:text-blue-300">
+                            You'll be redirected to Shopify to authorize this connection. No need to manually copy access tokens - the integration will be set up automatically.
                           </p>
                         </div>
                       </div>
                       <DialogFooter>
-                        <Button variant="outline" onClick={() => setShowAddShopify(false)}>
+                        <Button 
+                          variant="outline" 
+                          onClick={() => {
+                            setShowAddShopify(false);
+                            setShopifyShopDomain("");
+                            setShopifyConnecting(false);
+                          }}
+                          disabled={shopifyConnecting}
+                        >
                           Cancel
                         </Button>
                         <Button 
-                          onClick={() => {
-                            toast.info("Shopify store connection coming soon");
-                            setShowAddShopify(false);
-                          }}
+                          onClick={handleConnectShopify}
+                          disabled={shopifyConnecting || !shopifyShopDomain.trim()}
                         >
-                          Add Store
+                          {shopifyConnecting ? (
+                            <>
+                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                              Connecting...
+                            </>
+                          ) : (
+                            <>
+                              <ShoppingBag className="w-4 h-4 mr-2" />
+                              Connect to Shopify
+                            </>
+                          )}
                         </Button>
                       </DialogFooter>
                     </DialogContent>
@@ -347,13 +412,27 @@ export default function IntegrationsPage() {
                           </TableCell>
                           <TableCell>
                             <div className="flex gap-2">
-                              <Button variant="ghost" size="sm">
-                                <RefreshCw className="w-4 h-4" />
-                              </Button>
-                              <Button variant="ghost" size="sm">
+                              <Button 
+                                variant="ghost" 
+                                size="sm"
+                                onClick={() => shopifyTestConnectionMutation.mutate({ storeId: store.id })}
+                                disabled={shopifyTestConnectionMutation.isPending || !store.isEnabled}
+                                title="Test connection"
+                              >
                                 <TestTube className="w-4 h-4" />
                               </Button>
-                              <Button variant="ghost" size="sm" className="text-destructive">
+                              <Button 
+                                variant="ghost" 
+                                size="sm" 
+                                className="text-destructive"
+                                onClick={() => {
+                                  if (confirm(`Are you sure you want to disconnect ${store.storeName || store.storeDomain}?`)) {
+                                    shopifyDisconnectMutation.mutate({ storeId: store.id });
+                                  }
+                                }}
+                                disabled={shopifyDisconnectMutation.isPending}
+                                title="Disconnect store"
+                              >
                                 <Trash2 className="w-4 h-4" />
                               </Button>
                             </div>
