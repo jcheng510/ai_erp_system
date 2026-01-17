@@ -107,7 +107,7 @@ async function startServer() {
   app.get('/api/shopify/callback', async (req, res) => {
     const { code, shop, state } = req.query;
     
-    if (!code || !shop) {
+    if (!code || !shop || !state) {
       return res.redirect('/settings/integrations?shopify_error=missing_params');
     }
 
@@ -119,10 +119,31 @@ async function startServer() {
     }
 
     try {
+      // Validate state parameter
+      const stateParts = (state as string).split(':');
+      if (stateParts.length < 3) {
+        return res.redirect('/settings/integrations?shopify_error=invalid_state');
+      }
+
+      const stateUserId = parseInt(stateParts[0]);
+      const stateShop = stateParts[1];
+      const stateTimestamp = parseInt(stateParts[2]);
+
       // Validate shop domain
       let shopDomain = (shop as string).trim().toLowerCase();
       if (!shopDomain.endsWith('.myshopify.com')) {
         return res.redirect('/settings/integrations?shopify_error=invalid_domain');
+      }
+
+      // Verify shop matches state
+      if (stateShop !== shopDomain) {
+        return res.redirect('/settings/integrations?shopify_error=shop_mismatch');
+      }
+
+      // Check state is not too old (10 minutes max)
+      const maxAge = 10 * 60 * 1000;
+      if (Date.now() - stateTimestamp > maxAge) {
+        return res.redirect('/settings/integrations?shopify_error=state_expired');
       }
 
       // Exchange code for access token
@@ -162,15 +183,8 @@ async function startServer() {
       // Import db functions
       const { upsertShopifyStore, createSyncLog } = await import('../db');
       
-      // Extract user ID from state if available
+      // We don't have companyId in state for now, but we could add it in the future
       let companyId: number | undefined;
-      if (state && typeof state === 'string') {
-        const parts = state.split(':');
-        if (parts.length > 0) {
-          // For now, we don't have companyId in state, but we can add it later
-          // companyId = parseInt(parts[1]) || undefined;
-        }
-      }
 
       // Import encryption function
       const { encrypt } = await import('../_core/crypto');

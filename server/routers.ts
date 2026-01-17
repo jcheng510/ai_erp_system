@@ -2058,10 +2058,9 @@ export const appRouter = router({
           // Build OAuth URL
           const redirectUri = `${process.env.VITE_APP_URL || process.env.APP_URL || 'http://localhost:3000'}/api/shopify/callback`;
           const scopes = 'read_products,write_products,read_orders,write_orders,read_inventory,write_inventory';
-          const state = `${ctx.user.id}:${Date.now()}`; // Include user ID and timestamp for validation
-          const nonce = nanoid(32);
+          const state = `${ctx.user.id}:${shopDomain}:${Date.now()}`; // Include user ID, shop, and timestamp for validation
 
-          const authUrl = `https://${shopDomain}/admin/oauth/authorize?client_id=${clientId}&scope=${scopes}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${state}&grant_options[]=per-user`;
+          const authUrl = `https://${shopDomain}/admin/oauth/authorize?client_id=${clientId}&scope=${scopes}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}&grant_options[]=per-user`;
 
           return { 
             authUrl,
@@ -2075,7 +2074,7 @@ export const appRouter = router({
         .input(z.object({
           shop: z.string().min(1),
           code: z.string().min(1),
-          state: z.string().optional(),
+          state: z.string().min(1), // Required for CSRF protection
         }))
         .mutation(async ({ input, ctx }) => {
           const clientId = process.env.SHOPIFY_CLIENT_ID;
@@ -2083,6 +2082,37 @@ export const appRouter = router({
 
           if (!clientId || !clientSecret) {
             throw new TRPCError({ code: 'BAD_REQUEST', message: 'Shopify OAuth is not configured' });
+          }
+
+          // Validate state parameter to prevent CSRF attacks
+          if (!input.state || !input.state.includes(':')) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'Invalid state parameter' });
+          }
+
+          const stateParts = input.state.split(':');
+          if (stateParts.length < 3) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'Invalid state format' });
+          }
+
+          const stateUserId = parseInt(stateParts[0]);
+          const stateShop = stateParts[1];
+          const stateTimestamp = parseInt(stateParts[2]);
+
+          // Verify state matches current user
+          if (stateUserId !== ctx.user.id) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'State parameter does not match current user' });
+          }
+
+          // Verify shop domain matches
+          if (stateShop !== input.shop.trim().toLowerCase()) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'Shop domain does not match state' });
+          }
+
+          // Check state is not too old (10 minutes max)
+          const maxAge = 10 * 60 * 1000; // 10 minutes in milliseconds
+          if (Date.now() - stateTimestamp > maxAge) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'OAuth state has expired. Please try again.' });
+          }
           }
 
           // Validate shop domain
