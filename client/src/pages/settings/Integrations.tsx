@@ -34,6 +34,7 @@ export default function IntegrationsPage() {
   const [showAddShopify, setShowAddShopify] = useState(false);
   const [shopifyShopDomain, setShopifyShopDomain] = useState("");
   const [shopifyConnecting, setShopifyConnecting] = useState(false);
+  const [activeTab, setActiveTab] = useState("connections");
 
   const { data: status, isLoading, refetch } = trpc.integrations.getStatus.useQuery();
   const { data: syncHistory } = trpc.integrations.getSyncHistory.useQuery({ limit: 20 });
@@ -82,6 +83,9 @@ export default function IntegrationsPage() {
     onSuccess: () => {
       toast.success("Sync history cleared");
       refetch();
+    },
+    onError: (error) => {
+      toast.error(error.message);
     },
   });
 
@@ -178,7 +182,7 @@ export default function IntegrationsPage() {
           </Button>
         </div>
 
-        <Tabs defaultValue="connections" className="space-y-4">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
           <TabsList>
             <TabsTrigger value="connections">Connections</TabsTrigger>
             <TabsTrigger value="shopify">Shopify</TabsTrigger>
@@ -213,10 +217,7 @@ export default function IntegrationsPage() {
                     variant="outline" 
                     size="sm"
                     disabled={!status?.sendgrid?.configured}
-                    onClick={() => {
-                      const tab = document.querySelector('[data-value="email"]');
-                      if (tab) (tab as HTMLElement).click();
-                    }}
+                    onClick={() => setActiveTab("email")}
                   >
                     <Settings className="w-4 h-4 mr-2" />
                     Configure
@@ -247,10 +248,7 @@ export default function IntegrationsPage() {
                   <Button 
                     variant="outline" 
                     size="sm"
-                    onClick={() => {
-                      const tab = document.querySelector('[data-value="shopify"]');
-                      if (tab) (tab as HTMLElement).click();
-                    }}
+                    onClick={() => setActiveTab("shopify")}
                   >
                     <Settings className="w-4 h-4 mr-2" />
                     Configure
@@ -457,27 +455,30 @@ export default function IntegrationsPage() {
 
                 <div className="mt-6 p-4 bg-muted/50 rounded-lg">
                   <h4 className="font-medium mb-2">Sync Settings</h4>
+                  <p className="text-xs text-muted-foreground mb-3">
+                    Default settings for new store connections. Editing existing store settings coming soon.
+                  </p>
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
                       <div>
                         <Label>Sync Orders</Label>
                         <p className="text-xs text-muted-foreground">Automatically import orders from Shopify</p>
                       </div>
-                      <Switch defaultChecked />
+                      <Switch defaultChecked disabled />
                     </div>
                     <div className="flex items-center justify-between">
                       <div>
                         <Label>Sync Inventory</Label>
                         <p className="text-xs text-muted-foreground">Push inventory levels to Shopify</p>
                       </div>
-                      <Switch defaultChecked />
+                      <Switch defaultChecked disabled />
                     </div>
                     <div className="flex items-center justify-between">
                       <div>
                         <Label>Auto-fulfill Orders</Label>
                         <p className="text-xs text-muted-foreground">Mark orders as fulfilled when shipped</p>
                       </div>
-                      <Switch />
+                      <Switch disabled />
                     </div>
                   </div>
                 </div>
