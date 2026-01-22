@@ -113,6 +113,33 @@ async function refreshGoogleToken(refreshToken: string): Promise<{ accessToken?:
   }
 }
 
+// Helper to get valid Google access token (refreshes if needed)
+async function getValidGoogleToken(userId: number): Promise<{ accessToken: string; error?: string }> {
+  const token = await db.getGoogleOAuthToken(userId);
+  
+  if (!token) {
+    return { accessToken: '', error: 'Google account not connected' };
+  }
+  
+  // Check if token needs refresh
+  if (token.expiresAt && new Date(token.expiresAt) < new Date() && token.refreshToken) {
+    const refreshed = await refreshGoogleToken(token.refreshToken);
+    
+    if (refreshed.accessToken && refreshed.expiresAt) {
+      // Update database with new token
+      await db.updateGoogleOAuthToken(userId, {
+        accessToken: refreshed.accessToken,
+        expiresAt: refreshed.expiresAt,
+      });
+      return { accessToken: refreshed.accessToken };
+    }
+    
+    return { accessToken: '', error: refreshed.error || 'Failed to refresh token' };
+  }
+  
+  return { accessToken: token.accessToken };
+}
+
 // Helper to generate unique numbers
 function generateNumber(prefix: string) {
   const date = new Date();
@@ -2557,22 +2584,9 @@ export const appRouter = router({
         html: z.boolean().optional(),
       }))
       .mutation(async ({ ctx, input }) => {
-        const token = await db.getGoogleOAuthToken(ctx.user.id);
-        if (!token) {
-          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Google account not connected' });
-        }
-        
-        // Refresh token if needed
-        let accessToken = token.accessToken;
-        if (token.expiresAt && new Date(token.expiresAt) < new Date() && token.refreshToken) {
-          const refreshed = await refreshGoogleToken(token.refreshToken);
-          if (refreshed.accessToken) {
-            accessToken = refreshed.accessToken;
-            await db.updateGoogleOAuthToken(ctx.user.id, { 
-              accessToken: refreshed.accessToken,
-              expiresAt: refreshed.expiresAt 
-            });
-          }
+        const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+        if (error) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
         }
         
         const result = await sendGmailMessage(accessToken, input);
@@ -2599,17 +2613,9 @@ export const appRouter = router({
         html: z.boolean().optional(),
       }))
       .mutation(async ({ ctx, input }) => {
-        const token = await db.getGoogleOAuthToken(ctx.user.id);
-        if (!token) {
-          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Google account not connected' });
-        }
-        
-        let accessToken = token.accessToken;
-        if (token.expiresAt && new Date(token.expiresAt) < new Date() && token.refreshToken) {
-          const refreshed = await refreshGoogleToken(token.refreshToken);
-          if (refreshed.accessToken) {
-            accessToken = refreshed.accessToken;
-          }
+        const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+        if (error) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
         }
         
         const result = await createGmailDraft(accessToken, input);
@@ -2630,17 +2636,9 @@ export const appRouter = router({
         q: z.string().optional(),
       }).optional())
       .query(async ({ ctx, input }) => {
-        const token = await db.getGoogleOAuthToken(ctx.user.id);
-        if (!token) {
-          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Google account not connected' });
-        }
-        
-        let accessToken = token.accessToken;
-        if (token.expiresAt && new Date(token.expiresAt) < new Date() && token.refreshToken) {
-          const refreshed = await refreshGoogleToken(token.refreshToken);
-          if (refreshed.accessToken) {
-            accessToken = refreshed.accessToken;
-          }
+        const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+        if (error) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
         }
         
         const result = await listGmailMessages(accessToken, input || {});
@@ -2656,17 +2654,9 @@ export const appRouter = router({
     getMessage: protectedProcedure
       .input(z.object({ messageId: z.string() }))
       .query(async ({ ctx, input }) => {
-        const token = await db.getGoogleOAuthToken(ctx.user.id);
-        if (!token) {
-          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Google account not connected' });
-        }
-        
-        let accessToken = token.accessToken;
-        if (token.expiresAt && new Date(token.expiresAt) < new Date() && token.refreshToken) {
-          const refreshed = await refreshGoogleToken(token.refreshToken);
-          if (refreshed.accessToken) {
-            accessToken = refreshed.accessToken;
-          }
+        const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+        if (error) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
         }
         
         const result = await getGmailMessage(accessToken, input.messageId);
@@ -2690,17 +2680,9 @@ export const appRouter = router({
         html: z.boolean().optional(),
       }))
       .mutation(async ({ ctx, input }) => {
-        const token = await db.getGoogleOAuthToken(ctx.user.id);
-        if (!token) {
-          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Google account not connected' });
-        }
-        
-        let accessToken = token.accessToken;
-        if (token.expiresAt && new Date(token.expiresAt) < new Date() && token.refreshToken) {
-          const refreshed = await refreshGoogleToken(token.refreshToken);
-          if (refreshed.accessToken) {
-            accessToken = refreshed.accessToken;
-          }
+        const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+        if (error) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
         }
         
         const { threadId, messageId, ...emailOptions } = input;
@@ -2750,17 +2732,9 @@ export const appRouter = router({
         content: z.string().optional(),
       }))
       .mutation(async ({ ctx, input }) => {
-        const token = await db.getGoogleOAuthToken(ctx.user.id);
-        if (!token) {
-          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Google account not connected' });
-        }
-        
-        let accessToken = token.accessToken;
-        if (token.expiresAt && new Date(token.expiresAt) < new Date() && token.refreshToken) {
-          const refreshed = await refreshGoogleToken(token.refreshToken);
-          if (refreshed.accessToken) {
-            accessToken = refreshed.accessToken;
-          }
+        const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+        if (error) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
         }
         
         const result = await createGoogleDoc(accessToken, input);
@@ -2792,17 +2766,9 @@ export const appRouter = router({
         })).optional(),
       }))
       .mutation(async ({ ctx, input }) => {
-        const token = await db.getGoogleOAuthToken(ctx.user.id);
-        if (!token) {
-          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Google account not connected' });
-        }
-        
-        let accessToken = token.accessToken;
-        if (token.expiresAt && new Date(token.expiresAt) < new Date() && token.refreshToken) {
-          const refreshed = await refreshGoogleToken(token.refreshToken);
-          if (refreshed.accessToken) {
-            accessToken = refreshed.accessToken;
-          }
+        const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+        if (error) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
         }
         
         const result = await createGoogleSheet(accessToken, input);
@@ -2825,17 +2791,9 @@ export const appRouter = router({
         values: z.array(z.array(z.any())),
       }))
       .mutation(async ({ ctx, input }) => {
-        const token = await db.getGoogleOAuthToken(ctx.user.id);
-        if (!token) {
-          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Google account not connected' });
-        }
-        
-        let accessToken = token.accessToken;
-        if (token.expiresAt && new Date(token.expiresAt) < new Date() && token.refreshToken) {
-          const refreshed = await refreshGoogleToken(token.refreshToken);
-          if (refreshed.accessToken) {
-            accessToken = refreshed.accessToken;
-          }
+        const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+        if (error) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
         }
         
         const result = await updateGoogleSheet(accessToken, input);
@@ -2855,17 +2813,9 @@ export const appRouter = router({
         values: z.array(z.array(z.any())),
       }))
       .mutation(async ({ ctx, input }) => {
-        const token = await db.getGoogleOAuthToken(ctx.user.id);
-        if (!token) {
-          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Google account not connected' });
-        }
-        
-        let accessToken = token.accessToken;
-        if (token.expiresAt && new Date(token.expiresAt) < new Date() && token.refreshToken) {
-          const refreshed = await refreshGoogleToken(token.refreshToken);
-          if (refreshed.accessToken) {
-            accessToken = refreshed.accessToken;
-          }
+        const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+        if (error) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
         }
         
         const result = await appendToGoogleSheet(accessToken, input.spreadsheetId, input.range, input.values);
@@ -2884,17 +2834,9 @@ export const appRouter = router({
         range: z.string(),
       }))
       .query(async ({ ctx, input }) => {
-        const token = await db.getGoogleOAuthToken(ctx.user.id);
-        if (!token) {
-          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Google account not connected' });
-        }
-        
-        let accessToken = token.accessToken;
-        if (token.expiresAt && new Date(token.expiresAt) < new Date() && token.refreshToken) {
-          const refreshed = await refreshGoogleToken(token.refreshToken);
-          if (refreshed.accessToken) {
-            accessToken = refreshed.accessToken;
-          }
+        const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+        if (error) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
         }
         
         const result = await getGoogleSheetValues(accessToken, input.spreadsheetId, input.range);
@@ -2917,17 +2859,9 @@ export const appRouter = router({
         sendNotificationEmail: z.boolean().optional(),
       }))
       .mutation(async ({ ctx, input }) => {
-        const token = await db.getGoogleOAuthToken(ctx.user.id);
-        if (!token) {
-          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Google account not connected' });
-        }
-        
-        let accessToken = token.accessToken;
-        if (token.expiresAt && new Date(token.expiresAt) < new Date() && token.refreshToken) {
-          const refreshed = await refreshGoogleToken(token.refreshToken);
-          if (refreshed.accessToken) {
-            accessToken = refreshed.accessToken;
-          }
+        const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+        if (error) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
         }
         
         const result = await shareGoogleFile(accessToken, input);
