@@ -64,6 +64,29 @@ export function getGoogleDriveAuthUrl(userId: number): string {
 }
 
 /**
+ * Get comprehensive OAuth URL for all Google services (Drive, Gmail, Workspace)
+ */
+export function getGoogleFullAccessAuthUrl(userId: number): string {
+  const clientId = ENV.googleClientId;
+  const redirectUri = ENV.googleRedirectUri || `${ENV.appUrl}/api/oauth/google/callback`;
+  
+  // Request all necessary scopes for Drive, Gmail, Docs, and Sheets
+  const scope = encodeURIComponent(
+    "https://www.googleapis.com/auth/drive " +
+    "https://www.googleapis.com/auth/drive.file " +
+    "https://www.googleapis.com/auth/spreadsheets " +
+    "https://www.googleapis.com/auth/documents " +
+    "https://www.googleapis.com/auth/gmail.send " +
+    "https://www.googleapis.com/auth/gmail.compose " +
+    "https://www.googleapis.com/auth/gmail.readonly"
+  );
+  
+  const state = userId.toString();
+  
+  return `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${scope}&access_type=offline&prompt=consent&state=${state}`;
+}
+
+/**
  * List all folders in a Google Drive folder
  */
 export async function listDriveFolders(
