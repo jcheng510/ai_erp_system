@@ -11,7 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
-import { Building2, FileText, Truck, Upload, Package, Ship, FileCheck } from "lucide-react";
+import { Building2, FileText, Truck, Upload, Package, Ship } from "lucide-react";
 
 export default function VendorPortal() {
   const { user } = useAuth();

@@ -4637,13 +4637,26 @@ Provide a brief status summary, any missing documents, and next steps.`;
         }
 
         // Verify vendor owns the related shipment
-        if (ctx.user.role === 'vendor' && ctx.user.linkedVendorId && clearance.shipmentId) {
+        // Note: This makes separate DB calls which could be optimized with a join query in the future
+        if (ctx.user.role === 'vendor' && ctx.user.linkedVendorId) {
+          // Vendors must have a shipmentId to access the clearance
+          if (!clearance.shipmentId) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this customs clearance' });
+          }
+
           const shipment = await db.getShipmentById(clearance.shipmentId);
-          if (shipment?.purchaseOrderId) {
-            const po = await db.getPurchaseOrderById(shipment.purchaseOrderId);
-            if (!po || po.vendorId !== ctx.user.linkedVendorId) {
-              throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this customs clearance' });
-            }
+          if (!shipment) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Shipment not found' });
+          }
+
+          // Shipment must have a purchase order for vendor access
+          if (!shipment.purchaseOrderId) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this customs clearance' });
+          }
+
+          const po = await db.getPurchaseOrderById(shipment.purchaseOrderId);
+          if (!po || po.vendorId !== ctx.user.linkedVendorId) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this customs clearance' });
           }
         }
 
@@ -4681,13 +4694,26 @@ Provide a brief status summary, any missing documents, and next steps.`;
         }
 
         // Verify vendor owns the related shipment
-        if (ctx.user.role === 'vendor' && ctx.user.linkedVendorId && clearance.shipmentId) {
+        // Note: This makes separate DB calls which could be optimized with a join query in the future
+        if (ctx.user.role === 'vendor' && ctx.user.linkedVendorId) {
+          // Vendors must have a shipmentId to access the clearance
+          if (!clearance.shipmentId) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this customs clearance' });
+          }
+
           const shipment = await db.getShipmentById(clearance.shipmentId);
-          if (shipment?.purchaseOrderId) {
-            const po = await db.getPurchaseOrderById(shipment.purchaseOrderId);
-            if (!po || po.vendorId !== ctx.user.linkedVendorId) {
-              throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this customs clearance' });
-            }
+          if (!shipment) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Shipment not found' });
+          }
+
+          // Shipment must have a purchase order for vendor access
+          if (!shipment.purchaseOrderId) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this customs clearance' });
+          }
+
+          const po = await db.getPurchaseOrderById(shipment.purchaseOrderId);
+          if (!po || po.vendorId !== ctx.user.linkedVendorId) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this customs clearance' });
           }
         }
 

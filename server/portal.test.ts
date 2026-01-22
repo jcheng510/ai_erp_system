@@ -183,6 +183,49 @@ describe("vendorPortal", () => {
         caller.vendorPortal.getCustomsDocuments({ clearanceId: 2 })
       ).rejects.toThrow("You do not have access to this customs clearance");
     });
+
+    it("should deny vendor access to clearances without shipmentId", async () => {
+      const ctx = createMockContext({ role: "vendor", linkedVendorId: 1 });
+      const caller = appRouter.createCaller(ctx);
+
+      vi.spyOn(db, "getCustomsClearanceById").mockResolvedValue({
+        id: 3,
+        clearanceNumber: "CC-2026-00003",
+        shipmentId: null, // No shipment
+        type: "import" as const,
+        status: "pending_documents" as const,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as any);
+
+      await expect(
+        caller.vendorPortal.getCustomsDocuments({ clearanceId: 3 })
+      ).rejects.toThrow("You do not have access to this customs clearance");
+    });
+
+    it("should deny vendor access to clearances with shipments without purchase orders", async () => {
+      const ctx = createMockContext({ role: "vendor", linkedVendorId: 1 });
+      const caller = appRouter.createCaller(ctx);
+
+      vi.spyOn(db, "getCustomsClearanceById").mockResolvedValue({
+        id: 4,
+        clearanceNumber: "CC-2026-00004",
+        shipmentId: 4,
+        type: "import" as const,
+        status: "pending_documents" as const,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as any);
+
+      vi.spyOn(db, "getShipmentById").mockResolvedValue({
+        id: 4,
+        purchaseOrderId: null, // No purchase order
+      } as any);
+
+      await expect(
+        caller.vendorPortal.getCustomsDocuments({ clearanceId: 4 })
+      ).rejects.toThrow("You do not have access to this customs clearance");
+    });
   });
 });
 
