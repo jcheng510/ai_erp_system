@@ -4387,6 +4387,75 @@ Provide a brief status summary, any missing documents, and next steps.`;
         
         return { id: result.id, url };
       }),
+
+    // Get customs clearances accessible to copacker (via shipments)
+    getCustomsClearances: copackerProcedure.query(async ({ ctx }) => {
+      const allClearances = await db.getCustomsClearances();
+      
+      // If admin/ops, return all clearances
+      if (ctx.user.role === 'admin' || ctx.user.role === 'ops') {
+        return allClearances;
+      }
+      
+      // For copackers, filter to clearances for shipments they can access
+      const allShipments = await db.getShipments();
+      const shipmentIds = allShipments.map(s => s.id);
+      
+      return allClearances.filter(c => c.shipmentId && shipmentIds.includes(c.shipmentId));
+    }),
+
+    // Upload customs document
+    uploadCustomsDocument: copackerProcedure
+      .input(z.object({
+        clearanceId: z.number(),
+        documentType: z.enum([
+          'commercial_invoice', 'packing_list', 'bill_of_lading', 'airway_bill',
+          'certificate_of_origin', 'customs_declaration', 'import_license', 'export_license',
+          'insurance_certificate', 'inspection_certificate', 'phytosanitary_certificate',
+          'fumigation_certificate', 'dangerous_goods_declaration', 'other'
+        ]),
+        name: z.string(),
+        fileData: z.string(),
+        mimeType: z.string(),
+        expiryDate: z.date().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        // Verify copacker has access to this clearance
+        const clearance = await db.getCustomsClearanceById(input.clearanceId);
+        if (!clearance) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'Customs clearance not found' });
+        }
+
+        const buffer = Buffer.from(input.fileData, 'base64');
+        const fileKey = `customs/${input.clearanceId}/${nanoid()}-${input.name}`;
+        
+        const { url } = await storagePut(fileKey, buffer, input.mimeType);
+        
+        const result = await db.createCustomsDocument({
+          clearanceId: input.clearanceId,
+          documentType: input.documentType,
+          name: input.name,
+          fileUrl: url,
+          fileKey,
+          mimeType: input.mimeType,
+          fileSize: buffer.length,
+          status: 'uploaded',
+          expiryDate: input.expiryDate,
+          notes: input.notes,
+        });
+
+        await createAuditLog(ctx.user.id, 'create', 'customs_document', result.id, input.name);
+        
+        return { id: result.id, url };
+      }),
+
+    // Get customs documents for a clearance
+    getCustomsDocuments: copackerProcedure
+      .input(z.object({ clearanceId: z.number() }))
+      .query(async ({ input }) => {
+        return db.getCustomsDocuments(input.clearanceId);
+      }),
   }),
 
   // Vendor Portal - restricted views for vendors
@@ -4490,6 +4559,114 @@ Provide a brief status summary, any missing documents, and next steps.`;
         await createAuditLog(ctx.user.id, 'create', 'document', result.id, input.name);
         
         return { id: result.id, url };
+      }),
+
+    // Get customs clearances accessible to vendor (via their PO shipments)
+    getCustomsClearances: vendorProcedure.query(async ({ ctx }) => {
+      const allClearances = await db.getCustomsClearances();
+      
+      // If admin/ops, return all clearances
+      if (ctx.user.role === 'admin' || ctx.user.role === 'ops') {
+        return allClearances;
+      }
+      
+      // For vendors, filter to clearances for shipments related to their POs
+      if (ctx.user.linkedVendorId) {
+        const vendorPOs = await db.getPurchaseOrders();
+        const vendorPOIds = vendorPOs
+          .filter(po => po.vendorId === ctx.user.linkedVendorId)
+          .map(po => po.id);
+        
+        const allShipments = await db.getShipments();
+        const vendorShipmentIds = allShipments
+          .filter(s => s.purchaseOrderId && vendorPOIds.includes(s.purchaseOrderId))
+          .map(s => s.id);
+        
+        return allClearances.filter(c => c.shipmentId && vendorShipmentIds.includes(c.shipmentId));
+      }
+      
+      return [];
+    }),
+
+    // Upload customs document
+    uploadCustomsDocument: vendorProcedure
+      .input(z.object({
+        clearanceId: z.number(),
+        documentType: z.enum([
+          'commercial_invoice', 'packing_list', 'bill_of_lading', 'airway_bill',
+          'certificate_of_origin', 'customs_declaration', 'import_license', 'export_license',
+          'insurance_certificate', 'inspection_certificate', 'phytosanitary_certificate',
+          'fumigation_certificate', 'dangerous_goods_declaration', 'other'
+        ]),
+        name: z.string(),
+        fileData: z.string(),
+        mimeType: z.string(),
+        expiryDate: z.date().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        // Verify vendor has access to this clearance
+        const clearance = await db.getCustomsClearanceById(input.clearanceId);
+        if (!clearance) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'Customs clearance not found' });
+        }
+
+        // Verify vendor owns the related shipment
+        if (ctx.user.role === 'vendor' && ctx.user.linkedVendorId && clearance.shipmentId) {
+          const shipment = await db.getShipmentById(clearance.shipmentId);
+          if (shipment?.purchaseOrderId) {
+            const po = await db.getPurchaseOrderById(shipment.purchaseOrderId);
+            if (!po || po.vendorId !== ctx.user.linkedVendorId) {
+              throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this customs clearance' });
+            }
+          }
+        }
+
+        const buffer = Buffer.from(input.fileData, 'base64');
+        const fileKey = `customs/${input.clearanceId}/${nanoid()}-${input.name}`;
+        
+        const { url } = await storagePut(fileKey, buffer, input.mimeType);
+        
+        const result = await db.createCustomsDocument({
+          clearanceId: input.clearanceId,
+          documentType: input.documentType,
+          name: input.name,
+          fileUrl: url,
+          fileKey,
+          mimeType: input.mimeType,
+          fileSize: buffer.length,
+          status: 'uploaded',
+          expiryDate: input.expiryDate,
+          notes: input.notes,
+        });
+
+        await createAuditLog(ctx.user.id, 'create', 'customs_document', result.id, input.name);
+        
+        return { id: result.id, url };
+      }),
+
+    // Get customs documents for a clearance
+    getCustomsDocuments: vendorProcedure
+      .input(z.object({ clearanceId: z.number() }))
+      .query(async ({ input, ctx }) => {
+        // Verify vendor has access to this clearance
+        const clearance = await db.getCustomsClearanceById(input.clearanceId);
+        if (!clearance) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'Customs clearance not found' });
+        }
+
+        // Verify vendor owns the related shipment
+        if (ctx.user.role === 'vendor' && ctx.user.linkedVendorId && clearance.shipmentId) {
+          const shipment = await db.getShipmentById(clearance.shipmentId);
+          if (shipment?.purchaseOrderId) {
+            const po = await db.getPurchaseOrderById(shipment.purchaseOrderId);
+            if (!po || po.vendorId !== ctx.user.linkedVendorId) {
+              throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this customs clearance' });
+            }
+          }
+        }
+
+        return db.getCustomsDocuments(input.clearanceId);
       }),
   }),
 

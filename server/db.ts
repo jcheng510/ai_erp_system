@@ -805,6 +805,13 @@ export async function getShipments(filters?: { companyId?: number; status?: stri
   return db.select().from(shipments).orderBy(desc(shipments.createdAt));
 }
 
+export async function getShipmentById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(shipments).where(eq(shipments.id, id)).limit(1);
+  return result[0];
+}
+
 export async function createShipment(data: typeof shipments.$inferInsert) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
