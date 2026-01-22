@@ -4427,6 +4427,15 @@ Provide a brief status summary, any missing documents, and next steps.`;
           throw new TRPCError({ code: 'NOT_FOUND', message: 'Customs clearance not found' });
         }
 
+        // For copackers, verify the clearance's shipment exists and is accessible
+        if (ctx.user.role === 'copacker' && clearance.shipmentId) {
+          const allShipments = await db.getShipments();
+          const hasAccess = allShipments.some(s => s.id === clearance.shipmentId);
+          if (!hasAccess) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this customs clearance' });
+          }
+        }
+
         const buffer = Buffer.from(input.fileData, 'base64');
         const fileKey = `customs/${input.clearanceId}/${nanoid()}-${input.name}`;
         
@@ -4453,7 +4462,22 @@ Provide a brief status summary, any missing documents, and next steps.`;
     // Get customs documents for a clearance
     getCustomsDocuments: copackerProcedure
       .input(z.object({ clearanceId: z.number() }))
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
+        // Verify copacker has access to this clearance
+        const clearance = await db.getCustomsClearanceById(input.clearanceId);
+        if (!clearance) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'Customs clearance not found' });
+        }
+
+        // For copackers, verify the clearance's shipment is accessible
+        if (ctx.user.role === 'copacker' && clearance.shipmentId) {
+          const allShipments = await db.getShipments();
+          const hasAccess = allShipments.some(s => s.id === clearance.shipmentId);
+          if (!hasAccess) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this customs clearance' });
+          }
+        }
+
         return db.getCustomsDocuments(input.clearanceId);
       }),
   }),

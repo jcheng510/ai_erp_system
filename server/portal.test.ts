@@ -249,4 +249,64 @@ describe("copackerPortal", () => {
       expect(result).toHaveLength(1);
     });
   });
+
+  describe("getCustomsDocuments", () => {
+    it("should allow copacker to view documents for accessible clearances", async () => {
+      const ctx = createMockContext({ role: "copacker", linkedWarehouseId: 1 });
+      const caller = appRouter.createCaller(ctx);
+
+      vi.spyOn(db, "getCustomsClearanceById").mockResolvedValue({
+        id: 1,
+        clearanceNumber: "CC-2026-00001",
+        shipmentId: 1,
+        type: "import" as const,
+        status: "pending_documents" as const,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as any);
+
+      vi.spyOn(db, "getShipments").mockResolvedValue([
+        { id: 1 } as any,
+      ]);
+
+      vi.spyOn(db, "getCustomsDocuments").mockResolvedValue([
+        {
+          id: 1,
+          clearanceId: 1,
+          documentType: "commercial_invoice" as const,
+          name: "invoice.pdf",
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        } as any,
+      ]);
+
+      const result = await caller.copackerPortal.getCustomsDocuments({ clearanceId: 1 });
+
+      expect(result).toHaveLength(1);
+      expect(result[0]?.documentType).toBe("commercial_invoice");
+    });
+
+    it("should deny copacker access to non-existent shipment clearances", async () => {
+      const ctx = createMockContext({ role: "copacker", linkedWarehouseId: 1 });
+      const caller = appRouter.createCaller(ctx);
+
+      vi.spyOn(db, "getCustomsClearanceById").mockResolvedValue({
+        id: 2,
+        clearanceNumber: "CC-2026-00002",
+        shipmentId: 99, // Shipment not accessible
+        type: "import" as const,
+        status: "pending_documents" as const,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as any);
+
+      vi.spyOn(db, "getShipments").mockResolvedValue([
+        { id: 1 } as any,
+      ]);
+
+      await expect(
+        caller.copackerPortal.getCustomsDocuments({ clearanceId: 2 })
+      ).rejects.toThrow("You do not have access to this customs clearance");
+    });
+  });
 });
