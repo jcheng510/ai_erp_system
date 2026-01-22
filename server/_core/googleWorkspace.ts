@@ -9,6 +9,21 @@ const DOCS_API = "https://docs.googleapis.com/v1/documents";
 const SHEETS_API = "https://sheets.googleapis.com/v4/spreadsheets";
 const DRIVE_API = "https://www.googleapis.com/drive/v3";
 
+// Validation regex patterns for Google IDs
+const GOOGLE_DOC_ID_PATTERN = /^[a-zA-Z0-9_-]{25,}$/;
+const GOOGLE_SHEET_ID_PATTERN = /^[a-zA-Z0-9_-]{25,}$/;
+const GOOGLE_FILE_ID_PATTERN = /^[a-zA-Z0-9_-]{25,}$/;
+
+/**
+ * Validate Google document/file ID format
+ */
+function validateGoogleId(id: string, type: "doc" | "sheet" | "file"): boolean {
+  const pattern = type === "doc" ? GOOGLE_DOC_ID_PATTERN : 
+                  type === "sheet" ? GOOGLE_SHEET_ID_PATTERN : 
+                  GOOGLE_FILE_ID_PATTERN;
+  return pattern.test(id);
+}
+
 // Google Docs types
 export interface GoogleDocCreateOptions {
   title: string;
@@ -146,6 +161,11 @@ export async function insertTextInDoc(
   text: string,
   index: number = 1 // Insert at beginning by default (index 1, after the title)
 ): Promise<{ success: boolean; error?: string }> {
+  // Validate document ID
+  if (!validateGoogleId(documentId, "doc")) {
+    return { success: false, error: "Invalid document ID format" };
+  }
+  
   try {
     const response = await fetch(`${DOCS_API}/${documentId}:batchUpdate`, {
       method: "POST",
@@ -185,6 +205,11 @@ export async function getGoogleDoc(
   accessToken: string,
   documentId: string
 ): Promise<{ success: boolean; document?: GoogleDoc; error?: string }> {
+  // Validate document ID
+  if (!validateGoogleId(documentId, "doc")) {
+    return { success: false, error: "Invalid document ID format" };
+  }
+  
   try {
     const response = await fetch(`${DOCS_API}/${documentId}`, {
       headers: {
@@ -221,6 +246,11 @@ export async function updateGoogleDoc(
   accessToken: string,
   options: GoogleDocUpdateOptions
 ): Promise<{ success: boolean; error?: string }> {
+  // Validate document ID
+  if (!validateGoogleId(options.documentId, "doc")) {
+    return { success: false, error: "Invalid document ID format" };
+  }
+  
   try {
     const response = await fetch(`${DOCS_API}/${options.documentId}:batchUpdate`, {
       method: "POST",
@@ -318,6 +348,11 @@ export async function updateGoogleSheet(
   accessToken: string,
   options: GoogleSheetUpdateOptions
 ): Promise<{ success: boolean; updatedCells?: number; error?: string }> {
+  // Validate spreadsheet ID
+  if (!validateGoogleId(options.spreadsheetId, "sheet")) {
+    return { success: false, error: "Invalid spreadsheet ID format" };
+  }
+  
   try {
     const response = await fetch(
       `${SHEETS_API}/${options.spreadsheetId}/values/${encodeURIComponent(options.range)}?valueInputOption=RAW`,
@@ -360,6 +395,11 @@ export async function appendToGoogleSheet(
   range: string,
   values: any[][]
 ): Promise<{ success: boolean; updatedCells?: number; error?: string }> {
+  // Validate spreadsheet ID
+  if (!validateGoogleId(spreadsheetId, "sheet")) {
+    return { success: false, error: "Invalid spreadsheet ID format" };
+  }
+  
   try {
     const response = await fetch(
       `${SHEETS_API}/${spreadsheetId}/values/${encodeURIComponent(range)}:append?valueInputOption=RAW`,
@@ -400,6 +440,11 @@ export async function getGoogleSheetValues(
   spreadsheetId: string,
   range: string
 ): Promise<{ success: boolean; values?: any[][]; error?: string }> {
+  // Validate spreadsheet ID
+  if (!validateGoogleId(spreadsheetId, "sheet")) {
+    return { success: false, error: "Invalid spreadsheet ID format" };
+  }
+  
   try {
     const response = await fetch(
       `${SHEETS_API}/${spreadsheetId}/values/${encodeURIComponent(range)}`,
@@ -435,6 +480,11 @@ export async function shareGoogleFile(
   accessToken: string,
   options: ShareOptions
 ): Promise<{ success: boolean; permissionId?: string; error?: string }> {
+  // Validate file ID
+  if (!validateGoogleId(options.fileId, "file")) {
+    return { success: false, error: "Invalid file ID format" };
+  }
+  
   try {
     const requestBody: any = {
       role: options.role,
@@ -486,6 +536,11 @@ export async function getFileShareableLink(
   accessToken: string,
   fileId: string
 ): Promise<{ success: boolean; webViewLink?: string; error?: string }> {
+  // Validate file ID
+  if (!validateGoogleId(fileId, "file")) {
+    return { success: false, error: "Invalid file ID format" };
+  }
+  
   try {
     const response = await fetch(`${DRIVE_API}/files/${fileId}?fields=webViewLink`, {
       headers: {
