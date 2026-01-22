@@ -265,9 +265,9 @@ describe("copackerPortal", () => {
         updatedAt: new Date(),
       } as any);
 
-      vi.spyOn(db, "getShipments").mockResolvedValue([
-        { id: 1 } as any,
-      ]);
+      vi.spyOn(db, "getShipmentById").mockResolvedValue({
+        id: 1,
+      } as any);
 
       vi.spyOn(db, "getCustomsDocuments").mockResolvedValue([
         {
@@ -300,9 +300,7 @@ describe("copackerPortal", () => {
         updatedAt: new Date(),
       } as any);
 
-      vi.spyOn(db, "getShipments").mockResolvedValue([
-        { id: 1 } as any,
-      ]);
+      vi.spyOn(db, "getShipmentById").mockResolvedValue(undefined);
 
       await expect(
         caller.copackerPortal.getCustomsDocuments({ clearanceId: 2 })
