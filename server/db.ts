@@ -2850,6 +2850,13 @@ export async function getPurchaseOrderItems(purchaseOrderId: number) {
   return db.select().from(purchaseOrderItems).where(eq(purchaseOrderItems.purchaseOrderId, purchaseOrderId));
 }
 
+export async function updatePurchaseOrderItem(id: number, data: Partial<typeof purchaseOrderItems.$inferInsert>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(purchaseOrderItems).set(data).where(eq(purchaseOrderItems.id, id));
+  return { success: true };
+}
+
 
 // ============================================
 // AI PRODUCTION FORECASTING

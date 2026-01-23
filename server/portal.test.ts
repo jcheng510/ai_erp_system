@@ -351,3 +351,110 @@ describe("copackerPortal", () => {
     });
   });
 });
+describe("customs clearance inventory integration", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("should update inventory when customs status changes to cleared", async () => {
+    const ctx = createMockContext({ role: "ops", linkedVendorId: undefined });
+    const caller = appRouter.createCaller(ctx);
+
+    // Mock customs clearance
+    vi.spyOn(db, "getCustomsClearanceById").mockResolvedValue({
+      id: 1,
+      clearanceNumber: "CC-2026-00001",
+      shipmentId: 1,
+      type: "import" as const,
+      status: "pending_documents" as const,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as any);
+
+    // Mock shipment
+    vi.spyOn(db, "getShipmentById").mockResolvedValue({
+      id: 1,
+      shipmentNumber: "SHP-001",
+      purchaseOrderId: 1,
+      type: "inbound" as const,
+      companyId: 1,
+    } as any);
+
+    // Mock PO items
+    vi.spyOn(db, "getPurchaseOrderItems").mockResolvedValue([
+      {
+        id: 1,
+        purchaseOrderId: 1,
+        productId: 100,
+        quantity: "50",
+        receivedQuantity: "0",
+      } as any,
+    ]);
+
+    // Mock inventory
+    vi.spyOn(db, "getInventory").mockResolvedValue([]);
+    vi.spyOn(db, "createInventory").mockResolvedValue({ id: 1 });
+    vi.spyOn(db, "updatePurchaseOrderItem").mockResolvedValue({ success: true });
+    vi.spyOn(db, "createInventoryTransaction").mockResolvedValue({ 
+      id: 1, 
+      transactionNumber: "TXN-001" 
+    });
+    vi.spyOn(db, "updateShipment").mockResolvedValue(undefined);
+    vi.spyOn(db, "getAllUsers").mockResolvedValue([]);
+    vi.spyOn(db, "updateCustomsClearance").mockResolvedValue({ success: true });
+    vi.spyOn(db, "createAuditLog").mockResolvedValue({ id: 1 });
+
+    const result = await caller.customs.clearances.update({
+      id: 1,
+      status: "cleared",
+      warehouseId: 5,
+    });
+
+    expect(result.success).toBe(true);
+    expect(db.createInventory).toHaveBeenCalledWith(
+      expect.objectContaining({
+        productId: 100,
+        warehouseId: 5,
+        quantity: "50",
+        companyId: 1,
+      })
+    );
+    expect(db.createInventoryTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transactionType: "receive",
+        productId: 100,
+        toWarehouseId: 5,
+        quantity: "50",
+      })
+    );
+    expect(db.updateShipment).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({
+        status: "delivered",
+      })
+    );
+  });
+
+  it("should require warehouseId when clearing customs with inventory update", async () => {
+    const ctx = createMockContext({ role: "ops", linkedVendorId: undefined });
+    const caller = appRouter.createCaller(ctx);
+
+    vi.spyOn(db, "getCustomsClearanceById").mockResolvedValue({
+      id: 1,
+      clearanceNumber: "CC-2026-00001",
+      shipmentId: 1,
+      type: "import" as const,
+      status: "pending_documents" as const,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as any);
+
+    await expect(
+      caller.customs.clearances.update({
+        id: 1,
+        status: "cleared",
+        // Missing warehouseId
+      })
+    ).rejects.toThrow("warehouseId is required when clearing customs with inventory update");
+  });
+});

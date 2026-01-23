@@ -4004,11 +4004,110 @@ Extract and return as JSON:
           otherFees: z.string().optional(),
           totalAmount: z.string().optional(),
           notes: z.string().optional(),
+          updateInventory: z.boolean().optional().default(true),
+          warehouseId: z.number().optional(), // Required when status is "cleared" and updateInventory is true
         }))
         .mutation(async ({ input, ctx }) => {
-          const { id, ...data } = input;
+          const { id, updateInventory, warehouseId, ...data } = input;
+          
+          // Get the current clearance to check if status is changing to "cleared"
+          const clearance = await db.getCustomsClearanceById(id);
+          const statusChangingToCleared = clearance && 
+            input.status === 'cleared' && 
+            clearance.status !== 'cleared';
+          
+          // Validate warehouseId is provided when clearing customs with inventory update
+          if (statusChangingToCleared && updateInventory && !warehouseId) {
+            throw new TRPCError({ 
+              code: 'BAD_REQUEST', 
+              message: 'warehouseId is required when clearing customs with inventory update' 
+            });
+          }
+          
           await db.updateCustomsClearance(id, data);
           await createAuditLog(ctx.user.id, 'update', 'customs_clearance', id);
+          
+          // If status changed to "cleared" and updateInventory is true, update inventory
+          if (statusChangingToCleared && updateInventory && clearance?.shipmentId && warehouseId) {
+            try {
+              const shipment = await db.getShipmentById(clearance.shipmentId);
+              
+              if (shipment?.purchaseOrderId && shipment.type === 'inbound') {
+                const poItems = await db.getPurchaseOrderItems(shipment.purchaseOrderId);
+                
+                // Update inventory for each PO item
+                for (const item of poItems) {
+                  if (item.productId) {
+                    const quantityToReceive = parseFloat(item.quantity) - parseFloat(item.receivedQuantity || '0');
+                    
+                    if (quantityToReceive > 0) {
+                      // Get or create inventory record
+                      const existingInventory = await db.getInventory({
+                        productId: item.productId,
+                        warehouseId: warehouseId,
+                      });
+                      
+                      if (existingInventory.length > 0) {
+                        // Update existing inventory
+                        const currentQty = parseFloat(existingInventory[0].quantity || '0');
+                        await db.updateInventory(existingInventory[0].id, {
+                          quantity: (currentQty + quantityToReceive).toString(),
+                        });
+                      } else {
+                        // Create new inventory record
+                        await db.createInventory({
+                          productId: item.productId,
+                          warehouseId: warehouseId,
+                          quantity: quantityToReceive.toString(),
+                          companyId: shipment.companyId,
+                        });
+                      }
+                      
+                      // Update received quantity on PO item
+                      await db.updatePurchaseOrderItem(item.id, {
+                        receivedQuantity: item.quantity,
+                      });
+                      
+                      // Create inventory transaction
+                      await db.createInventoryTransaction({
+                        transactionType: 'receive',
+                        productId: item.productId,
+                        toWarehouseId: warehouseId,
+                        quantity: quantityToReceive.toString(),
+                        referenceType: 'customs_clearance',
+                        referenceId: id,
+                        reason: `Customs cleared for shipment ${shipment.shipmentNumber}`,
+                        performedBy: ctx.user.id,
+                      });
+                    }
+                  }
+                }
+                
+                // Update shipment status to delivered
+                await db.updateShipment(clearance.shipmentId, {
+                  status: 'delivered',
+                  deliveryDate: new Date(),
+                });
+                
+                // Create notification for ops/admin users
+                const allUsers = await db.getAllUsers();
+                const opsUsers = allUsers.filter(u => ['admin', 'ops', 'exec'].includes(u.role));
+                for (const user of opsUsers) {
+                  await db.createNotification({
+                    userId: user.id,
+                    type: 'customs_cleared',
+                    title: 'Customs Cleared - Inventory Updated',
+                    message: `Customs clearance ${clearance.clearanceNumber} has been cleared and inventory has been automatically updated for shipment ${shipment.shipmentNumber}.`,
+                    link: `/customs/${id}`,
+                  });
+                }
+              }
+            } catch (error) {
+              console.error('Error updating inventory after customs clearance:', error);
+              // Don't fail the whole operation, just log the error
+            }
+          }
+          
           return { success: true };
         }),
       
