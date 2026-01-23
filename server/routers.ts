@@ -11,6 +11,9 @@ import { parseUploadedDocument, importPurchaseOrder, importFreightInvoice, match
 import * as db from "./db";
 import { storagePut } from "./storage";
 import { nanoid } from "nanoid";
+import { sendGmailMessage, createGmailDraft, listGmailMessages, getGmailMessage, replyToGmailMessage, getGmailProfile } from "./_core/gmail";
+import { createGoogleDoc, insertTextInDoc, getGoogleDoc, updateGoogleDoc, createGoogleSheet, updateGoogleSheet, appendToGoogleSheet, getGoogleSheetValues, shareGoogleFile, getFileShareableLink } from "./_core/googleWorkspace";
+import { getGoogleFullAccessAuthUrl } from "./_core/googleDrive";
 
 // Role-based access middleware
 const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
@@ -68,6 +71,73 @@ async function createAuditLog(userId: number, action: 'create' | 'update' | 'del
     oldValues,
     newValues,
   });
+}
+
+// Helper to refresh Google OAuth token
+async function refreshGoogleToken(refreshToken: string): Promise<{ accessToken?: string; expiresAt?: Date; error?: string }> {
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  
+  if (!clientId || !clientSecret) {
+    return { error: 'Google OAuth not configured' };
+  }
+  
+  try {
+    const response = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: clientId,
+        client_secret: clientSecret,
+        refresh_token: refreshToken,
+        grant_type: 'refresh_token',
+      }),
+    });
+    
+    if (!response.ok) {
+      const error = await response.text();
+      console.error('[Google OAuth] Failed to refresh token:', error);
+      return { error: 'Failed to refresh token' };
+    }
+    
+    const data = await response.json();
+    const expiresAt = new Date(Date.now() + (data.expires_in * 1000));
+    
+    return {
+      accessToken: data.access_token,
+      expiresAt,
+    };
+  } catch (error: any) {
+    console.error('[Google OAuth] Error refreshing token:', error);
+    return { error: error.message };
+  }
+}
+
+// Helper to get valid Google access token (refreshes if needed)
+async function getValidGoogleToken(userId: number): Promise<{ accessToken: string; error?: string }> {
+  const token = await db.getGoogleOAuthToken(userId);
+  
+  if (!token) {
+    return { accessToken: '', error: 'Google account not connected' };
+  }
+  
+  // Check if token needs refresh
+  if (token.expiresAt && new Date(token.expiresAt) < new Date() && token.refreshToken) {
+    const refreshed = await refreshGoogleToken(token.refreshToken);
+    
+    if (refreshed.accessToken && refreshed.expiresAt) {
+      // Update database with new token
+      await db.updateGoogleOAuthToken(userId, {
+        accessToken: refreshed.accessToken,
+        expiresAt: refreshed.expiresAt,
+      });
+      return { accessToken: refreshed.accessToken };
+    }
+    
+    return { accessToken: '', error: refreshed.error || 'Failed to refresh token' };
+  }
+  
+  return { accessToken: token.accessToken };
 }
 
 // Helper to generate unique numbers
@@ -1960,11 +2030,15 @@ export const appRouter = router({
       }),
     
     // Get all integration statuses
-    getStatus: protectedProcedure.query(async () => {
+    getStatus: protectedProcedure.query(async ({ ctx }) => {
       const sendgridConfigured = isEmailConfigured();
       const shopifyStores = await db.getShopifyStores();
       const activeShopifyStores = shopifyStores.filter(s => s.isEnabled);
       const syncHistory = await db.getSyncHistory(10);
+      
+      // Check Google OAuth connection
+      const googleToken = await db.getGoogleOAuthToken(ctx.user.id);
+      const googleConnected = googleToken && (!googleToken.expiresAt || new Date(googleToken.expiresAt) > new Date());
       
       return {
         sendgrid: {
@@ -1978,8 +2052,19 @@ export const appRouter = router({
           stores: shopifyStores,
         },
         google: {
-          configured: false,
-          status: 'not_configured',
+          configured: googleConnected,
+          status: googleConnected ? 'connected' : 'not_configured',
+          email: googleToken?.googleEmail,
+        },
+        gmail: {
+          configured: googleConnected,
+          status: googleConnected ? 'connected' : 'not_configured',
+          email: googleToken?.googleEmail,
+        },
+        googleWorkspace: {
+          configured: googleConnected,
+          status: googleConnected ? 'connected' : 'not_configured',
+          email: googleToken?.googleEmail,
         },
         quickbooks: {
           configured: false,
@@ -2442,6 +2527,350 @@ export const appRouter = router({
         await createAuditLog(ctx.user.id, 'create', `${targetModule}_import`, 0, `Imported ${results.imported} records`);
         
         return results;
+      }),
+  }),
+
+  // ============================================
+  // GMAIL INTEGRATION
+  // ============================================
+  gmail: router({
+    // Get connection status
+    getConnectionStatus: protectedProcedure.query(async ({ ctx }) => {
+      const token = await db.getGoogleOAuthToken(ctx.user.id);
+      if (!token) {
+        return { connected: false, email: null };
+      }
+      // Check if token is expired
+      const isExpired = token.expiresAt && new Date(token.expiresAt) < new Date();
+      
+      // Get Gmail profile if connected
+      if (!isExpired) {
+        const profileResult = await getGmailProfile(token.accessToken);
+        return { 
+          connected: true, 
+          email: profileResult.profile?.emailAddress || token.googleEmail,
+          messagesTotal: profileResult.profile?.messagesTotal,
+          threadsTotal: profileResult.profile?.threadsTotal,
+        };
+      }
+      
+      return { 
+        connected: false, 
+        email: token.googleEmail,
+        needsRefresh: isExpired 
+      };
+    }),
+    
+    // Get full access OAuth URL
+    getAuthUrl: protectedProcedure.query(async ({ ctx }) => {
+      const clientId = process.env.GOOGLE_CLIENT_ID;
+      if (!clientId) {
+        return { url: null, error: 'Google OAuth not configured' };
+      }
+      
+      const url = getGoogleFullAccessAuthUrl(ctx.user.id);
+      return { url, error: null };
+    }),
+    
+    // Send email via Gmail
+    sendEmail: protectedProcedure
+      .input(z.object({
+        to: z.union([z.string(), z.array(z.string())]),
+        subject: z.string(),
+        body: z.string(),
+        cc: z.union([z.string(), z.array(z.string())]).optional(),
+        bcc: z.union([z.string(), z.array(z.string())]).optional(),
+        replyTo: z.string().optional(),
+        html: z.boolean().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+        if (error) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
+        }
+        
+        const result = await sendGmailMessage(accessToken, input);
+        
+        if (!result.success) {
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error || 'Failed to send email' });
+        }
+        
+        // Create audit log
+        await createAuditLog(ctx.user.id, 'create', 'gmail_message', 0, `Sent email to ${Array.isArray(input.to) ? input.to.join(', ') : input.to}`);
+        
+        return { success: true, messageId: result.messageId };
+      }),
+    
+    // Create draft
+    createDraft: protectedProcedure
+      .input(z.object({
+        to: z.union([z.string(), z.array(z.string())]),
+        subject: z.string(),
+        body: z.string(),
+        cc: z.union([z.string(), z.array(z.string())]).optional(),
+        bcc: z.union([z.string(), z.array(z.string())]).optional(),
+        replyTo: z.string().optional(),
+        html: z.boolean().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+        if (error) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
+        }
+        
+        const result = await createGmailDraft(accessToken, input);
+        
+        if (!result.success) {
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error || 'Failed to create draft' });
+        }
+        
+        return { success: true, draftId: result.draftId };
+      }),
+    
+    // List emails
+    listMessages: protectedProcedure
+      .input(z.object({
+        maxResults: z.number().optional(),
+        pageToken: z.string().optional(),
+        labelIds: z.array(z.string()).optional(),
+        q: z.string().optional(),
+      }).optional())
+      .query(async ({ ctx, input }) => {
+        const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+        if (error) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
+        }
+        
+        const result = await listGmailMessages(accessToken, input || {});
+        
+        if (!result.success) {
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error || 'Failed to list messages' });
+        }
+        
+        return result.result;
+      }),
+    
+    // Get message
+    getMessage: protectedProcedure
+      .input(z.object({ messageId: z.string() }))
+      .query(async ({ ctx, input }) => {
+        const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+        if (error) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
+        }
+        
+        const result = await getGmailMessage(accessToken, input.messageId);
+        
+        if (!result.success) {
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error || 'Failed to get message' });
+        }
+        
+        return result.message;
+      }),
+    
+    // Reply to message
+    replyToMessage: protectedProcedure
+      .input(z.object({
+        threadId: z.string(),
+        messageId: z.string(),
+        to: z.union([z.string(), z.array(z.string())]),
+        subject: z.string(),
+        body: z.string(),
+        cc: z.union([z.string(), z.array(z.string())]).optional(),
+        html: z.boolean().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+        if (error) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
+        }
+        
+        const { threadId, messageId, ...emailOptions } = input;
+        const result = await replyToGmailMessage(accessToken, threadId, messageId, emailOptions);
+        
+        if (!result.success) {
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error || 'Failed to send reply' });
+        }
+        
+        return { success: true, messageId: result.messageId };
+      }),
+  }),
+
+  // ============================================
+  // GOOGLE WORKSPACE (DOCS & SHEETS)
+  // ============================================
+  googleWorkspace: router({
+    // Get connection status (shared with Gmail)
+    getConnectionStatus: protectedProcedure.query(async ({ ctx }) => {
+      const token = await db.getGoogleOAuthToken(ctx.user.id);
+      if (!token) {
+        return { connected: false, email: null };
+      }
+      const isExpired = token.expiresAt && new Date(token.expiresAt) < new Date();
+      return { 
+        connected: !isExpired, 
+        email: token.googleEmail,
+        needsRefresh: isExpired 
+      };
+    }),
+    
+    // Get full access OAuth URL
+    getAuthUrl: protectedProcedure.query(async ({ ctx }) => {
+      const clientId = process.env.GOOGLE_CLIENT_ID;
+      if (!clientId) {
+        return { url: null, error: 'Google OAuth not configured' };
+      }
+      
+      const url = getGoogleFullAccessAuthUrl(ctx.user.id);
+      return { url, error: null };
+    }),
+    
+    // Create Google Doc
+    createDoc: protectedProcedure
+      .input(z.object({
+        title: z.string(),
+        content: z.string().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+        if (error) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
+        }
+        
+        const result = await createGoogleDoc(accessToken, input);
+        
+        if (!result.success) {
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error || 'Failed to create document' });
+        }
+        
+        // Get shareable link
+        const linkResult = await getFileShareableLink(accessToken, result.document!.documentId);
+        
+        // Create audit log
+        await createAuditLog(ctx.user.id, 'create', 'google_doc', 0, input.title);
+        
+        return { 
+          ...result.document,
+          webViewLink: linkResult.webViewLink 
+        };
+      }),
+    
+    // Create Google Sheet
+    createSheet: protectedProcedure
+      .input(z.object({
+        title: z.string(),
+        sheets: z.array(z.object({
+          title: z.string(),
+          rowCount: z.number().optional(),
+          columnCount: z.number().optional(),
+        })).optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+        if (error) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
+        }
+        
+        const result = await createGoogleSheet(accessToken, input);
+        
+        if (!result.success) {
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error || 'Failed to create spreadsheet' });
+        }
+        
+        // Create audit log
+        await createAuditLog(ctx.user.id, 'create', 'google_sheet', 0, input.title);
+        
+        return result.spreadsheet;
+      }),
+    
+    // Update Google Sheet values
+    updateSheetValues: protectedProcedure
+      .input(z.object({
+        spreadsheetId: z.string(),
+        range: z.string(),
+        values: z.array(z.array(z.any())),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+        if (error) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
+        }
+        
+        const result = await updateGoogleSheet(accessToken, input);
+        
+        if (!result.success) {
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error || 'Failed to update spreadsheet' });
+        }
+        
+        return { success: true, updatedCells: result.updatedCells };
+      }),
+    
+    // Append to Google Sheet
+    appendToSheet: protectedProcedure
+      .input(z.object({
+        spreadsheetId: z.string(),
+        range: z.string(),
+        values: z.array(z.array(z.any())),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+        if (error) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
+        }
+        
+        const result = await appendToGoogleSheet(accessToken, input.spreadsheetId, input.range, input.values);
+        
+        if (!result.success) {
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error || 'Failed to append to spreadsheet' });
+        }
+        
+        return { success: true, updatedCells: result.updatedCells };
+      }),
+    
+    // Get Sheet values
+    getSheetValues: protectedProcedure
+      .input(z.object({
+        spreadsheetId: z.string(),
+        range: z.string(),
+      }))
+      .query(async ({ ctx, input }) => {
+        const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+        if (error) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
+        }
+        
+        const result = await getGoogleSheetValues(accessToken, input.spreadsheetId, input.range);
+        
+        if (!result.success) {
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error || 'Failed to get values' });
+        }
+        
+        return result.values;
+      }),
+    
+    // Share file
+    shareFile: protectedProcedure
+      .input(z.object({
+        fileId: z.string(),
+        role: z.enum(['reader', 'writer', 'commenter', 'owner']),
+        type: z.enum(['user', 'group', 'domain', 'anyone']),
+        emailAddress: z.string().optional(),
+        domain: z.string().optional(),
+        sendNotificationEmail: z.boolean().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+        if (error) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
+        }
+        
+        const result = await shareGoogleFile(accessToken, input);
+        
+        if (!result.success) {
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error || 'Failed to share file' });
+        }
+        
+        return { success: true, permissionId: result.permissionId };
       }),
   }),
 

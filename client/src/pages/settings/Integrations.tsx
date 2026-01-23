@@ -113,6 +113,8 @@ export default function IntegrationsPage() {
             <TabsTrigger value="connections">Connections</TabsTrigger>
             <TabsTrigger value="shopify">Shopify</TabsTrigger>
             <TabsTrigger value="email">Email (SendGrid)</TabsTrigger>
+            <TabsTrigger value="gmail">Gmail</TabsTrigger>
+            <TabsTrigger value="workspace">Google Workspace</TabsTrigger>
             <TabsTrigger value="history">Sync History</TabsTrigger>
           </TabsList>
 
@@ -204,9 +206,85 @@ export default function IntegrationsPage() {
                 </CardHeader>
                 <CardContent>
                   <p className="text-sm text-muted-foreground mb-4">
-                    Connect Google account to import data from Google Sheets.
+                    {status?.google?.configured 
+                      ? `Connected as ${status.google.email}. Import and export data from Google Sheets.`
+                      : "Connect Google account to import data from Google Sheets."}
                   </p>
-                  <Button variant="outline" size="sm" disabled>
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    onClick={() => {
+                      window.location.href = '/import';
+                    }}
+                  >
+                    <Settings className="w-4 h-4 mr-2" />
+                    {status?.google?.configured ? "Manage" : "Connect"}
+                  </Button>
+                </CardContent>
+              </Card>
+
+              {/* Gmail Card */}
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-red-500/10 rounded-lg">
+                      <Mail className="w-5 h-5 text-red-500" />
+                    </div>
+                    <div>
+                      <CardTitle className="text-lg">Gmail</CardTitle>
+                      <CardDescription>Email integration</CardDescription>
+                    </div>
+                  </div>
+                  {getStatusBadge(status?.gmail?.status || "not_configured")}
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm text-muted-foreground mb-4">
+                    {status?.gmail?.configured 
+                      ? `Connected as ${status.gmail.email}. Send and manage emails via Gmail API.`
+                      : "Connect Gmail to send emails and manage your inbox."}
+                  </p>
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    onClick={() => {
+                      const tab = document.querySelector('[data-value="gmail"]');
+                      if (tab) (tab as HTMLElement).click();
+                    }}
+                  >
+                    <Settings className="w-4 h-4 mr-2" />
+                    Configure
+                  </Button>
+                </CardContent>
+              </Card>
+
+              {/* Google Workspace Card */}
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-blue-600/10 rounded-lg">
+                      <FileSpreadsheet className="w-5 h-5 text-blue-600" />
+                    </div>
+                    <div>
+                      <CardTitle className="text-lg">Google Workspace</CardTitle>
+                      <CardDescription>Docs, Sheets creation</CardDescription>
+                    </div>
+                  </div>
+                  {getStatusBadge(status?.googleWorkspace?.status || "not_configured")}
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm text-muted-foreground mb-4">
+                    {status?.googleWorkspace?.configured 
+                      ? `Connected as ${status.googleWorkspace.email}. Create and edit Google Docs and Sheets.`
+                      : "Connect Google Workspace to create documents and spreadsheets."}
+                  </p>
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    onClick={() => {
+                      const tab = document.querySelector('[data-value="workspace"]');
+                      if (tab) (tab as HTMLElement).click();
+                    }}
+                  >
                     <Settings className="w-4 h-4 mr-2" />
                     Configure
                   </Button>
@@ -480,6 +558,227 @@ export default function IntegrationsPage() {
                       <p className="text-xs text-muted-foreground">
                         Send a test email to verify your SendGrid configuration
                       </p>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Gmail Tab */}
+          <TabsContent value="gmail" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>Gmail Integration</CardTitle>
+                <CardDescription>
+                  Send emails and manage your inbox via Gmail API
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="flex items-center gap-4 p-4 bg-muted/50 rounded-lg">
+                  <div className={`p-3 rounded-full ${status?.gmail?.configured ? 'bg-green-500/10' : 'bg-yellow-500/10'}`}>
+                    {status?.gmail?.configured ? (
+                      <CheckCircle2 className="w-6 h-6 text-green-500" />
+                    ) : (
+                      <AlertCircle className="w-6 h-6 text-yellow-500" />
+                    )}
+                  </div>
+                  <div>
+                    <h4 className="font-medium">
+                      {status?.gmail?.configured ? 'Gmail Connected' : 'Gmail Not Connected'}
+                    </h4>
+                    <p className="text-sm text-muted-foreground">
+                      {status?.gmail?.configured 
+                        ? `Connected as ${status.gmail.email}`
+                        : 'Connect your Google account to send and receive emails via Gmail'}
+                    </p>
+                  </div>
+                </div>
+
+                {!status?.gmail?.configured ? (
+                  <div className="space-y-4">
+                    <div className="p-4 border rounded-lg">
+                      <h4 className="font-medium mb-2">Connect Gmail Account</h4>
+                      <p className="text-sm text-muted-foreground mb-4">
+                        Authorize this application to access your Gmail account to send and manage emails.
+                      </p>
+                      <Button onClick={() => {
+                        // Navigate to import page which handles Google OAuth
+                        window.location.href = '/import';
+                      }}>
+                        <Mail className="w-4 h-4 mr-2" />
+                        Connect Gmail
+                      </Button>
+                    </div>
+
+                    <div className="p-4 bg-blue-500/5 border border-blue-500/20 rounded-lg">
+                      <h4 className="font-medium text-blue-600 dark:text-blue-400 mb-2">
+                        What you can do with Gmail integration:
+                      </h4>
+                      <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
+                        <li>Send emails directly from the ERP system</li>
+                        <li>Create draft emails</li>
+                        <li>View and search your email messages</li>
+                        <li>Reply to emails with threading support</li>
+                        <li>Automate email workflows</li>
+                      </ul>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div className="p-4 border rounded-lg">
+                        <h4 className="font-medium mb-2">Account Info</h4>
+                        <div className="space-y-2 text-sm">
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Email:</span>
+                            <span className="font-medium">{status.gmail.email}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Status:</span>
+                            <Badge className="bg-green-500/10 text-green-500 border-green-500/20">Active</Badge>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="p-4 border rounded-lg">
+                        <h4 className="font-medium mb-2">Quick Actions</h4>
+                        <div className="space-y-2">
+                          <Button variant="outline" size="sm" className="w-full justify-start">
+                            <Mail className="w-4 h-4 mr-2" />
+                            Compose Email
+                          </Button>
+                          <Button variant="outline" size="sm" className="w-full justify-start">
+                            <ExternalLink className="w-4 h-4 mr-2" />
+                            View in Gmail
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="p-4 bg-muted/50 rounded-lg">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h4 className="font-medium">Disconnect Gmail</h4>
+                          <p className="text-sm text-muted-foreground">
+                            Remove Gmail integration from your account
+                          </p>
+                        </div>
+                        <Button variant="outline" size="sm">
+                          Disconnect
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Google Workspace Tab */}
+          <TabsContent value="workspace" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>Google Workspace Integration</CardTitle>
+                <CardDescription>
+                  Create and manage Google Docs, Sheets, and other Workspace files
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="flex items-center gap-4 p-4 bg-muted/50 rounded-lg">
+                  <div className={`p-3 rounded-full ${status?.googleWorkspace?.configured ? 'bg-green-500/10' : 'bg-yellow-500/10'}`}>
+                    {status?.googleWorkspace?.configured ? (
+                      <CheckCircle2 className="w-6 h-6 text-green-500" />
+                    ) : (
+                      <AlertCircle className="w-6 h-6 text-yellow-500" />
+                    )}
+                  </div>
+                  <div>
+                    <h4 className="font-medium">
+                      {status?.googleWorkspace?.configured ? 'Google Workspace Connected' : 'Google Workspace Not Connected'}
+                    </h4>
+                    <p className="text-sm text-muted-foreground">
+                      {status?.googleWorkspace?.configured 
+                        ? `Connected as ${status.googleWorkspace.email}`
+                        : 'Connect your Google account to create and manage Workspace files'}
+                    </p>
+                  </div>
+                </div>
+
+                {!status?.googleWorkspace?.configured ? (
+                  <div className="space-y-4">
+                    <div className="p-4 border rounded-lg">
+                      <h4 className="font-medium mb-2">Connect Google Workspace</h4>
+                      <p className="text-sm text-muted-foreground mb-4">
+                        Authorize this application to create and manage Google Docs and Sheets.
+                      </p>
+                      <Button onClick={() => {
+                        // Navigate to import page which handles Google OAuth
+                        window.location.href = '/import';
+                      }}>
+                        <FileSpreadsheet className="w-4 h-4 mr-2" />
+                        Connect Google Workspace
+                      </Button>
+                    </div>
+
+                    <div className="p-4 bg-blue-500/5 border border-blue-500/20 rounded-lg">
+                      <h4 className="font-medium text-blue-600 dark:text-blue-400 mb-2">
+                        What you can do with Google Workspace:
+                      </h4>
+                      <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
+                        <li>Create Google Docs documents</li>
+                        <li>Create Google Sheets spreadsheets</li>
+                        <li>Update document and sheet content</li>
+                        <li>Share documents with team members</li>
+                        <li>Export ERP data to Google Sheets</li>
+                        <li>Generate reports as Google Docs</li>
+                      </ul>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div className="p-4 border rounded-lg">
+                        <h4 className="font-medium mb-2">Account Info</h4>
+                        <div className="space-y-2 text-sm">
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Email:</span>
+                            <span className="font-medium">{status.googleWorkspace.email}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Status:</span>
+                            <Badge className="bg-green-500/10 text-green-500 border-green-500/20">Active</Badge>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="p-4 border rounded-lg">
+                        <h4 className="font-medium mb-2">Quick Actions</h4>
+                        <div className="space-y-2">
+                          <Button variant="outline" size="sm" className="w-full justify-start">
+                            <FileSpreadsheet className="w-4 h-4 mr-2" />
+                            Create Google Doc
+                          </Button>
+                          <Button variant="outline" size="sm" className="w-full justify-start">
+                            <FileSpreadsheet className="w-4 h-4 mr-2" />
+                            Create Google Sheet
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="p-4 bg-muted/50 rounded-lg">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h4 className="font-medium">Disconnect Google Workspace</h4>
+                          <p className="text-sm text-muted-foreground">
+                            Remove Google Workspace integration from your account
+                          </p>
+                        </div>
+                        <Button variant="outline" size="sm">
+                          Disconnect
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 )}
