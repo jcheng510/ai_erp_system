@@ -45,6 +45,19 @@ export default function CustomerDetail() {
     }
   };
 
+  const getOrderStatusColor = (status: string) => {
+    switch (status) {
+      case "draft": return "bg-gray-100 text-gray-800";
+      case "pending": return "bg-yellow-100 text-yellow-800";
+      case "confirmed": return "bg-blue-100 text-blue-800";
+      case "processing": return "bg-purple-100 text-purple-800";
+      case "shipped": return "bg-indigo-100 text-indigo-800";
+      case "delivered": return "bg-green-100 text-green-800";
+      case "cancelled": return "bg-red-100 text-red-800";
+      default: return "bg-gray-100 text-gray-800";
+    }
+  };
+
   const getSourceBadge = (customer: any) => {
     if (!customer.syncSource) return null;
     const colors: Record<string, string> = {
@@ -216,7 +229,7 @@ export default function CustomerDetail() {
                       {formatCurrency(order.totalAmount)}
                     </TableCell>
                     <TableCell>
-                      <Badge className={getStatusColor(order.status)}>{order.status}</Badge>
+                      <Badge className={getOrderStatusColor(order.status)}>{order.status}</Badge>
                     </TableCell>
                   </TableRow>
                 ))}
