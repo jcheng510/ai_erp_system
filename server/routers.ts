@@ -8751,9 +8751,7 @@ Ask if they received the original request and if they can provide a quote.`;
 
             // Update download count for email permission if downloaded
             if (input.downloaded && accessCheck.permission) {
-              await db.updateDataRoomEmailPermission(accessCheck.permission.id, {
-                downloadCount: (accessCheck.permission.downloadCount || 0) + 1,
-              });
+              await db.incrementDownloadCount(accessCheck.permission.id);
             }
           }
 

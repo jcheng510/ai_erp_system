@@ -102,6 +102,15 @@ export async function getDb() {
 }
 
 // ============================================
+// UTILITY FUNCTIONS
+// ============================================
+
+// Normalize email for consistent storage and comparison
+export function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
+// ============================================
 // USER MANAGEMENT
 // ============================================
 
@@ -5237,7 +5246,7 @@ export async function getVisitorByEmail(dataRoomId: number, email: string) {
   const db = await getDb();
   if (!db) return null;
   const result = await db.select().from(dataRoomVisitors)
-    .where(and(eq(dataRoomVisitors.dataRoomId, dataRoomId), eq(dataRoomVisitors.email, email)))
+    .where(and(eq(dataRoomVisitors.dataRoomId, dataRoomId), eq(dataRoomVisitors.email, normalizeEmail(email))))
     .limit(1);
   return result[0] || null;
 }
@@ -5309,7 +5318,7 @@ export async function getDataRoomInvitationByEmail(dataRoomId: number, email: st
   const result = await db.select().from(dataRoomInvitations)
     .where(and(
       eq(dataRoomInvitations.dataRoomId, dataRoomId),
-      eq(dataRoomInvitations.email, email.toLowerCase())
+      eq(dataRoomInvitations.email, normalizeEmail(email))
     ))
     .orderBy(desc(dataRoomInvitations.createdAt))
     .limit(1);
@@ -5411,6 +5420,17 @@ export async function deleteDataRoomEmailPermission(id: number) {
   await db.delete(dataRoomEmailPermissions).where(eq(dataRoomEmailPermissions.id, id));
 }
 
+// Atomically increment download count for a permission
+export async function incrementDownloadCount(permissionId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  // Use SQL expression to increment atomically
+  await db.update(dataRoomEmailPermissions)
+    .set({ downloadCount: sql`${dataRoomEmailPermissions.downloadCount} + 1` })
+    .where(eq(dataRoomEmailPermissions.id, permissionId));
+}
+
 // Check if email has access to a specific document or folder
 export async function checkEmailAccess(
   dataRoomId: number,
@@ -5465,7 +5485,7 @@ export async function checkEmailAccess(
         return { hasAccess: false, reason: "Insufficient permissions for download", permission };
       }
       // Check download limit
-      if (permission.maxDownloads && permission.downloadCount >= permission.maxDownloads) {
+      if (permission.maxDownloads && (permission.downloadCount || 0) >= permission.maxDownloads) {
         return { hasAccess: false, reason: "Download limit reached", permission };
       }
     }
