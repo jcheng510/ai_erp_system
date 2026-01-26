@@ -6768,11 +6768,11 @@ export async function updateFundraisingCampaign(id: number, data: Partial<Insert
 export async function getInvestorCommunications(investorId: number, campaignId?: number) {
   const db = await getDb();
   if (!db) return [];
-  let query = db.select().from(investorCommunications).where(eq(investorCommunications.investorId, investorId));
+  const conditions = [eq(investorCommunications.investorId, investorId)];
   if (campaignId) {
-    query = query.where(and(eq(investorCommunications.investorId, investorId), eq(investorCommunications.campaignId, campaignId))) as any;
+    conditions.push(eq(investorCommunications.campaignId, campaignId));
   }
-  return query.orderBy(desc(investorCommunications.createdAt));
+  return db.select().from(investorCommunications).where(and(...conditions)).orderBy(desc(investorCommunications.createdAt));
 }
 
 export async function createInvestorCommunication(data: InsertInvestorCommunication) {

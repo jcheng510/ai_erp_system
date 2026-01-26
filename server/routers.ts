@@ -10141,8 +10141,9 @@ Ask if they received the original request and if they can provide a quote.`;
             
             // Map Airtable fields to our schema
             for (const [ourField, airtableField] of Object.entries(fieldMappings)) {
-              if (record.fields[airtableField]) {
-                investorData[ourField] = record.fields[airtableField];
+              const fieldValue = (record.fields as any)[airtableField as string];
+              if (fieldValue) {
+                (investorData as any)[ourField] = fieldValue;
               }
             }
             
