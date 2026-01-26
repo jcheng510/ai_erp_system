@@ -3149,3 +3149,297 @@ export type InsertVendorRfqEmail = typeof vendorRfqEmails.$inferInsert;
 
 export type VendorRfqInvitation = typeof vendorRfqInvitations.$inferSelect;
 export type InsertVendorRfqInvitation = typeof vendorRfqInvitations.$inferInsert;
+
+// ============================================
+// CRM & FUNDRAISING
+// ============================================
+
+// Investors/Contacts for fundraising CRM
+export const investors = mysqlTable("investors", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  email: varchar("email", { length: 320 }),
+  phone: varchar("phone", { length: 32 }),
+  company: varchar("company", { length: 255 }),
+  title: varchar("title", { length: 255 }),
+  
+  // Contact type
+  type: mysqlEnum("type", ["angel", "vc", "family_office", "strategic", "accelerator", "other"]).default("other").notNull(),
+  
+  // Status
+  status: mysqlEnum("status", ["lead", "contacted", "interested", "committed", "invested", "passed"]).default("lead").notNull(),
+  
+  // Social & contact info
+  linkedinUrl: varchar("linkedinUrl", { length: 512 }),
+  twitterHandle: varchar("twitterHandle", { length: 100 }),
+  website: varchar("website", { length: 512 }),
+  address: text("address"),
+  
+  // Investment preferences
+  investmentFocus: text("investmentFocus"), // JSON array of focus areas
+  typicalCheckSize: decimal("typicalCheckSize", { precision: 15, scale: 2 }),
+  investmentStage: varchar("investmentStage", { length: 100 }), // Seed, Series A, etc.
+  
+  // Tracking
+  source: varchar("source", { length: 255 }), // How we found them
+  tags: text("tags"), // JSON array of tags
+  priority: mysqlEnum("priority", ["low", "medium", "high", "critical"]).default("medium").notNull(),
+  
+  // Data room access
+  dataRoomId: int("dataRoomId"), // Link to their data room
+  dataRoomVisitorId: int("dataRoomVisitorId"), // Link to visitor record
+  
+  // Investment details
+  totalInvested: decimal("totalInvested", { precision: 15, scale: 2 }).default("0"),
+  equityPercentage: decimal("equityPercentage", { precision: 5, scale: 2 }),
+  
+  // Follow-up
+  lastContactedAt: timestamp("lastContactedAt"),
+  nextFollowUpAt: timestamp("nextFollowUpAt"),
+  followUpNotes: text("followUpNotes"),
+  
+  // Airtable import
+  airtableId: varchar("airtableId", { length: 255 }),
+  airtableLastSynced: timestamp("airtableLastSynced"),
+  
+  ownerId: int("ownerId"), // User who owns this relationship
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type Investor = typeof investors.$inferSelect;
+export type InsertInvestor = typeof investors.$inferInsert;
+
+// Fundraising campaigns
+export const fundraisingCampaigns = mysqlTable("fundraising_campaigns", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  
+  // Campaign details
+  targetAmount: decimal("targetAmount", { precision: 15, scale: 2 }).notNull(),
+  raisedAmount: decimal("raisedAmount", { precision: 15, scale: 2 }).default("0"),
+  minimumInvestment: decimal("minimumInvestment", { precision: 15, scale: 2 }),
+  valuation: decimal("valuation", { precision: 15, scale: 2 }),
+  
+  // Round details
+  roundType: mysqlEnum("roundType", ["pre_seed", "seed", "series_a", "series_b", "series_c", "bridge", "other"]).notNull(),
+  equityOffered: decimal("equityOffered", { precision: 5, scale: 2 }), // Percentage
+  
+  // Timeline
+  startDate: timestamp("startDate"),
+  targetCloseDate: timestamp("targetCloseDate"),
+  actualCloseDate: timestamp("actualCloseDate"),
+  
+  // Status
+  status: mysqlEnum("status", ["planning", "active", "paused", "closed", "cancelled"]).default("planning").notNull(),
+  
+  // Data room
+  dataRoomId: int("dataRoomId"), // Associated data room for this campaign
+  
+  notes: text("notes"),
+  createdBy: int("createdBy").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type FundraisingCampaign = typeof fundraisingCampaigns.$inferSelect;
+export type InsertFundraisingCampaign = typeof fundraisingCampaigns.$inferInsert;
+
+// Communication tracking (emails & WhatsApp)
+export const investorCommunications = mysqlTable("investor_communications", {
+  id: int("id").autoincrement().primaryKey(),
+  investorId: int("investorId").notNull(),
+  campaignId: int("campaignId"),
+  
+  // Communication type
+  type: mysqlEnum("type", ["email", "whatsapp", "call", "meeting", "linkedin", "other"]).notNull(),
+  direction: mysqlEnum("direction", ["inbound", "outbound"]).notNull(),
+  
+  // Content
+  subject: varchar("subject", { length: 500 }),
+  body: text("body"),
+  
+  // Email specific
+  fromEmail: varchar("fromEmail", { length: 320 }),
+  toEmail: varchar("toEmail", { length: 320 }),
+  ccEmails: text("ccEmails"),
+  emailThreadId: varchar("emailThreadId", { length: 255 }),
+  
+  // WhatsApp specific
+  whatsappPhone: varchar("whatsappPhone", { length: 32 }),
+  whatsappMessageId: varchar("whatsappMessageId", { length: 255 }),
+  
+  // Attachments
+  attachments: text("attachments"), // JSON array
+  
+  // Tracking
+  sentAt: timestamp("sentAt"),
+  deliveredAt: timestamp("deliveredAt"),
+  readAt: timestamp("readAt"),
+  repliedAt: timestamp("repliedAt"),
+  
+  // AI analysis
+  sentiment: mysqlEnum("sentiment", ["positive", "neutral", "negative"]),
+  aiSummary: text("aiSummary"),
+  aiExtractedInfo: text("aiExtractedInfo"), // JSON
+  
+  userId: int("userId"), // User who sent/received
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type InvestorCommunication = typeof investorCommunications.$inferSelect;
+export type InsertInvestorCommunication = typeof investorCommunications.$inferInsert;
+
+// Investments/commitments
+export const investments = mysqlTable("investments", {
+  id: int("id").autoincrement().primaryKey(),
+  investorId: int("investorId").notNull(),
+  campaignId: int("campaignId").notNull(),
+  
+  // Investment details
+  amount: decimal("amount", { precision: 15, scale: 2 }).notNull(),
+  currency: varchar("currency", { length: 3 }).default("USD").notNull(),
+  
+  // Terms
+  equityPercentage: decimal("equityPercentage", { precision: 5, scale: 2 }),
+  valuation: decimal("valuation", { precision: 15, scale: 2 }),
+  
+  instrumentType: mysqlEnum("instrumentType", ["equity", "safe", "convertible_note", "warrant", "other"]).default("equity").notNull(),
+  
+  // Status
+  status: mysqlEnum("status", ["committed", "wired", "received", "cancelled"]).default("committed").notNull(),
+  
+  // Dates
+  commitmentDate: timestamp("commitmentDate"),
+  wireDate: timestamp("wireDate"),
+  receivedDate: timestamp("receivedDate"),
+  
+  // Documents
+  documentIds: text("documentIds"), // JSON array of document IDs
+  
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type Investment = typeof investments.$inferSelect;
+export type InsertInvestment = typeof investments.$inferInsert;
+
+// Equity cap table snapshots
+export const capTableSnapshots = mysqlTable("cap_table_snapshots", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  date: timestamp("date").notNull(),
+  
+  // Company valuation
+  preMoneyValuation: decimal("preMoneyValuation", { precision: 15, scale: 2 }),
+  postMoneyValuation: decimal("postMoneyValuation", { precision: 15, scale: 2 }),
+  
+  // Total shares
+  totalShares: bigint("totalShares", { mode: "number" }),
+  pricePerShare: decimal("pricePerShare", { precision: 10, scale: 4 }),
+  
+  // Campaign link
+  campaignId: int("campaignId"),
+  
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type CapTableSnapshot = typeof capTableSnapshots.$inferSelect;
+export type InsertCapTableSnapshot = typeof capTableSnapshots.$inferInsert;
+
+// Cap table entries - ownership breakdown
+export const capTableEntries = mysqlTable("cap_table_entries", {
+  id: int("id").autoincrement().primaryKey(),
+  snapshotId: int("snapshotId").notNull(),
+  
+  // Holder info
+  holderType: mysqlEnum("holderType", ["founder", "investor", "employee", "advisor", "other"]).notNull(),
+  holderName: varchar("holderName", { length: 255 }).notNull(),
+  investorId: int("investorId"), // Link to investor if applicable
+  
+  // Ownership
+  shares: bigint("shares", { mode: "number" }).notNull(),
+  equityPercentage: decimal("equityPercentage", { precision: 5, scale: 2 }).notNull(),
+  
+  // Share class
+  shareClass: varchar("shareClass", { length: 50 }).default("Common").notNull(),
+  
+  // Fully diluted
+  fullyDilutedShares: bigint("fullyDilutedShares", { mode: "number" }),
+  fullyDilutedPercentage: decimal("fullyDilutedPercentage", { precision: 5, scale: 2 }),
+  
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type CapTableEntry = typeof capTableEntries.$inferSelect;
+export type InsertCapTableEntry = typeof capTableEntries.$inferInsert;
+
+// Automated follow-up reminders
+export const followUpReminders = mysqlTable("follow_up_reminders", {
+  id: int("id").autoincrement().primaryKey(),
+  investorId: int("investorId").notNull(),
+  campaignId: int("campaignId"),
+  
+  // Reminder details
+  title: varchar("title", { length: 255 }).notNull(),
+  description: text("description"),
+  dueDate: timestamp("dueDate").notNull(),
+  
+  // Priority
+  priority: mysqlEnum("priority", ["low", "medium", "high", "critical"]).default("medium").notNull(),
+  
+  // Status
+  status: mysqlEnum("status", ["pending", "completed", "cancelled", "snoozed"]).default("pending").notNull(),
+  completedAt: timestamp("completedAt"),
+  snoozedUntil: timestamp("snoozedUntil"),
+  
+  // Automation
+  autoGenerated: boolean("autoGenerated").default(false).notNull(),
+  triggerType: varchar("triggerType", { length: 100 }), // e.g., "no_response_7_days"
+  
+  // Assignment
+  assignedTo: int("assignedTo"), // User ID
+  
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type FollowUpReminder = typeof followUpReminders.$inferSelect;
+export type InsertFollowUpReminder = typeof followUpReminders.$inferInsert;
+
+// Airtable import configuration
+export const airtableConfigs = mysqlTable("airtable_configs", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  
+  // Airtable connection
+  apiKey: varchar("apiKey", { length: 255 }).notNull(), // Encrypted
+  baseId: varchar("baseId", { length: 255 }).notNull(),
+  tableId: varchar("tableId", { length: 255 }).notNull(),
+  viewId: varchar("viewId", { length: 255 }),
+  
+  // Field mappings (JSON object mapping Airtable fields to our fields)
+  fieldMappings: text("fieldMappings").notNull(),
+  
+  // Sync settings
+  syncEnabled: boolean("syncEnabled").default(false).notNull(),
+  syncFrequency: mysqlEnum("syncFrequency", ["manual", "hourly", "daily", "weekly"]).default("manual").notNull(),
+  lastSyncedAt: timestamp("lastSyncedAt"),
+  lastSyncStatus: mysqlEnum("lastSyncStatus", ["success", "failed", "in_progress"]),
+  lastSyncError: text("lastSyncError"),
+  
+  createdBy: int("createdBy").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type AirtableConfig = typeof airtableConfigs.$inferSelect;
+export type InsertAirtableConfig = typeof airtableConfigs.$inferInsert;

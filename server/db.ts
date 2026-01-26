@@ -81,7 +81,12 @@ import {
   // AI Agent types
   InsertAiAgentTask, InsertAiAgentRule, InsertAiAgentLog, InsertEmailTemplate,
   // Vendor Quote types
-  InsertVendorRfq, InsertVendorQuote, InsertVendorRfqEmail, InsertVendorRfqInvitation
+  InsertVendorRfq, InsertVendorQuote, InsertVendorRfqEmail, InsertVendorRfqInvitation,
+  // CRM & Fundraising types
+  investors, fundraisingCampaigns, investorCommunications, investments,
+  capTableSnapshots, capTableEntries, followUpReminders, airtableConfigs,
+  InsertInvestor, InsertFundraisingCampaign, InsertInvestorCommunication, InsertInvestment,
+  InsertCapTableSnapshot, InsertCapTableEntry, InsertFollowUpReminder, InsertAirtableConfig
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -6679,4 +6684,238 @@ export async function getDocumentImportLogs(limit: number = 50) {
       importData,
     };
   });
+}
+
+// ============================================
+// CRM & FUNDRAISING
+// ============================================
+
+export async function getInvestors(filters?: {
+  status?: string;
+  type?: string;
+  priority?: string;
+  campaignId?: number;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+  let query = db.select().from(investors);
+  const conditions = [];
+  if (filters?.status) conditions.push(eq(investors.status, filters.status as any));
+  if (filters?.type) conditions.push(eq(investors.type, filters.type as any));
+  if (filters?.priority) conditions.push(eq(investors.priority, filters.priority as any));
+  if (conditions.length > 0) query = query.where(and(...conditions)) as any;
+  return query.orderBy(desc(investors.updatedAt));
+}
+
+export async function getInvestorById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(investors).where(eq(investors.id, id));
+  return result[0] || null;
+}
+
+export async function createInvestor(data: InsertInvestor) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(investors).values(data as any);
+  return { id: result[0].insertId, ...data };
+}
+
+export async function updateInvestor(id: number, data: Partial<InsertInvestor>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(investors).set({ ...data, updatedAt: new Date() } as any).where(eq(investors.id, id));
+}
+
+export async function deleteInvestor(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(investors).where(eq(investors.id, id));
+}
+
+// Fundraising Campaigns
+export async function getFundraisingCampaigns(filters?: { status?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  let query = db.select().from(fundraisingCampaigns);
+  if (filters?.status) {
+    query = query.where(eq(fundraisingCampaigns.status, filters.status as any)) as any;
+  }
+  return query.orderBy(desc(fundraisingCampaigns.createdAt));
+}
+
+export async function getFundraisingCampaignById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(fundraisingCampaigns).where(eq(fundraisingCampaigns.id, id));
+  return result[0] || null;
+}
+
+export async function createFundraisingCampaign(data: InsertFundraisingCampaign) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(fundraisingCampaigns).values(data as any);
+  return { id: result[0].insertId, ...data };
+}
+
+export async function updateFundraisingCampaign(id: number, data: Partial<InsertFundraisingCampaign>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(fundraisingCampaigns).set({ ...data, updatedAt: new Date() } as any).where(eq(fundraisingCampaigns.id, id));
+}
+
+// Investor Communications
+export async function getInvestorCommunications(investorId: number, campaignId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  let query = db.select().from(investorCommunications).where(eq(investorCommunications.investorId, investorId));
+  if (campaignId) {
+    query = query.where(and(eq(investorCommunications.investorId, investorId), eq(investorCommunications.campaignId, campaignId))) as any;
+  }
+  return query.orderBy(desc(investorCommunications.createdAt));
+}
+
+export async function createInvestorCommunication(data: InsertInvestorCommunication) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(investorCommunications).values(data as any);
+  return { id: result[0].insertId, ...data };
+}
+
+export async function updateInvestorCommunication(id: number, data: Partial<InsertInvestorCommunication>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(investorCommunications).set({ ...data, updatedAt: new Date() } as any).where(eq(investorCommunications.id, id));
+}
+
+// Investments
+export async function getInvestments(filters?: { investorId?: number; campaignId?: number; status?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  let query = db.select().from(investments);
+  const conditions = [];
+  if (filters?.investorId) conditions.push(eq(investments.investorId, filters.investorId));
+  if (filters?.campaignId) conditions.push(eq(investments.campaignId, filters.campaignId));
+  if (filters?.status) conditions.push(eq(investments.status, filters.status as any));
+  if (conditions.length > 0) query = query.where(and(...conditions)) as any;
+  return query.orderBy(desc(investments.createdAt));
+}
+
+export async function getInvestmentById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(investments).where(eq(investments.id, id));
+  return result[0] || null;
+}
+
+export async function createInvestment(data: InsertInvestment) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(investments).values(data as any);
+  return { id: result[0].insertId, ...data };
+}
+
+export async function updateInvestment(id: number, data: Partial<InsertInvestment>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(investments).set({ ...data, updatedAt: new Date() } as any).where(eq(investments.id, id));
+}
+
+// Cap Table
+export async function getCapTableSnapshots(campaignId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  let query = db.select().from(capTableSnapshots);
+  if (campaignId) {
+    query = query.where(eq(capTableSnapshots.campaignId, campaignId)) as any;
+  }
+  return query.orderBy(desc(capTableSnapshots.date));
+}
+
+export async function getCapTableSnapshotById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(capTableSnapshots).where(eq(capTableSnapshots.id, id));
+  return result[0] || null;
+}
+
+export async function createCapTableSnapshot(data: InsertCapTableSnapshot) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(capTableSnapshots).values(data as any);
+  return { id: result[0].insertId, ...data };
+}
+
+export async function getCapTableEntries(snapshotId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(capTableEntries).where(eq(capTableEntries.snapshotId, snapshotId));
+}
+
+export async function createCapTableEntry(data: InsertCapTableEntry) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(capTableEntries).values(data as any);
+  return { id: result[0].insertId, ...data };
+}
+
+// Follow-up Reminders
+export async function getFollowUpReminders(filters?: {
+  investorId?: number;
+  campaignId?: number;
+  status?: string;
+  assignedTo?: number;
+  dueBefore?: Date;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+  let query = db.select().from(followUpReminders);
+  const conditions = [];
+  if (filters?.investorId) conditions.push(eq(followUpReminders.investorId, filters.investorId));
+  if (filters?.campaignId) conditions.push(eq(followUpReminders.campaignId, filters.campaignId));
+  if (filters?.status) conditions.push(eq(followUpReminders.status, filters.status as any));
+  if (filters?.assignedTo) conditions.push(eq(followUpReminders.assignedTo, filters.assignedTo));
+  if (filters?.dueBefore) conditions.push(lte(followUpReminders.dueDate, filters.dueBefore));
+  if (conditions.length > 0) query = query.where(and(...conditions)) as any;
+  return query.orderBy(followUpReminders.dueDate);
+}
+
+export async function createFollowUpReminder(data: InsertFollowUpReminder) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(followUpReminders).values(data as any);
+  return { id: result[0].insertId, ...data };
+}
+
+export async function updateFollowUpReminder(id: number, data: Partial<InsertFollowUpReminder>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(followUpReminders).set({ ...data, updatedAt: new Date() } as any).where(eq(followUpReminders.id, id));
+}
+
+// Airtable Import
+export async function getAirtableConfigs() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(airtableConfigs).orderBy(desc(airtableConfigs.createdAt));
+}
+
+export async function getAirtableConfigById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(airtableConfigs).where(eq(airtableConfigs.id, id));
+  return result[0] || null;
+}
+
+export async function createAirtableConfig(data: InsertAirtableConfig) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(airtableConfigs).values(data as any);
+  return { id: result[0].insertId, ...data };
+}
+
+export async function updateAirtableConfig(id: number, data: Partial<InsertAirtableConfig>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(airtableConfigs).set({ ...data, updatedAt: new Date() } as any).where(eq(airtableConfigs.id, id));
 }
