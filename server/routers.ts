@@ -2125,14 +2125,14 @@ export const appRouter = router({
     getQuickBooksAuthUrl: protectedProcedure.query(async ({ ctx }) => {
       const clientId = process.env.QUICKBOOKS_CLIENT_ID;
       if (!clientId) {
-        return { url: null, error: 'QuickBooks OAuth not configured. Add QUICKBOOKS_CLIENT_ID and QUICKBOOKS_CLIENT_SECRET in Settings → Secrets.' };
+        return { url: null, error: 'QuickBooks OAuth not configured. Set QUICKBOOKS_CLIENT_ID and QUICKBOOKS_CLIENT_SECRET environment variables on the server.' };
       }
       
       const redirectUri = process.env.QUICKBOOKS_REDIRECT_URI || `${process.env.VITE_APP_URL || 'http://localhost:3000'}/api/quickbooks/callback`;
       const environment = process.env.QUICKBOOKS_ENVIRONMENT || 'sandbox';
-      const baseUrl = environment === 'production' 
-        ? 'https://appcenter.intuit.com/connect/oauth2'
-        : 'https://appcenter.intuit.com/connect/oauth2';
+      // Note: QuickBooks uses the same OAuth URL for both sandbox and production
+      // The environment is determined by which QuickBooks account the user connects
+      const baseUrl = 'https://appcenter.intuit.com/connect/oauth2';
       
       const scope = encodeURIComponent('com.intuit.quickbooks.accounting');
       const state = ctx.user.id.toString();

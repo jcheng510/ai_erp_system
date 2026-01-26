@@ -866,7 +866,6 @@ export default function IntegrationsPage() {
                             toast.error(error.message || 'Failed to get QuickBooks auth URL');
                           }
                         }}
-                        disabled={!status?.quickbooks}
                       >
                         <Calculator className="w-4 h-4 mr-2" />
                         Connect QuickBooks
