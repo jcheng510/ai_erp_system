@@ -2040,6 +2040,10 @@ export const appRouter = router({
       const googleToken = await db.getGoogleOAuthToken(ctx.user.id);
       const googleConnected = googleToken && (!googleToken.expiresAt || new Date(googleToken.expiresAt) > new Date());
       
+      // Check QuickBooks OAuth connection
+      const quickbooksToken = await db.getQuickBooksOAuthToken(ctx.user.id);
+      const quickbooksConnected = quickbooksToken && (!quickbooksToken.expiresAt || new Date(quickbooksToken.expiresAt) > new Date());
+      
       return {
         sendgrid: {
           configured: sendgridConfigured,
@@ -2067,8 +2071,9 @@ export const appRouter = router({
           email: googleToken?.googleEmail,
         },
         quickbooks: {
-          configured: false,
-          status: 'not_configured',
+          configured: quickbooksConnected,
+          status: quickbooksConnected ? 'connected' : 'not_configured',
+          realmId: quickbooksToken?.realmId,
         },
         syncHistory,
       };
@@ -2113,6 +2118,45 @@ export const appRouter = router({
     clearSyncHistory: adminProcedure.mutation(async () => {
       await db.clearSyncHistory();
       return { success: true };
+    }),
+
+    // QuickBooks OAuth
+    getQuickBooksAuthUrl: protectedProcedure.query(async ({ ctx }) => {
+      const clientId = process.env.QUICKBOOKS_CLIENT_ID;
+      if (!clientId) {
+        return { url: null, error: 'QuickBooks OAuth not configured. Add QUICKBOOKS_CLIENT_ID and QUICKBOOKS_CLIENT_SECRET in Settings → Secrets.' };
+      }
+      
+      const redirectUri = process.env.QUICKBOOKS_REDIRECT_URI || `${process.env.VITE_APP_URL || 'http://localhost:3000'}/api/quickbooks/callback`;
+      const environment = process.env.QUICKBOOKS_ENVIRONMENT || 'sandbox';
+      const baseUrl = environment === 'production' 
+        ? 'https://appcenter.intuit.com/connect/oauth2'
+        : 'https://appcenter.intuit.com/connect/oauth2';
+      
+      const scope = encodeURIComponent('com.intuit.quickbooks.accounting');
+      const state = ctx.user.id.toString();
+      
+      const url = `${baseUrl}?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${scope}&state=${state}`;
+      
+      return { url, error: null };
+    }),
+
+    // Disconnect QuickBooks
+    disconnectQuickBooks: protectedProcedure.mutation(async ({ ctx }) => {
+      await db.deleteQuickBooksOAuthToken(ctx.user.id);
+      return { success: true };
+    }),
+
+    // Get QuickBooks connection status
+    getQuickBooksStatus: protectedProcedure.query(async ({ ctx }) => {
+      const token = await db.getQuickBooksOAuthToken(ctx.user.id);
+      const isConnected = token && (!token.expiresAt || new Date(token.expiresAt) > new Date());
+      
+      return {
+        connected: isConnected,
+        realmId: token?.realmId,
+        expiresAt: token?.expiresAt,
+      };
     }),
   }),
 
