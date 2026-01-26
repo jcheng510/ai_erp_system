@@ -8211,6 +8211,260 @@ Ask if they received the original request and if they can provide a quote.`;
         }),
     }),
 
+    // Email Permissions - granular email-based access control
+    emailPermissions: router({
+      list: protectedProcedure
+        .input(z.object({ 
+          dataRoomId: z.number(),
+          email: z.string().email().optional(),
+        }))
+        .query(async ({ input }) => {
+          return db.getDataRoomEmailPermissions(input.dataRoomId, input.email);
+        }),
+
+      create: protectedProcedure
+        .input(z.object({
+          dataRoomId: z.number(),
+          email: z.string().email(),
+          permission: z.enum(['view', 'download', 'upload', 'manage']).default('view'),
+          allowedFolderIds: z.array(z.number()).nullable().optional(),
+          allowedDocumentIds: z.array(z.number()).nullable().optional(),
+          deniedFolderIds: z.array(z.number()).nullable().optional(),
+          deniedDocumentIds: z.array(z.number()).nullable().optional(),
+          validFrom: z.date().optional(),
+          validUntil: z.date().optional(),
+          allowedIpAddresses: z.array(z.string()).nullable().optional(),
+          deniedIpAddresses: z.array(z.string()).nullable().optional(),
+          maxDownloads: z.number().nullable().optional(),
+          requireMfa: z.boolean().default(false),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id } = await db.createDataRoomEmailPermission({
+            ...input,
+            createdBy: ctx.user.id,
+          });
+
+          // Log the permission grant
+          await db.logPermissionChange({
+            dataRoomId: input.dataRoomId,
+            email: input.email,
+            action: 'granted',
+            changeDetails: input,
+            changedBy: ctx.user.id,
+          });
+
+          return { id };
+        }),
+
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          permission: z.enum(['view', 'download', 'upload', 'manage']).optional(),
+          allowedFolderIds: z.array(z.number()).nullable().optional(),
+          allowedDocumentIds: z.array(z.number()).nullable().optional(),
+          deniedFolderIds: z.array(z.number()).nullable().optional(),
+          deniedDocumentIds: z.array(z.number()).nullable().optional(),
+          validFrom: z.date().nullable().optional(),
+          validUntil: z.date().nullable().optional(),
+          allowedIpAddresses: z.array(z.string()).nullable().optional(),
+          deniedIpAddresses: z.array(z.string()).nullable().optional(),
+          maxDownloads: z.number().nullable().optional(),
+          requireMfa: z.boolean().optional(),
+          isActive: z.boolean().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          
+          // Get the current permission to log the change
+          const currentPermission = await db.query.dataRoomEmailPermissions.findFirst({
+            where: (fields: any, { eq }: any) => eq(fields.id, id),
+          });
+
+          await db.updateDataRoomEmailPermission(id, data);
+
+          // Log the permission modification
+          if (currentPermission) {
+            await db.logPermissionChange({
+              dataRoomId: currentPermission.dataRoomId,
+              email: currentPermission.email,
+              action: 'modified',
+              changeDetails: { ...data, previousPermission: currentPermission },
+              changedBy: ctx.user.id,
+            });
+          }
+
+          return { success: true };
+        }),
+
+      delete: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          // Get the permission before deletion for audit log
+          const permission = await db.query.dataRoomEmailPermissions.findFirst({
+            where: (fields: any, { eq }: any) => eq(fields.id, input.id),
+          });
+
+          await db.deleteDataRoomEmailPermission(input.id);
+
+          // Log the permission revocation
+          if (permission) {
+            await db.logPermissionChange({
+              dataRoomId: permission.dataRoomId,
+              email: permission.email,
+              action: 'revoked',
+              changeDetails: permission,
+              changedBy: ctx.user.id,
+            });
+          }
+
+          return { success: true };
+        }),
+
+      checkAccess: protectedProcedure
+        .input(z.object({
+          dataRoomId: z.number(),
+          email: z.string().email(),
+          documentId: z.number().optional(),
+          folderId: z.number().optional(),
+          ipAddress: z.string().optional(),
+          action: z.enum(['view', 'download', 'upload', 'manage']).optional(),
+        }))
+        .query(async ({ input }) => {
+          return db.checkEmailAccess(input.dataRoomId, input.email, {
+            documentId: input.documentId,
+            folderId: input.folderId,
+            ipAddress: input.ipAddress,
+            action: input.action,
+          });
+        }),
+    }),
+
+    // Access Attempts - tracking all access attempts
+    accessAttempts: router({
+      list: protectedProcedure
+        .input(z.object({
+          dataRoomId: z.number(),
+          email: z.string().email().optional(),
+          success: z.boolean().optional(),
+          startDate: z.date().optional(),
+          endDate: z.date().optional(),
+          limit: z.number().default(100).optional(),
+        }))
+        .query(async ({ input }) => {
+          return db.getAccessAttempts(input.dataRoomId, {
+            email: input.email,
+            success: input.success,
+            startDate: input.startDate,
+            endDate: input.endDate,
+            limit: input.limit,
+          });
+        }),
+
+      log: protectedProcedure
+        .input(z.object({
+          dataRoomId: z.number(),
+          documentId: z.number().optional(),
+          folderId: z.number().optional(),
+          email: z.string().email().optional(),
+          visitorId: z.number().optional(),
+          attemptType: z.enum(['view', 'download', 'upload', 'delete', 'share']),
+          success: z.boolean(),
+          denialReason: z.string().optional(),
+          ipAddress: z.string().optional(),
+          userAgent: z.string().optional(),
+          referrer: z.string().optional(),
+          permissionId: z.number().optional(),
+        }))
+        .mutation(async ({ input }) => {
+          return db.logAccessAttempt(input);
+        }),
+    }),
+
+    // Email Blocks - block specific emails
+    emailBlocks: router({
+      list: protectedProcedure
+        .input(z.object({
+          dataRoomId: z.number(),
+          email: z.string().email().optional(),
+        }))
+        .query(async ({ input }) => {
+          return db.getEmailBlocks(input.dataRoomId, input.email);
+        }),
+
+      create: protectedProcedure
+        .input(z.object({
+          dataRoomId: z.number(),
+          email: z.string().email(),
+          reason: z.string(),
+          autoUnblockAt: z.date().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id } = await db.createEmailBlock({
+            ...input,
+            blockedBy: ctx.user.id,
+          });
+
+          // Log the block action
+          await db.logPermissionChange({
+            dataRoomId: input.dataRoomId,
+            email: input.email,
+            action: 'blocked',
+            changeDetails: { reason: input.reason, autoUnblockAt: input.autoUnblockAt },
+            changedBy: ctx.user.id,
+          });
+
+          return { id };
+        }),
+
+      unblock: protectedProcedure
+        .input(z.object({ 
+          id: z.number(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          // Get the block before unblocking for audit log
+          const block = await db.query.dataRoomEmailBlocks.findFirst({
+            where: (fields: any, { eq }: any) => eq(fields.id, input.id),
+          });
+
+          await db.unblockEmail(input.id);
+
+          // Log the unblock action
+          if (block) {
+            await db.logPermissionChange({
+              dataRoomId: block.dataRoomId,
+              email: block.email,
+              action: 'unblocked',
+              changeDetails: { previousBlock: block },
+              changedBy: ctx.user.id,
+            });
+          }
+
+          return { success: true };
+        }),
+    }),
+
+    // Permission Audit Log
+    auditLog: router({
+      list: protectedProcedure
+        .input(z.object({
+          dataRoomId: z.number(),
+          email: z.string().email().optional(),
+          startDate: z.date().optional(),
+          endDate: z.date().optional(),
+          limit: z.number().default(100).optional(),
+        }))
+        .query(async ({ input }) => {
+          return db.getPermissionAuditLog(input.dataRoomId, {
+            email: input.email,
+            startDate: input.startDate,
+            endDate: input.endDate,
+            limit: input.limit,
+          });
+        }),
+    }),
+
     // Public access endpoints (no auth required)
     public: router({
       // Access data room via link
@@ -8350,11 +8604,48 @@ Ask if they received the original request and if they can provide a quote.`;
             }
           }
 
+          // Check email-based permissions
+          const visitorEmail = input.visitorEmail || visitor?.email;
+          let emailPermission = null;
+          if (visitorEmail) {
+            emailPermission = await db.getActiveEmailPermission(input.dataRoomId, visitorEmail);
+            
+            // Check if email is blocked
+            const emailBlock = await db.getActiveEmailBlock(input.dataRoomId, visitorEmail);
+            if (emailBlock) {
+              throw new TRPCError({ code: 'FORBIDDEN', message: `Access blocked: ${emailBlock.reason}` });
+            }
+          }
+
           let folders = await db.getDataRoomFolders(input.dataRoomId, input.folderId);
           let documents = await db.getDataRoomDocuments(input.dataRoomId, input.folderId);
 
-          // Apply per-folder/document permissions if invitation has restrictions
-          if (invitation) {
+          // Apply email-based permissions first (takes precedence)
+          if (emailPermission) {
+            const allowedFolders = emailPermission.allowedFolderIds as number[] | null;
+            const allowedDocs = emailPermission.allowedDocumentIds as number[] | null;
+            const deniedFolders = emailPermission.deniedFolderIds as number[] | null;
+            const deniedDocs = emailPermission.deniedDocumentIds as number[] | null;
+
+            // Filter folders - denied takes precedence
+            if (deniedFolders && deniedFolders.length > 0) {
+              folders = folders.filter(f => !deniedFolders.includes(f.id));
+            }
+            if (allowedFolders && allowedFolders.length > 0) {
+              folders = folders.filter(f => allowedFolders.includes(f.id));
+            }
+
+            // Filter documents - denied takes precedence
+            if (deniedDocs && deniedDocs.length > 0) {
+              documents = documents.filter(d => !deniedDocs.includes(d.id));
+            }
+            if (allowedDocs && allowedDocs.length > 0) {
+              documents = documents.filter(d => allowedDocs.includes(d.id));
+            }
+          }
+
+          // Apply per-folder/document permissions from invitation if no email permission
+          else if (invitation) {
             const allowedFolders = invitation.allowedFolderIds as number[] | null;
             const allowedDocs = invitation.allowedDocumentIds as number[] | null;
             const restrictedFolders = invitation.restrictedFolderIds as number[] | null;
@@ -8430,6 +8721,49 @@ Ask if they received the original request and if they can provide a quote.`;
           downloaded: z.boolean().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
+          // Get visitor info for access logging
+          const visitor = await db.getDataRoomVisitorById(input.visitorId);
+          const document = await db.getDataRoomDocumentById(input.documentId);
+          
+          if (!document) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'Document not found' });
+          }
+
+          // Check email-based permissions if visitor has email
+          if (visitor && visitor.email) {
+            const accessCheck = await db.checkEmailAccess(document.dataRoomId, visitor.email, {
+              documentId: input.documentId,
+              ipAddress: ctx.req.ip || undefined,
+              action: input.downloaded ? 'download' : 'view',
+            });
+
+            // Log the access attempt
+            await db.logAccessAttempt({
+              dataRoomId: document.dataRoomId,
+              documentId: input.documentId,
+              email: visitor.email,
+              visitorId: input.visitorId,
+              attemptType: input.downloaded ? 'download' : 'view',
+              success: accessCheck.hasAccess,
+              denialReason: accessCheck.reason,
+              ipAddress: ctx.req.ip || null,
+              userAgent: ctx.req.headers['user-agent'] || null,
+              permissionId: accessCheck.permission?.id,
+            });
+
+            // If access denied, throw error
+            if (!accessCheck.hasAccess) {
+              throw new TRPCError({ code: 'FORBIDDEN', message: accessCheck.reason || 'Access denied' });
+            }
+
+            // Update download count for email permission if downloaded
+            if (input.downloaded && accessCheck.permission) {
+              await db.updateDataRoomEmailPermission(accessCheck.permission.id, {
+                downloadCount: (accessCheck.permission.downloadCount || 0) + 1,
+              });
+            }
+          }
+
           const { id } = await db.createDocumentView({
             documentId: input.documentId,
             visitorId: input.visitorId,
