@@ -57,6 +57,20 @@ export default function IntegrationsPage() {
     },
   });
 
+  const getQuickBooksAuthUrlMutation = trpc.integrations.getQuickBooksAuthUrl.useQuery(undefined, {
+    enabled: false,
+  });
+
+  const disconnectQuickBooksMutation = trpc.integrations.disconnectQuickBooks.useMutation({
+    onSuccess: () => {
+      toast.success("QuickBooks disconnected successfully");
+      refetch();
+    },
+    onError: (error) => {
+      toast.error(error.message || "Failed to disconnect QuickBooks");
+    },
+  });
+
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "connected":
@@ -842,11 +856,11 @@ export default function IntegrationsPage() {
                       <Button
                         onClick={async () => {
                           try {
-                            const result = await trpc.integrations.getQuickBooksAuthUrl.query();
-                            if (result.error) {
-                              toast.error(result.error);
-                            } else if (result.url) {
-                              window.location.href = result.url;
+                            const result = await getQuickBooksAuthUrlMutation.refetch();
+                            if (result.data?.error) {
+                              toast.error(result.data.error);
+                            } else if (result.data?.url) {
+                              window.location.href = result.data.url;
                             }
                           } catch (error: any) {
                             toast.error(error.message || 'Failed to get QuickBooks auth URL');
@@ -919,15 +933,7 @@ export default function IntegrationsPage() {
                         <Button 
                           variant="outline" 
                           size="sm"
-                          onClick={async () => {
-                            try {
-                              await trpc.integrations.disconnectQuickBooks.mutate();
-                              toast.success('QuickBooks disconnected successfully');
-                              refetch();
-                            } catch (error: any) {
-                              toast.error(error.message || 'Failed to disconnect QuickBooks');
-                            }
-                          }}
+                          onClick={() => disconnectQuickBooksMutation.mutate()}
                         >
                           Disconnect
                         </Button>
