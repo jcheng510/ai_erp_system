@@ -9,8 +9,6 @@ import { sendEmail, isEmailConfigured, formatEmailHtml } from "./_core/email";
 import { processEmailReply, analyzeEmail, generateEmailReply } from "./emailReplyService";
 import { parseUploadedDocument, importPurchaseOrder, importFreightInvoice, matchLineItemsToMaterials } from "./documentImportService";
 import * as db from "./db";
-import { dataRoomEmailPermissions, dataRoomEmailBlocks } from "../drizzle/schema";
-import { eq } from "drizzle-orm";
 import { storagePut } from "./storage";
 import { nanoid } from "nanoid";
 import { sendGmailMessage, createGmailDraft, listGmailMessages, getGmailMessage, replyToGmailMessage, getGmailProfile } from "./_core/gmail";
@@ -8280,13 +8278,7 @@ Ask if they received the original request and if they can provide a quote.`;
           const { id, ...data } = input;
           
           // Get the current permission to log the change
-          const dbInstance = await db.getDb();
-          if (!dbInstance) throw new Error("Database not available");
-          
-          const currentPermissions = await dbInstance.select().from(dataRoomEmailPermissions)
-            .where(eq(dataRoomEmailPermissions.id, id))
-            .limit(1);
-          const currentPermission = currentPermissions[0];
+          const currentPermission = await db.getDataRoomEmailPermissionById(id);
 
           await db.updateDataRoomEmailPermission(id, data);
 
@@ -8308,13 +8300,7 @@ Ask if they received the original request and if they can provide a quote.`;
         .input(z.object({ id: z.number() }))
         .mutation(async ({ input, ctx }) => {
           // Get the permission before deletion for audit log
-          const dbInstance = await db.getDb();
-          if (!dbInstance) throw new Error("Database not available");
-          
-          const permissions = await dbInstance.select().from(dataRoomEmailPermissions)
-            .where(eq(dataRoomEmailPermissions.id, input.id))
-            .limit(1);
-          const permission = permissions[0];
+          const permission = await db.getDataRoomEmailPermissionById(input.id);
 
           await db.deleteDataRoomEmailPermission(input.id);
 
@@ -8434,13 +8420,7 @@ Ask if they received the original request and if they can provide a quote.`;
         }))
         .mutation(async ({ input, ctx }) => {
           // Get the block before unblocking for audit log
-          const dbInstance = await db.getDb();
-          if (!dbInstance) throw new Error("Database not available");
-          
-          const blocks = await dbInstance.select().from(dataRoomEmailBlocks)
-            .where(eq(dataRoomEmailBlocks.id, input.id))
-            .limit(1);
-          const block = blocks[0];
+          const block = await db.getEmailBlockById(input.id);
 
           await db.unblockEmail(input.id);
 

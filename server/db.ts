@@ -5309,7 +5309,7 @@ export async function getDataRoomInvitationByEmail(dataRoomId: number, email: st
   const result = await db.select().from(dataRoomInvitations)
     .where(and(
       eq(dataRoomInvitations.dataRoomId, dataRoomId),
-      eq(dataRoomInvitations.email, email)
+      eq(dataRoomInvitations.email, email.toLowerCase())
     ))
     .orderBy(desc(dataRoomInvitations.createdAt))
     .limit(1);
@@ -5363,6 +5363,15 @@ export async function getDataRoomEmailPermissions(dataRoomId: number, email?: st
   return db.select().from(dataRoomEmailPermissions)
     .where(eq(dataRoomEmailPermissions.dataRoomId, dataRoomId))
     .orderBy(desc(dataRoomEmailPermissions.createdAt));
+}
+
+export async function getDataRoomEmailPermissionById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(dataRoomEmailPermissions)
+    .where(eq(dataRoomEmailPermissions.id, id))
+    .limit(1);
+  return result[0] || null;
 }
 
 export async function getActiveEmailPermission(dataRoomId: number, email: string) {
@@ -5570,6 +5579,15 @@ export async function getEmailBlocks(dataRoomId: number, email?: string) {
   return db.select().from(dataRoomEmailBlocks)
     .where(eq(dataRoomEmailBlocks.dataRoomId, dataRoomId))
     .orderBy(desc(dataRoomEmailBlocks.createdAt));
+}
+
+export async function getEmailBlockById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(dataRoomEmailBlocks)
+    .where(eq(dataRoomEmailBlocks.id, id))
+    .limit(1);
+  return result[0] || null;
 }
 
 export async function getActiveEmailBlock(dataRoomId: number, email: string) {
