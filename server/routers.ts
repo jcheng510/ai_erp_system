@@ -10135,6 +10135,14 @@ Ask if they received the original request and if they can provide a quote.`;
           let importedCount = 0;
           let updatedCount = 0;
           
+          // Fetch all existing investors with airtableId once for efficient lookup
+          const existingInvestors = await db.getInvestors({});
+          const investorMap = new Map(
+            existingInvestors
+              .filter(i => i.airtableId)
+              .map(i => [i.airtableId, i])
+          );
+          
           // Process each record
           for (const record of data.records || []) {
             const investorData: any = {};
@@ -10150,9 +10158,8 @@ Ask if they received the original request and if they can provide a quote.`;
             investorData.airtableId = record.id;
             investorData.airtableLastSynced = new Date();
             
-            // Check if investor already exists
-            const existingInvestors = await db.getInvestors({});
-            const existing = existingInvestors.find(i => i.airtableId === record.id);
+            // Check if investor already exists using the pre-loaded map
+            const existing = investorMap.get(record.id);
             
             if (existing) {
               await db.updateInvestor(existing.id, investorData);
