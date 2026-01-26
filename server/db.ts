@@ -5537,7 +5537,7 @@ export async function getAccessAttempts(dataRoomId: number, filters?: {
     .orderBy(desc(dataRoomAccessAttempts.createdAt));
   
   if (filters?.limit) {
-    query = query.limit(filters.limit);
+    return query.limit(filters.limit);
   }
   
   return query;
@@ -5636,7 +5636,7 @@ export async function getPermissionAuditLog(dataRoomId: number, filters?: {
     .orderBy(desc(dataRoomPermissionAuditLog.createdAt));
   
   if (filters?.limit) {
-    query = query.limit(filters.limit);
+    return query.limit(filters.limit);
   }
   
   return query;
@@ -6208,18 +6208,6 @@ export async function getDataRoomVisitorById(id: number) {
   return visitor || null;
 }
 
-// Get invitation by email for a data room
-export async function getDataRoomInvitationByEmail(dataRoomId: number, email: string) {
-  const db = await getDb();
-  if (!db) return null;
-  const [invitation] = await db.select().from(dataRoomInvitations)
-    .where(and(
-      eq(dataRoomInvitations.dataRoomId, dataRoomId),
-      eq(dataRoomInvitations.email, email.toLowerCase())
-    ));
-  return invitation || null;
-}
-
 // Block a visitor
 export async function blockDataRoomVisitor(id: number, reason?: string) {
   const db = await getDb();
@@ -6262,21 +6250,6 @@ export async function restoreDataRoomVisitorAccess(id: number) {
     revokedAt: null,
     revokedReason: null,
   }).where(eq(dataRoomVisitors.id, id));
-}
-
-// Update invitation permissions
-export async function updateDataRoomInvitationPermissions(id: number, data: {
-  allowedFolderIds?: number[] | null;
-  allowedDocumentIds?: number[] | null;
-  restrictedFolderIds?: number[] | null;
-  restrictedDocumentIds?: number[] | null;
-  allowDownload?: boolean;
-  allowPrint?: boolean;
-  role?: 'viewer' | 'editor' | 'admin';
-}) {
-  const db = await getDb();
-  if (!db) return;
-  await db.update(dataRoomInvitations).set(data).where(eq(dataRoomInvitations.id, id));
 }
 
 // Link visitor to their NDA signature

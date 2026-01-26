@@ -9,6 +9,8 @@ import { sendEmail, isEmailConfigured, formatEmailHtml } from "./_core/email";
 import { processEmailReply, analyzeEmail, generateEmailReply } from "./emailReplyService";
 import { parseUploadedDocument, importPurchaseOrder, importFreightInvoice, matchLineItemsToMaterials } from "./documentImportService";
 import * as db from "./db";
+import { dataRoomEmailPermissions, dataRoomEmailBlocks } from "../drizzle/schema";
+import { eq } from "drizzle-orm";
 import { storagePut } from "./storage";
 import { nanoid } from "nanoid";
 import { sendGmailMessage, createGmailDraft, listGmailMessages, getGmailMessage, replyToGmailMessage, getGmailProfile } from "./_core/gmail";
@@ -8278,9 +8280,13 @@ Ask if they received the original request and if they can provide a quote.`;
           const { id, ...data } = input;
           
           // Get the current permission to log the change
-          const currentPermission = await db.query.dataRoomEmailPermissions.findFirst({
-            where: (fields: any, { eq }: any) => eq(fields.id, id),
-          });
+          const dbInstance = await db.getDb();
+          if (!dbInstance) throw new Error("Database not available");
+          
+          const currentPermissions = await dbInstance.select().from(dataRoomEmailPermissions)
+            .where(eq(dataRoomEmailPermissions.id, id))
+            .limit(1);
+          const currentPermission = currentPermissions[0];
 
           await db.updateDataRoomEmailPermission(id, data);
 
@@ -8302,9 +8308,13 @@ Ask if they received the original request and if they can provide a quote.`;
         .input(z.object({ id: z.number() }))
         .mutation(async ({ input, ctx }) => {
           // Get the permission before deletion for audit log
-          const permission = await db.query.dataRoomEmailPermissions.findFirst({
-            where: (fields: any, { eq }: any) => eq(fields.id, input.id),
-          });
+          const dbInstance = await db.getDb();
+          if (!dbInstance) throw new Error("Database not available");
+          
+          const permissions = await dbInstance.select().from(dataRoomEmailPermissions)
+            .where(eq(dataRoomEmailPermissions.id, input.id))
+            .limit(1);
+          const permission = permissions[0];
 
           await db.deleteDataRoomEmailPermission(input.id);
 
@@ -8424,9 +8434,13 @@ Ask if they received the original request and if they can provide a quote.`;
         }))
         .mutation(async ({ input, ctx }) => {
           // Get the block before unblocking for audit log
-          const block = await db.query.dataRoomEmailBlocks.findFirst({
-            where: (fields: any, { eq }: any) => eq(fields.id, input.id),
-          });
+          const dbInstance = await db.getDb();
+          if (!dbInstance) throw new Error("Database not available");
+          
+          const blocks = await dbInstance.select().from(dataRoomEmailBlocks)
+            .where(eq(dataRoomEmailBlocks.id, input.id))
+            .limit(1);
+          const block = blocks[0];
 
           await db.unblockEmail(input.id);
 
@@ -8669,7 +8683,6 @@ Ask if they received the original request and if they can provide a quote.`;
           }
 
           // Generate watermark data if enabled
-          const visitorEmail = input.visitorEmail || visitor?.email || '';
           let watermarkData = null;
           if (room.watermarkEnabled && visitorEmail) {
             const { generateWatermarkData, generateWatermarkText } = await import('./_core/documentWatermark');
