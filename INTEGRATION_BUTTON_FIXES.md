@@ -96,8 +96,10 @@ None. This is a bug fix that restores intended functionality.
 3. Consider using React Router's useNavigate hook instead of window.location.href
 4. Add unit tests for button click handlers
 5. Consider extracting integration cards into separate components for better maintainability
+6. Replace console.log with a proper logging library for production (currently kept per requirements for debugging)
 
 ## Notes
 - The `/import` route exists and handles Google OAuth flows for Sheets, Gmail, and Workspace
 - Backend TRPC endpoints are already configured and functional
 - No backend changes were required for this fix
+- Console.log statements were added per problem statement requirement #5 for debugging purposes. These can be removed or replaced with a proper logging library in production if desired.
