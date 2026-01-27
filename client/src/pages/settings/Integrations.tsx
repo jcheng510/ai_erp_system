@@ -31,6 +31,7 @@ import {
 export default function IntegrationsPage() {
   const [testEmail, setTestEmail] = useState("");
   const [showAddShopify, setShowAddShopify] = useState(false);
+  const [activeTab, setActiveTab] = useState("connections");
   const [newShopifyStore, setNewShopifyStore] = useState({
     storeName: "",
     storeDomain: "",
@@ -108,7 +109,7 @@ export default function IntegrationsPage() {
           </Button>
         </div>
 
-        <Tabs defaultValue="connections" className="space-y-4">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
           <TabsList>
             <TabsTrigger value="connections">Connections</TabsTrigger>
             <TabsTrigger value="shopify">Shopify</TabsTrigger>
@@ -146,8 +147,8 @@ export default function IntegrationsPage() {
                     size="sm"
                     disabled={!status?.sendgrid?.configured}
                     onClick={() => {
-                      const tab = document.querySelector('[data-value="email"]');
-                      if (tab) (tab as HTMLElement).click();
+                      console.log('SendGrid Configure clicked, switching to email tab');
+                      setActiveTab('email');
                     }}
                   >
                     <Settings className="w-4 h-4 mr-2" />
@@ -180,8 +181,8 @@ export default function IntegrationsPage() {
                     variant="outline" 
                     size="sm"
                     onClick={() => {
-                      const tab = document.querySelector('[data-value="shopify"]');
-                      if (tab) (tab as HTMLElement).click();
+                      console.log('Shopify Configure clicked, switching to shopify tab');
+                      setActiveTab('shopify');
                     }}
                   >
                     <Settings className="w-4 h-4 mr-2" />
@@ -214,6 +215,7 @@ export default function IntegrationsPage() {
                     variant="outline" 
                     size="sm"
                     onClick={() => {
+                      console.log('Google Sheets clicked, navigating to /import');
                       window.location.href = '/import';
                     }}
                   >
@@ -247,8 +249,8 @@ export default function IntegrationsPage() {
                     variant="outline" 
                     size="sm"
                     onClick={() => {
-                      const tab = document.querySelector('[data-value="gmail"]');
-                      if (tab) (tab as HTMLElement).click();
+                      console.log('Gmail Configure clicked, switching to gmail tab');
+                      setActiveTab('gmail');
                     }}
                   >
                     <Settings className="w-4 h-4 mr-2" />
@@ -281,8 +283,8 @@ export default function IntegrationsPage() {
                     variant="outline" 
                     size="sm"
                     onClick={() => {
-                      const tab = document.querySelector('[data-value="workspace"]');
-                      if (tab) (tab as HTMLElement).click();
+                      console.log('Google Workspace Configure clicked, switching to workspace tab');
+                      setActiveTab('workspace');
                     }}
                   >
                     <Settings className="w-4 h-4 mr-2" />
@@ -603,7 +605,7 @@ export default function IntegrationsPage() {
                         Authorize this application to access your Gmail account to send and manage emails.
                       </p>
                       <Button onClick={() => {
-                        // Navigate to import page which handles Google OAuth
+                        console.log('Connect Gmail clicked, navigating to /import');
                         window.location.href = '/import';
                       }}>
                         <Mail className="w-4 h-4 mr-2" />
@@ -713,7 +715,7 @@ export default function IntegrationsPage() {
                         Authorize this application to create and manage Google Docs and Sheets.
                       </p>
                       <Button onClick={() => {
-                        // Navigate to import page which handles Google OAuth
+                        console.log('Connect Google Workspace clicked, navigating to /import');
                         window.location.href = '/import';
                       }}>
                         <FileSpreadsheet className="w-4 h-4 mr-2" />
