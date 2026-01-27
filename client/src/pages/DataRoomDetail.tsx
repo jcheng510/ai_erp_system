@@ -1075,7 +1075,12 @@ function NdaManagement({ dataRoomId, requiresNda }: { dataRoomId: number; requir
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      if (file.type !== 'application/pdf') {
+      // Check if file is a PDF by MIME type or file extension
+      const isPdf = file.type === 'application/pdf' || 
+                    file.type === 'application/x-pdf' ||
+                    file.name.toLowerCase().endsWith('.pdf');
+      
+      if (!isPdf) {
         toast.error("Please upload a PDF file");
         return;
       }
