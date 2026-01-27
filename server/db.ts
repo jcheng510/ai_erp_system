@@ -6680,3 +6680,182 @@ export async function getDocumentImportLogs(limit: number = 50) {
     };
   });
 }
+
+// ============================================
+// INVENTORY MANAGEMENT HUB
+// ============================================
+
+export async function getInventoryManagementData() {
+  const db = await getDb();
+  if (!db) return [];
+
+  // Get all raw materials with their forecast, PO, warehouse, and freight data
+  const materials = await db.select().from(rawMaterials).orderBy(desc(rawMaterials.updatedAt));
+  
+  const result = [];
+  
+  for (const material of materials) {
+    // Get latest demand forecast for this material
+    const forecast = await db.select()
+      .from(demandForecasts)
+      .where(eq(demandForecasts.productId, material.id))
+      .orderBy(desc(demandForecasts.forecastDate))
+      .limit(1);
+    
+    // Get latest PO for this material
+    let latestPO = null;
+    if (material.lastPoId) {
+      const po = await db.select()
+        .from(purchaseOrders)
+        .where(eq(purchaseOrders.id, material.lastPoId))
+        .limit(1);
+      latestPO = po[0] || null;
+    }
+    
+    // Get copacker warehouse location
+    const copackerWarehouses = await db.select()
+      .from(warehouses)
+      .where(eq(warehouses.type, 'copacker' as any))
+      .limit(5);
+    
+    // Get freight tracking for PO
+    let freightTracking = null;
+    if (latestPO) {
+      // Try to find freight booking related to this PO
+      const freight = await db.select()
+        .from(freightBookings)
+        .orderBy(desc(freightBookings.createdAt))
+        .limit(1);
+      freightTracking = freight[0] || null;
+    }
+    
+    result.push({
+      id: material.id,
+      sku: material.sku,
+      name: material.name,
+      category: material.category,
+      unit: material.unit,
+      unitCost: material.unitCost,
+      currency: material.currency,
+      leadTimeDays: material.leadTimeDays,
+      status: material.status,
+      
+      // Production forecast
+      forecastId: forecast[0]?.id || null,
+      forecastedQuantity: forecast[0]?.forecastedQuantity || null,
+      forecastPeriodStart: forecast[0]?.forecastPeriodStart || null,
+      forecastPeriodEnd: forecast[0]?.forecastPeriodEnd || null,
+      forecastConfidence: forecast[0]?.confidenceLevel || null,
+      
+      // Raw material PO
+      poId: latestPO?.id || null,
+      poNumber: latestPO?.poNumber || null,
+      poStatus: latestPO?.status || null,
+      poOrderDate: latestPO?.orderDate || null,
+      poExpectedDate: latestPO?.expectedDate || null,
+      poReceivedDate: latestPO?.receivedDate || null,
+      poTotalAmount: latestPO?.totalAmount || null,
+      
+      // Copacker location
+      copackerLocations: copackerWarehouses.map(w => ({
+        id: w.id,
+        name: w.name,
+        city: w.city,
+        state: w.state,
+        country: w.country,
+      })),
+      
+      // Freight tracking
+      freightId: freightTracking?.id || null,
+      freightBookingNumber: freightTracking?.bookingNumber || null,
+      freightStatus: freightTracking?.status || null,
+      freightTrackingNumber: freightTracking?.trackingNumber || null,
+      freightCarrierId: freightTracking?.carrierId || null,
+      freightDepartureDate: freightTracking?.departureDate || null,
+      freightArrivalDate: freightTracking?.arrivalDate || null,
+      freightDeliveryDate: freightTracking?.deliveryDate || null,
+      
+      // Inventory status
+      quantityOnOrder: material.quantityOnOrder,
+      quantityInTransit: material.quantityInTransit,
+      quantityReceived: material.quantityReceived,
+      receivingStatus: material.receivingStatus,
+      expectedDeliveryDate: material.expectedDeliveryDate,
+    });
+  }
+  
+  return result;
+}
+
+export async function updateInventoryManagementItem(id: number, data: {
+  forecastedQuantity?: string;
+  poStatus?: string;
+  freightStatus?: string;
+  freightTrackingNumber?: string;
+  expectedDeliveryDate?: Date;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  // Update the raw material fields
+  const updateData: any = {};
+  if (data.expectedDeliveryDate !== undefined) {
+    updateData.expectedDeliveryDate = data.expectedDeliveryDate;
+  }
+  
+  if (Object.keys(updateData).length > 0) {
+    await db.update(rawMaterials).set(updateData).where(eq(rawMaterials.id, id));
+  }
+  
+  // Get material to find related records
+  const material = await db.select().from(rawMaterials).where(eq(rawMaterials.id, id)).limit(1);
+  if (!material[0]) return { success: false };
+  
+  // Update forecast if needed
+  if (data.forecastedQuantity !== undefined) {
+    const forecast = await db.select()
+      .from(demandForecasts)
+      .where(eq(demandForecasts.productId, id))
+      .orderBy(desc(demandForecasts.forecastDate))
+      .limit(1);
+    
+    if (forecast[0]) {
+      await db.update(demandForecasts)
+        .set({ forecastedQuantity: data.forecastedQuantity })
+        .where(eq(demandForecasts.id, forecast[0].id));
+    }
+  }
+  
+  // Update PO status if needed
+  if (data.poStatus !== undefined && material[0].lastPoId) {
+    await db.update(purchaseOrders)
+      .set({ status: data.poStatus as any })
+      .where(eq(purchaseOrders.id, material[0].lastPoId));
+  }
+  
+  // Update freight tracking if needed
+  if (data.freightStatus !== undefined || data.freightTrackingNumber !== undefined) {
+    const freight = await db.select()
+      .from(freightBookings)
+      .orderBy(desc(freightBookings.createdAt))
+      .limit(1);
+    
+    if (freight[0]) {
+      const freightUpdate: any = {};
+      if (data.freightStatus !== undefined) {
+        freightUpdate.status = data.freightStatus as any;
+      }
+      if (data.freightTrackingNumber !== undefined) {
+        freightUpdate.trackingNumber = data.freightTrackingNumber;
+      }
+      
+      if (Object.keys(freightUpdate).length > 0) {
+        await db.update(freightBookings)
+          .set(freightUpdate)
+          .where(eq(freightBookings.id, freight[0].id));
+      }
+    }
+  }
+  
+  return { success: true };
+}
