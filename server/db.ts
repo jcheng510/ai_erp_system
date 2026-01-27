@@ -6719,9 +6719,11 @@ export async function getInventoryManagementData() {
       .limit(5);
     
     // Get freight tracking for PO
+    // Note: Currently returns the most recent freight booking as there's no direct PO->Freight link in the schema
+    // In production, you would want to add a purchaseOrderId column to freightBookings table
+    // or link through a junction table for proper association
     let freightTracking = null;
     if (latestPO) {
-      // Try to find freight booking related to this PO
       const freight = await db.select()
         .from(freightBookings)
         .orderBy(desc(freightBookings.createdAt))
@@ -6834,6 +6836,8 @@ export async function updateInventoryManagementItem(id: number, data: {
   }
   
   // Update freight tracking if needed
+  // Note: This updates the most recent freight booking, which may not be correct without proper PO->Freight linkage
+  // Consider adding a purchaseOrderId to freightBookings or using a materialId filter for better accuracy
   if (data.freightStatus !== undefined || data.freightTrackingNumber !== undefined) {
     const freight = await db.select()
       .from(freightBookings)

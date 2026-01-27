@@ -113,12 +113,14 @@ export default function InventoryManagementHub() {
     item, 
     field, 
     value, 
+    rawValue,
     type = "text",
     options 
   }: { 
     item: any; 
     field: string; 
-    value: any; 
+    value: any;
+    rawValue?: any;
     type?: "text" | "select" | "date";
     options?: string[];
   }) => {
@@ -178,7 +180,7 @@ export default function InventoryManagementHub() {
     return (
       <div 
         className="flex items-center gap-2 cursor-pointer hover:bg-muted/50 px-2 py-1 rounded group"
-        onClick={() => startEdit(item.id, field, value)}
+        onClick={() => startEdit(item.id, field, rawValue !== undefined ? rawValue : value)}
       >
         <span>{value || "-"}</span>
         <Edit2 className="h-3 w-3 opacity-0 group-hover:opacity-50" />
@@ -368,6 +370,7 @@ export default function InventoryManagementHub() {
                               item={item}
                               field="poStatus"
                               value={getStatusBadge(item.poStatus)}
+                              rawValue={item.poStatus}
                               type="select"
                               options={["draft", "sent", "confirmed", "partial", "received", "cancelled"]}
                             />
@@ -422,6 +425,7 @@ export default function InventoryManagementHub() {
                               item={item}
                               field="freightStatus"
                               value={getStatusBadge(item.freightStatus)}
+                              rawValue={item.freightStatus}
                               type="select"
                               options={["pending", "confirmed", "in_transit", "arrived", "delivered", "cancelled"]}
                             />
