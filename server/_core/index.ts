@@ -44,6 +44,12 @@ async function startServer() {
       return res.redirect('/import?error=missing_params');
     }
     
+    // Validate state parameter (user ID)
+    const userId = parseInt(state as string, 10);
+    if (isNaN(userId) || userId <= 0) {
+      return res.redirect('/import?error=invalid_state');
+    }
+    
     const clientId = process.env.GOOGLE_CLIENT_ID;
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
     
@@ -88,7 +94,7 @@ async function startServer() {
       
       // Save tokens to database
       await upsertGoogleOAuthToken({
-        userId: parseInt(state as string),
+        userId,
         accessToken: tokens.access_token,
         refreshToken: tokens.refresh_token,
         expiresAt: new Date(Date.now() + tokens.expires_in * 1000),
@@ -109,6 +115,12 @@ async function startServer() {
     
     if (!code || !state) {
       return res.redirect('/settings/integrations?error=missing_params');
+    }
+    
+    // Validate state parameter (user ID)
+    const userId = parseInt(state as string, 10);
+    if (isNaN(userId) || userId <= 0) {
+      return res.redirect('/settings/integrations?error=invalid_state');
     }
     
     const clientId = process.env.GOOGLE_CLIENT_ID;
@@ -155,7 +167,7 @@ async function startServer() {
       
       // Save tokens to database
       await upsertGoogleOAuthToken({
-        userId: parseInt(state as string),
+        userId,
         accessToken: tokens.access_token,
         refreshToken: tokens.refresh_token,
         expiresAt: new Date(Date.now() + tokens.expires_in * 1000),

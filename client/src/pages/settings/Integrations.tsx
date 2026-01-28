@@ -10,7 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Switch } from "@/components/ui/switch";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
-import { useLocation, useSearch } from "wouter";
+import { useSearch } from "wouter";
 import { 
   Mail, 
   ShoppingBag, 
@@ -37,7 +37,6 @@ export default function IntegrationsPage() {
     storeDomain: "",
     accessToken: "",
   });
-  const [, setLocation] = useLocation();
   const searchParams = useSearch();
 
   const { data: status, isLoading, refetch } = trpc.integrations.getStatus.useQuery();
@@ -55,14 +54,16 @@ export default function IntegrationsPage() {
       if (params.get("success") === "connected") {
         toast.success("Google account connected successfully!");
         refetch();
-        setLocation("/settings/integrations");
+        // Clear query parameters from URL
+        window.history.replaceState({}, '', '/settings/integrations');
       } else if (params.get("error")) {
         const error = params.get("error");
         toast.error(`Connection failed: ${error}`);
-        setLocation("/settings/integrations");
+        // Clear query parameters from URL
+        window.history.replaceState({}, '', '/settings/integrations');
       }
     }
-  }, [searchParams, refetch, setLocation]);
+  }, [searchParams, refetch]);
 
   const testSendgridMutation = trpc.integrations.testSendgrid.useMutation({
     onSuccess: (data) => {
