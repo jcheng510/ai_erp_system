@@ -1,4 +1,4 @@
-import { invokeLLM } from "./_core/llm";
+import { invokeLLM, type TextContent } from "./_core/llm";
 import * as db from "./db";
 import { writeFileSync, readFileSync, unlinkSync, mkdirSync, existsSync } from "fs";
 import { join } from "path";
@@ -378,7 +378,7 @@ If document type is unknown, return both as null.`;
       contentText = content_str;
     } else if (Array.isArray(content_str)) {
       // Extract text from content array
-      const textPart = content_str.find((p: any) => p.type === 'text') as { type: string; text: string } | undefined;
+      const textPart = content_str.find((p): p is TextContent => p.type === 'text');
       contentText = textPart?.text || JSON.stringify(content_str);
     } else {
       contentText = JSON.stringify(content_str);
