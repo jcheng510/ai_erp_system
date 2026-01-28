@@ -3,6 +3,7 @@ import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Table,
   TableBody,
@@ -11,12 +12,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Warehouse, Search, Loader2, AlertTriangle } from "lucide-react";
+import { Warehouse, Search, Loader2, AlertTriangle, Plus } from "lucide-react";
+import { QuickCreateDialog } from "@/components/QuickCreateDialog";
 
 export default function Inventory() {
   const [search, setSearch] = useState("");
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
 
-  const { data: inventory, isLoading } = trpc.inventory.list.useQuery();
+  const { data: inventory, isLoading, refetch } = trpc.inventory.list.useQuery();
 
   const filteredInventory = inventory?.filter((item) =>
     item.productId?.toString().includes(search.toLowerCase()) ||
@@ -35,13 +38,21 @@ export default function Inventory() {
   return (
     <div className="space-y-6 animate-fade-in">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
-          <Warehouse className="h-8 w-8" />
-          Inventory
-        </h1>
-        <p className="text-muted-foreground mt-1">
-          Track stock levels and manage inventory across locations.
-        </p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
+              <Warehouse className="h-8 w-8" />
+              Inventory
+            </h1>
+            <p className="text-muted-foreground mt-1">
+              Track stock levels and manage inventory across locations.
+            </p>
+          </div>
+          <Button onClick={() => setCreateDialogOpen(true)}>
+            <Plus className="h-4 w-4 mr-2" />
+            Add Inventory
+          </Button>
+        </div>
       </div>
 
       {/* Summary Cards */}
@@ -146,6 +157,15 @@ export default function Inventory() {
           )}
         </CardContent>
       </Card>
+
+      <QuickCreateDialog
+        open={createDialogOpen}
+        onOpenChange={setCreateDialogOpen}
+        entityType="inventory"
+        onCreated={() => {
+          refetch();
+        }}
+      />
     </div>
   );
 }

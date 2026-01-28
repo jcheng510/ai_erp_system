@@ -30,6 +30,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { SelectWithCreate } from "@/components/ui/select-with-create";
 import { ClipboardList, Plus, Search, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
@@ -57,6 +58,7 @@ export default function PurchaseOrders() {
 
   const { data: purchaseOrders, isLoading, refetch } = trpc.purchaseOrders.list.useQuery();
   const { data: vendors } = trpc.vendors.list.useQuery();
+  const utils = trpc.useUtils();
   const createPO = trpc.purchaseOrders.create.useMutation({
     onSuccess: () => {
       toast.success("Purchase order created successfully");
@@ -128,21 +130,21 @@ export default function PurchaseOrders() {
               <div className="grid gap-4 py-4">
                 <div className="space-y-2">
                   <Label htmlFor="vendor">Vendor *</Label>
-                  <Select
+                  <SelectWithCreate
                     value={formData.vendorId.toString()}
                     onValueChange={(value) => setFormData({ ...formData, vendorId: parseInt(value) })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select vendor" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {vendors?.map((vendor) => (
-                        <SelectItem key={vendor.id} value={vendor.id.toString()}>
-                          {vendor.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    placeholder="Select vendor"
+                    items={vendors?.map((v) => ({
+                      id: v.id,
+                      label: v.name,
+                    })) || []}
+                    entityType="vendor"
+                    onEntityCreated={() => {
+                      // Refetch vendors to update the list
+                      utils.vendors.list.invalidate();
+                    }}
+                    emptyMessage="No vendors available. Create one to continue."
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="expectedDeliveryDate">Expected Delivery</Label>
