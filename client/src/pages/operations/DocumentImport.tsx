@@ -103,9 +103,13 @@ export default function DocumentImport() {
   const matchMaterialsMutation = trpc.documentImport.matchMaterials.useMutation();
   const historyQuery = trpc.documentImport.getHistory.useQuery({ limit: 50 });
   
-  // Google Drive queries
-  const googleConnectionQuery = trpc.sheetsImport.getConnectionStatus.useQuery();
-  const googleAuthUrlQuery = trpc.sheetsImport.getAuthUrl.useQuery();
+  // Google Drive queries - only enabled when Drive tab is active
+  const googleConnectionQuery = trpc.sheetsImport.getConnectionStatus.useQuery(undefined, {
+    enabled: activeTab === "drive"
+  });
+  const googleAuthUrlQuery = trpc.sheetsImport.getAuthUrl.useQuery(undefined, {
+    enabled: activeTab === "drive" && !googleConnectionQuery.data?.connected
+  });
   const driveFoldersQuery = trpc.documentImport.listDriveFolders.useQuery(
     { parentFolderId: currentFolderId || undefined },
     { enabled: googleConnectionQuery.data?.connected && activeTab === "drive" }

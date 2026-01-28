@@ -788,3 +788,8 @@
 - [x] Debug "Could not determine document type" error still occurring for user uploads
 - [x] Root cause: pdftoppm command-line tool not available in production environment
 - [x] Solution: Use pdfjs-dist pure JavaScript library for PDF text extraction
+
+## Bug Fix: Document Import Google Connection Error
+- [x] Fix "Google account not connected" error on /operations/document-import page
+- [x] Make Google Drive integration optional for basic document upload
+- [x] Ensure upload tab works without Google connection
