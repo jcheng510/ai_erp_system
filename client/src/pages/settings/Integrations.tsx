@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,6 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Switch } from "@/components/ui/switch";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
+import { useLocation, useSearch } from "wouter";
 import { 
   Mail, 
   ShoppingBag, 
@@ -36,6 +37,8 @@ export default function IntegrationsPage() {
     storeDomain: "",
     accessToken: "",
   });
+  const [, setLocation] = useLocation();
+  const searchParams = useSearch();
 
   const { data: status, isLoading, refetch } = trpc.integrations.getStatus.useQuery();
   const { data: syncHistory } = trpc.integrations.getSyncHistory.useQuery({ limit: 20 });
@@ -44,6 +47,22 @@ export default function IntegrationsPage() {
   const { data: gmailAuthUrl } = trpc.gmail.getAuthUrl.useQuery();
   const { data: workspaceAuthUrl } = trpc.googleWorkspace.getAuthUrl.useQuery();
   const { data: sheetsAuthUrl } = trpc.sheetsImport.getAuthUrl.useQuery();
+
+  // Handle OAuth callback
+  useEffect(() => {
+    if (searchParams) {
+      const params = new URLSearchParams(searchParams);
+      if (params.get("success") === "connected") {
+        toast.success("Google account connected successfully!");
+        refetch();
+        setLocation("/settings/integrations");
+      } else if (params.get("error")) {
+        const error = params.get("error");
+        toast.error(`Connection failed: ${error}`);
+        setLocation("/settings/integrations");
+      }
+    }
+  }, [searchParams, refetch, setLocation]);
 
   const testSendgridMutation = trpc.integrations.testSendgrid.useMutation({
     onSuccess: (data) => {
