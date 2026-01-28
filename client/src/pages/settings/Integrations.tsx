@@ -40,6 +40,11 @@ export default function IntegrationsPage() {
   const { data: status, isLoading, refetch } = trpc.integrations.getStatus.useQuery();
   const { data: syncHistory } = trpc.integrations.getSyncHistory.useQuery({ limit: 20 });
 
+  // Get OAuth URLs for Gmail and Google Workspace
+  const { data: gmailAuthUrl } = trpc.gmail.getAuthUrl.useQuery();
+  const { data: workspaceAuthUrl } = trpc.googleWorkspace.getAuthUrl.useQuery();
+  const { data: sheetsAuthUrl } = trpc.sheetsImport.getAuthUrl.useQuery();
+
   const testSendgridMutation = trpc.integrations.testSendgrid.useMutation({
     onSuccess: (data) => {
       toast.success(data.message);
@@ -214,7 +219,13 @@ export default function IntegrationsPage() {
                     variant="outline" 
                     size="sm"
                     onClick={() => {
-                      window.location.href = '/import';
+                      if (status?.google?.configured) {
+                        window.location.href = '/import';
+                      } else if (sheetsAuthUrl?.url) {
+                        window.location.href = sheetsAuthUrl.url;
+                      } else {
+                        toast.error(sheetsAuthUrl?.error || "Google OAuth not configured");
+                      }
                     }}
                   >
                     <Settings className="w-4 h-4 mr-2" />
@@ -247,8 +258,14 @@ export default function IntegrationsPage() {
                     variant="outline" 
                     size="sm"
                     onClick={() => {
-                      const tab = document.querySelector('[data-value="gmail"]');
-                      if (tab) (tab as HTMLElement).click();
+                      if (status?.gmail?.configured) {
+                        const tab = document.querySelector('[data-value="gmail"]');
+                        if (tab) (tab as HTMLElement).click();
+                      } else if (gmailAuthUrl?.url) {
+                        window.location.href = gmailAuthUrl.url;
+                      } else {
+                        toast.error(gmailAuthUrl?.error || "Google OAuth not configured");
+                      }
                     }}
                   >
                     <Settings className="w-4 h-4 mr-2" />
@@ -281,8 +298,14 @@ export default function IntegrationsPage() {
                     variant="outline" 
                     size="sm"
                     onClick={() => {
-                      const tab = document.querySelector('[data-value="workspace"]');
-                      if (tab) (tab as HTMLElement).click();
+                      if (status?.googleWorkspace?.configured) {
+                        const tab = document.querySelector('[data-value="workspace"]');
+                        if (tab) (tab as HTMLElement).click();
+                      } else if (workspaceAuthUrl?.url) {
+                        window.location.href = workspaceAuthUrl.url;
+                      } else {
+                        toast.error(workspaceAuthUrl?.error || "Google OAuth not configured");
+                      }
                     }}
                   >
                     <Settings className="w-4 h-4 mr-2" />
@@ -603,8 +626,11 @@ export default function IntegrationsPage() {
                         Authorize this application to access your Gmail account to send and manage emails.
                       </p>
                       <Button onClick={() => {
-                        // Navigate to import page which handles Google OAuth
-                        window.location.href = '/import';
+                        if (gmailAuthUrl?.url) {
+                          window.location.href = gmailAuthUrl.url;
+                        } else {
+                          toast.error(gmailAuthUrl?.error || "Google OAuth not configured");
+                        }
                       }}>
                         <Mail className="w-4 h-4 mr-2" />
                         Connect Gmail
@@ -713,8 +739,11 @@ export default function IntegrationsPage() {
                         Authorize this application to create and manage Google Docs and Sheets.
                       </p>
                       <Button onClick={() => {
-                        // Navigate to import page which handles Google OAuth
-                        window.location.href = '/import';
+                        if (workspaceAuthUrl?.url) {
+                          window.location.href = workspaceAuthUrl.url;
+                        } else {
+                          toast.error(workspaceAuthUrl?.error || "Google OAuth not configured");
+                        }
                       }}>
                         <FileSpreadsheet className="w-4 h-4 mr-2" />
                         Connect Google Workspace
