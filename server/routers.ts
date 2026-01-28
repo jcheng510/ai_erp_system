@@ -127,7 +127,8 @@ async function getValidGoogleToken(userId: number): Promise<{ accessToken: strin
     
     if (refreshed.accessToken && refreshed.expiresAt) {
       // Update database with new token
-      await db.updateGoogleOAuthToken(userId, {
+      await db.upsertGoogleOAuthToken({
+        userId: userId,
         accessToken: refreshed.accessToken,
         expiresAt: refreshed.expiresAt,
       });

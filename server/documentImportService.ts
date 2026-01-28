@@ -378,8 +378,8 @@ If document type is unknown, return both as null.`;
       contentText = content_str;
     } else if (Array.isArray(content_str)) {
       // Extract text from content array
-      const textPart = content_str.find((p: any) => p.type === 'text');
-      contentText = textPart?.text || JSON.stringify(content_str);
+      const textPart = content_str.find((p) => p.type === 'text');
+      contentText = (textPart && 'text' in textPart) ? textPart.text : JSON.stringify(content_str);
     } else {
       contentText = JSON.stringify(content_str);
     }
