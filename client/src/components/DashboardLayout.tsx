@@ -97,9 +97,7 @@ const menuGroups = [
   {
     label: "Operations",
     items: [
-      { icon: Package, label: "Inventory", path: "/operations/inventory-hub" },
-      { icon: Warehouse, label: "Manufacturing", path: "/operations/manufacturing-hub" },
-      { icon: Building2, label: "Procurement", path: "/operations/procurement-hub" },
+      { icon: Package, label: "Operations Hub", path: "/operations/hub" },
       { icon: Truck, label: "Logistics", path: "/operations/logistics-hub" },
       { icon: Mail, label: "Email Inbox", path: "/operations/email-inbox" },
       { icon: FileSpreadsheet, label: "Document Import", path: "/operations/document-import" },
@@ -251,8 +249,7 @@ function DashboardLayoutContent({
             case 'd': setLocation('/'); break; // Go to Dashboard
             case 'a': setLocation('/ai'); break; // Go to AI Assistant
             case 's': setLocation('/sales/hub'); break; // Go to Sales
-            case 'm': setLocation('/operations/manufacturing-hub'); break; // Go to Manufacturing
-            case 'p': setLocation('/operations/procurement-hub'); break; // Go to Procurement
+            case 'o': setLocation('/operations/hub'); break; // Go to Operations Hub
             case 'l': setLocation('/operations/logistics-hub'); break; // Go to Logistics
             case 'e': setLocation('/operations/email-inbox'); break; // Go to Email
           }
@@ -270,8 +267,7 @@ function DashboardLayoutContent({
           'g d - Dashboard\n' +
           'g a - AI Assistant\n' +
           'g s - Sales Hub\n' +
-          'g m - Manufacturing\n' +
-          'g p - Procurement\n' +
+          'g o - Operations Hub\n' +
           'g l - Logistics\n' +
           'g e - Email Inbox',
           { duration: 5000 }

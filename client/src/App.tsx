@@ -48,6 +48,7 @@ import ManufacturingHub from "./pages/operations/ManufacturingHub";
 import ProcurementHub from "./pages/operations/ProcurementHub";
 import LogisticsHub from "./pages/operations/LogisticsHub";
 import InventoryHub from "./pages/operations/InventoryHub";
+import OperationsHub from "./pages/operations/OperationsHub";
 import DocumentImport from "./pages/operations/DocumentImport";
 import SupplierPortal from "./pages/SupplierPortal";
 
@@ -138,6 +139,7 @@ function Router() {
         <Route path="/operations/email-inbox" component={EmailInbox} />
         <Route path="/operations/logistics" component={Logistics} />
         <Route path="/operations/procurement" component={Procurement} />
+        <Route path="/operations/hub" component={OperationsHub} />
         <Route path="/operations/manufacturing-hub" component={ManufacturingHub} />
         <Route path="/operations/procurement-hub" component={ProcurementHub} />
         <Route path="/operations/logistics-hub" component={LogisticsHub} />
