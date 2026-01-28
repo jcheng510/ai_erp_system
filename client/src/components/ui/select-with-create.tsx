@@ -56,6 +56,7 @@ export function SelectWithCreate({
               variant="ghost"
               size="sm"
               className="w-full justify-start"
+              disabled={disabled}
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();

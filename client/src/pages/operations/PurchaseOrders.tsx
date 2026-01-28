@@ -131,7 +131,7 @@ export default function PurchaseOrders() {
                 <div className="space-y-2">
                   <Label htmlFor="vendor">Vendor *</Label>
                   <SelectWithCreate
-                    value={formData.vendorId.toString()}
+                    value={formData.vendorId === 0 ? "" : formData.vendorId.toString()}
                     onValueChange={(value) => setFormData({ ...formData, vendorId: parseInt(value) })}
                     placeholder="Select vendor"
                     items={vendors?.map((v) => ({

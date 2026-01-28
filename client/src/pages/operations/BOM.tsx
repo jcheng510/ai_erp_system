@@ -103,7 +103,7 @@ export default function BOM() {
                 <div className="space-y-2">
                   <Label>Product *</Label>
                   <SelectWithCreate
-                    value={newBom.productId.toString()}
+                    value={newBom.productId === 0 ? "" : newBom.productId.toString()}
                     onValueChange={(v) => {
                       const product = products?.find(p => p.id === parseInt(v));
                       setNewBom({ 

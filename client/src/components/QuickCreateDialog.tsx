@@ -42,6 +42,7 @@ function ProductSelectField({ value, onChange }: { value?: number; onChange: (va
         <SelectContent>
           <div className="p-1 border-b">
             <button
+              type="button"
               className="w-full text-left px-2 py-1.5 text-sm hover:bg-accent rounded-sm flex items-center gap-2"
               onClick={(e) => {
                 e.preventDefault();
@@ -121,6 +122,7 @@ function WarehouseSelectField({ value, onChange }: { value?: number; onChange: (
         <SelectContent>
           <div className="p-1 border-b">
             <button
+              type="button"
               className="w-full text-left px-2 py-1.5 text-sm hover:bg-accent rounded-sm flex items-center gap-2"
               onClick={(e) => {
                 e.preventDefault();

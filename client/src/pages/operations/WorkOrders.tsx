@@ -96,7 +96,7 @@ export default function WorkOrders() {
                 <div>
                   <Label>Bill of Materials</Label>
                   <SelectWithCreate
-                    value={newWorkOrder.bomId.toString()}
+                    value={newWorkOrder.bomId === 0 ? "" : newWorkOrder.bomId.toString()}
                     onValueChange={handleBomSelect}
                     placeholder="Select BOM"
                     items={boms?.filter(b => b.status === 'active').map((bom) => ({
@@ -113,7 +113,7 @@ export default function WorkOrders() {
                 <div>
                   <Label>Production Location</Label>
                   <SelectWithCreate
-                    value={newWorkOrder.warehouseId.toString()}
+                    value={newWorkOrder.warehouseId === 0 ? "" : newWorkOrder.warehouseId.toString()}
                     onValueChange={v => setNewWorkOrder({ ...newWorkOrder, warehouseId: parseInt(v) })}
                     placeholder="Select location"
                     items={warehouses?.map((wh) => ({

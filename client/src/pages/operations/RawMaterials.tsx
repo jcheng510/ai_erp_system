@@ -188,19 +188,16 @@ export default function RawMaterials() {
                 <div className="space-y-2">
                   <Label>Preferred Vendor</Label>
                   <SelectWithCreate
-                    value={newMaterial.preferredVendorId?.toString() || "none"}
+                    value={newMaterial.preferredVendorId?.toString() || ""}
                     onValueChange={(v) => setNewMaterial({ 
                       ...newMaterial, 
-                      preferredVendorId: v === "none" ? undefined : parseInt(v) 
+                      preferredVendorId: v === "" ? undefined : parseInt(v) 
                     })}
-                    placeholder="Select vendor"
-                    items={[
-                      { id: "none", label: "None" },
-                      ...(vendors?.map((v) => ({
-                        id: v.id,
-                        label: v.name,
-                      })) || [])
-                    ]}
+                    placeholder="Select vendor (optional)"
+                    items={vendors?.map((v) => ({
+                      id: v.id,
+                      label: v.name,
+                    })) || []}
                     entityType="vendor"
                     onEntityCreated={() => {
                       utils.vendors.list.invalidate();
