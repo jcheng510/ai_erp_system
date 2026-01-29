@@ -9431,7 +9431,8 @@ Ask if they received the original request and if they can provide a quote.`;
       .query(async ({ ctx, input }) => {
         const token = await db.getGoogleOAuthToken(ctx.user.id);
         if (!token) {
-          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Google account not connected' });
+          // Return empty result instead of throwing error
+          return { folders: [], nextPageToken: undefined, notConnected: true };
         }
         
         // Refresh token if needed
@@ -9499,7 +9500,8 @@ Ask if they received the original request and if they can provide a quote.`;
       .query(async ({ ctx, input }) => {
         const token = await db.getGoogleOAuthToken(ctx.user.id);
         if (!token) {
-          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Google account not connected' });
+          // Return empty result instead of throwing error
+          return { files: [], nextPageToken: undefined, notConnected: true };
         }
         
         // Refresh token if needed
@@ -9573,7 +9575,7 @@ Ask if they received the original request and if they can provide a quote.`;
       .mutation(async ({ ctx, input }) => {
         const token = await db.getGoogleOAuthToken(ctx.user.id);
         if (!token) {
-          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Google account not connected' });
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Google account not connected. Please connect your Google account first.' });
         }
         
         // Refresh token if needed
@@ -9639,7 +9641,7 @@ Ask if they received the original request and if they can provide a quote.`;
       .mutation(async ({ ctx, input }) => {
         const token = await db.getGoogleOAuthToken(ctx.user.id);
         if (!token) {
-          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Google account not connected' });
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Google account not connected. Please connect your Google account first.' });
         }
         
         // Refresh token if needed
