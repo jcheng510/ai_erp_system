@@ -8265,15 +8265,48 @@ Ask if they received the original request and if they can provide a quote.`;
             throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: syncResult.error || 'Sync failed' });
           }
 
+          // Get existing folders and documents to avoid duplicates
+          const existingFolders = await db.getDataRoomFolders(input.dataRoomId, null);
+          const existingDocs = await db.getDataRoomDocuments(input.dataRoomId, null);
+          const existingFoldersByDriveId = new Map(
+            existingFolders
+              .filter(f => f.googleDriveFolderId)
+              .map(f => [f.googleDriveFolderId!, f.id])
+          );
+          const existingDocsByDriveId = new Map(
+            existingDocs
+              .filter(d => d.googleDriveFileId)
+              .map(d => [d.googleDriveFileId!, d.id])
+          );
+
           // Create folder hierarchy in data room
           const folderMap = new Map<string, number>(); // Google Drive folder ID -> data room folder ID
           
-          // Process folders first
-          for (const driveFolder of syncResult.folders) {
+          // Sort folders by depth to ensure parents are created before children
+          const sortedFolders = [...syncResult.folders].sort((a, b) => {
+            const aDepth = a.parents?.length || 0;
+            const bDepth = b.parents?.length || 0;
+            return aDepth - bDepth;
+          });
+          
+          // Process folders
+          let foldersCreated = 0;
+          for (const driveFolder of sortedFolders) {
+            // Check if folder already exists
+            if (existingFoldersByDriveId.has(driveFolder.id)) {
+              folderMap.set(driveFolder.id, existingFoldersByDriveId.get(driveFolder.id)!);
+              continue;
+            }
+
             const parentDriveId = driveFolder.parents?.[0];
             const parentDataRoomId = parentDriveId && parentDriveId !== input.googleDriveFolderId 
               ? folderMap.get(parentDriveId) 
               : null;
+
+            // Log warning if parent folder is missing
+            if (parentDriveId && parentDriveId !== input.googleDriveFolderId && !parentDataRoomId) {
+              console.warn(`[GoogleDrive Sync] Parent folder ${parentDriveId} not found for folder ${driveFolder.name}`);
+            }
 
             const { id } = await db.createDataRoomFolder({
               dataRoomId: input.dataRoomId,
@@ -8283,11 +8316,17 @@ Ask if they received the original request and if they can provide a quote.`;
             });
 
             folderMap.set(driveFolder.id, id);
+            foldersCreated++;
           }
 
           // Process files
           let filesCreated = 0;
           for (const driveFile of syncResult.files) {
+            // Check if file already exists
+            if (existingDocsByDriveId.has(driveFile.id)) {
+              continue;
+            }
+
             const parentDriveId = driveFile.parents?.[0];
             let folderId: number | null = null;
 
@@ -8296,11 +8335,18 @@ Ask if they received the original request and if they can provide a quote.`;
               // Root level file
               folderId = null;
             } else if (parentDriveId) {
-              folderId = folderMap.get(parentDriveId) || null;
+              folderId = folderMap.get(parentDriveId) || existingFoldersByDriveId.get(parentDriveId) || null;
+              
+              // Log warning if parent folder is missing
+              if (!folderId) {
+                console.warn(`[GoogleDrive Sync] Parent folder ${parentDriveId} not found for file ${driveFile.name}`);
+              }
             }
 
             const fileType = getSimpleFileType(driveFile.mimeType);
-            const fileSize = driveFile.size ? parseInt(driveFile.size) : undefined;
+            const fileSize = driveFile.size && !isNaN(parseInt(driveFile.size)) 
+              ? parseInt(driveFile.size) 
+              : undefined;
 
             await db.createDataRoomDocument({
               dataRoomId: input.dataRoomId,
@@ -8327,8 +8373,10 @@ Ask if they received the original request and if they can provide a quote.`;
 
           return {
             success: true,
-            foldersCreated: syncResult.folders.length,
+            foldersCreated,
             filesCreated,
+            totalFolders: syncResult.folders.length,
+            totalFiles: syncResult.files.length,
           };
         }),
     }),

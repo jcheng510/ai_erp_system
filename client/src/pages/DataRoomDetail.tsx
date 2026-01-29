@@ -144,8 +144,9 @@ export default function DataRoomDetail() {
 
   const syncGoogleDriveMutation = trpc.dataRoom.googleDrive.syncFolder.useMutation({
     onSuccess: (data) => {
-      toast.success(`Synced ${data.foldersCreated} folders and ${data.filesCreated} files from Google Drive`);
+      toast.success(`Synced ${data.foldersCreated} new folders and ${data.filesCreated} new files from Google Drive`);
       setGoogleDriveSyncOpen(false);
+      setSelectedDriveFolderId(""); // Clear the input
       refetchFolders();
       refetchDocuments();
       refetchRoom();
