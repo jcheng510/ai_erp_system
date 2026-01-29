@@ -586,6 +586,12 @@ export default function Projects() {
                 onCellEdit={(rowId, key, value) => {
                   if (key === "status") {
                     handleStatusChange(rowId as number, value);
+                  } else if (key === "title") {
+                    updateTaskStatus.mutate({ id: rowId as number, name: value });
+                  } else if (key === "dueDate") {
+                    updateTaskStatus.mutate({ id: rowId as number, dueDate: value ? new Date(value) : undefined });
+                  } else if (key === "priority") {
+                    updateTaskStatus.mutate({ id: rowId as number, priority: value as any });
                   }
                 }}
                 enableInlineCreate
@@ -598,7 +604,7 @@ export default function Projects() {
                   createTask.mutate({
                     name: rowData.title as string,
                     description: rowData.description as string || undefined,
-                    projectId: rowData.projectId ? parseInt(rowData.projectId as string) : 0,
+                    projectId: rowData.projectId ? parseInt(rowData.projectId as string) : (filterProject !== "all" ? parseInt(filterProject) : undefined),
                     priority: (rowData.priority as any) || "medium",
                     dueDate: rowData.dueDate ? new Date(rowData.dueDate as string) : undefined,
                     assigneeId: rowData.assigneeId ? parseInt(rowData.assigneeId as string) : undefined,

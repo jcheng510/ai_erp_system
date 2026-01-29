@@ -418,7 +418,25 @@ export function SpreadsheetTable<T extends { id: number | string }>({
       return null;
     }
 
-    if (col.type === "status" && col.options) {
+    // Handle date type
+    if (col.type === "date") {
+      return (
+        <Input
+          type="date"
+          value={value}
+          onChange={(e) => updateNewRowField(col.key as string, e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commitNewRow();
+            if (e.key === "Escape") cancelNewRow();
+          }}
+          placeholder={inlineCreatePlaceholder}
+          className="h-7 text-xs"
+        />
+      );
+    }
+
+    // Handle status and badge types with options
+    if ((col.type === "status" || col.type === "badge") && col.options) {
       return (
         <Select 
           value={value} 
@@ -440,6 +458,10 @@ export function SpreadsheetTable<T extends { id: number | string }>({
       <Input
         value={value}
         onChange={(e) => updateNewRowField(col.key as string, e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commitNewRow();
+          if (e.key === "Escape") cancelNewRow();
+        }}
         placeholder={inlineCreatePlaceholder}
         className="h-7 text-xs"
         type={col.type === "number" || col.type === "currency" ? "number" : "text"}
@@ -711,7 +733,19 @@ export function SpreadsheetTable<T extends { id: number | string }>({
                   ))}
                 </tr>
               ) : (
-                <tr className="border-b hover:bg-muted/30 cursor-pointer" onClick={startNewRow}>
+                <tr 
+                  className="border-b hover:bg-muted/30 cursor-pointer" 
+                  onClick={startNewRow}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      startNewRow();
+                    }
+                  }}
+                  tabIndex={0}
+                  role="button"
+                  aria-label="Add new row"
+                >
                   {expandable && <td className={cn(cellPadding, "w-8")} />}
                   {onSelectionChange && <td className={cn(cellPadding, "w-10")} />}
                   <td
