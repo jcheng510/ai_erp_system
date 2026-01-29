@@ -16,6 +16,8 @@ import {
 
 // Status options
 const workOrderStatuses = [
+  { value: "draft", label: "Draft", color: "bg-gray-100 text-gray-800" },
+  { value: "scheduled", label: "Scheduled", color: "bg-yellow-100 text-yellow-800" },
   { value: "pending", label: "Pending", color: "bg-yellow-100 text-yellow-800" },
   { value: "in_progress", label: "In Progress", color: "bg-blue-100 text-blue-800" },
   { value: "completed", label: "Completed", color: "bg-green-100 text-green-800" },
@@ -44,9 +46,8 @@ function formatDate(value: string | Date | null | undefined) {
 }
 
 // Detail Panel Components
-function WorkOrderDetailPanel({ workOrder, onClose, onStatusChange, onStartProduction, onCompleteProduction }: { 
+function WorkOrderDetailPanel({ workOrder, onStatusChange, onStartProduction, onCompleteProduction }: { 
   workOrder: any; 
-  onClose: () => void;
   onStatusChange: (id: number, status: string) => void;
   onStartProduction?: (id: number) => void;
   onCompleteProduction?: (id: number, completedQuantity: string) => void;
@@ -109,7 +110,7 @@ function WorkOrderDetailPanel({ workOrder, onClose, onStatusChange, onStartProdu
   );
 }
 
-function BomDetailPanel({ bom, onClose }: { bom: any; onClose: () => void }) {
+function BomDetailPanel({ bom }: { bom: any }) {
   const { data: bomDetails } = trpc.bom.get.useQuery({ id: bom.id });
   const components = bomDetails?.components || [];
   
@@ -165,7 +166,7 @@ function BomDetailPanel({ bom, onClose }: { bom: any; onClose: () => void }) {
   );
 }
 
-function LocationDetailPanel({ location, onClose }: { location: any; onClose: () => void }) {
+function LocationDetailPanel({ location }: { location: any }) {
   return (
     <div className="p-6 space-y-4">
       <div className="flex items-start justify-between">
@@ -203,7 +204,7 @@ function LocationDetailPanel({ location, onClose }: { location: any; onClose: ()
   );
 }
 
-function InventoryItemDetailPanel({ item, onClose }: { item: any; onClose: () => void }) {
+function InventoryItemDetailPanel({ item }: { item: any }) {
   const locations = item.locations || [];
   const inTransit = item.inTransit || [];
   
@@ -345,7 +346,7 @@ export default function OperationsHub() {
   // Column definitions
   const poColumns: Column<any>[] = [
     { key: "id", header: "PO #", type: "text", sortable: true, render: (row, val) => `PO-${val}` },
-    { key: "vendor.name", header: "Vendor", type: "text", sortable: true },
+    { key: "vendor.name", header: "Vendor", type: "text", sortable: true, render: (row) => row.vendor?.name || "-" },
     { key: "totalAmount", header: "Amount", type: "currency", sortable: true, render: (row, val) => formatCurrency(val) },
     { key: "status", header: "Status", type: "badge", sortable: true,
       render: (row, val) => poStatusOptions.find(s => s.value === val)?.label || val },
@@ -367,12 +368,12 @@ export default function OperationsHub() {
     { key: "currentStock", header: "Stock", type: "number", sortable: true },
     { key: "reorderPoint", header: "Reorder", type: "number" },
     { key: "unitCost", header: "Cost", type: "currency", render: (row, val) => formatCurrency(val) },
-    { key: "preferredVendor.name", header: "Vendor", type: "text" },
+    { key: "preferredVendor.name", header: "Vendor", type: "text", render: (row) => row.preferredVendor?.name || "-" },
   ];
 
   const workOrderColumns: Column<any>[] = [
     { key: "id", header: "WO #", type: "text", sortable: true, render: (row, val) => `WO-${val}` },
-    { key: "productName", header: "Product", type: "text", sortable: true },
+    { key: "productName", header: "Product", type: "text", sortable: true, render: (row) => row.product?.name || row.bom?.name || "-" },
     { key: "quantity", header: "Qty", type: "number", sortable: true },
     { key: "completedQuantity", header: "Done", type: "number" },
     { key: "status", header: "Status", type: "badge", sortable: true,
@@ -382,7 +383,7 @@ export default function OperationsHub() {
 
   const bomColumns: Column<any>[] = [
     { key: "name", header: "BOM Name", type: "text", sortable: true },
-    { key: "product.name", header: "Product", type: "text", sortable: true },
+    { key: "product.name", header: "Product", type: "text", sortable: true, render: (row) => row.product?.name || "-" },
     { key: "version", header: "Version", type: "text" },
     { key: "componentCount", header: "Components", type: "number" },
     { key: "isActive", header: "Status", type: "badge", 
@@ -399,8 +400,8 @@ export default function OperationsHub() {
   ];
 
   const inventoryColumns: Column<any>[] = [
-    { key: "product.sku", header: "SKU", type: "text", sortable: true },
-    { key: "product.name", header: "Name", type: "text", sortable: true },
+    { key: "product.sku", header: "SKU", type: "text", sortable: true, render: (row) => row.product?.sku || row.rawMaterial?.sku || "-" },
+    { key: "product.name", header: "Name", type: "text", sortable: true, render: (row) => row.product?.name || row.rawMaterial?.name || "-" },
     { key: "totalQuantity", header: "Qty", type: "number", sortable: true },
     { key: "unit", header: "Unit", type: "text" },
     { key: "productType", header: "Type", type: "badge" },
@@ -618,11 +619,10 @@ export default function OperationsHub() {
                     addLabel="New Work Order"
                     expandedRowId={expandedWorkOrderId}
                     onExpandChange={setExpandedWorkOrderId}
-                    renderExpanded={(workOrder, onClose) => (
+                    renderExpanded={(workOrder) => (
                       <WorkOrderDetailPanel 
                         workOrder={workOrder} 
-                        onClose={onClose}
-                        onStatusChange={(id, status) => updateWorkOrderStatus.mutate({ id, status } as any)}
+                        onStatusChange={(id, status) => updateWorkOrderStatus.mutate({ id, status })}
                         onStartProduction={(id) => startProduction.mutate({ id })}
                         onCompleteProduction={(id, completedQuantity) => completeProduction.mutate({ id, completedQuantity })}
                       />
@@ -644,8 +644,8 @@ export default function OperationsHub() {
                     addLabel="New BOM"
                     expandedRowId={expandedBomId}
                     onExpandChange={setExpandedBomId}
-                    renderExpanded={(bom, onClose) => (
-                      <BomDetailPanel bom={bom} onClose={onClose} />
+                    renderExpanded={(bom) => (
+                      <BomDetailPanel bom={bom} />
                     )}
                   />
                 </CardContent>
@@ -744,8 +744,8 @@ export default function OperationsHub() {
                     showSearch
                     expandedRowId={expandedInventoryId}
                     onExpandChange={setExpandedInventoryId}
-                    renderExpanded={(item, onClose) => (
-                      <InventoryItemDetailPanel item={item} onClose={onClose} />
+                    renderExpanded={(item) => (
+                      <InventoryItemDetailPanel item={item} />
                     )}
                   />
                 </CardContent>
@@ -762,8 +762,8 @@ export default function OperationsHub() {
                     showSearch
                     expandedRowId={expandedLocationId}
                     onExpandChange={setExpandedLocationId}
-                    renderExpanded={(location, onClose) => (
-                      <LocationDetailPanel location={location} onClose={onClose} />
+                    renderExpanded={(location) => (
+                      <LocationDetailPanel location={location} />
                     )}
                   />
                 </CardContent>
