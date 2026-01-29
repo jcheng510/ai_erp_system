@@ -16,7 +16,7 @@ The Google Drive sync feature allows you to sync existing Google Drive folders t
 
 - **Folder Hierarchy Preservation**: The entire folder structure from Google Drive is maintained in the data room
 
-- **Support for Google Workspace Files**: Google Docs, Sheets, and Presentations are automatically exported to PDF/XLSX formats
+- **Direct Google Drive Access**: Files are linked to their Google Drive locations for viewing
 
 ## How to Use
 
@@ -80,15 +80,16 @@ To update the data room with new files from Google Drive:
 
 1. Go to Settings > Google Drive Sync
 2. Click **Re-sync**
-3. Use the same or different folder ID
-4. New files will be added (existing files are not duplicated)
+3. Use the same folder ID
+4. Only new files and folders will be added (duplicates are detected and skipped)
 
 ## Important Notes
 
-- **One-Way Sync**: Changes in Google Drive are not automatically reflected in the data room. You must manually re-sync to update.
+- **One-Way Sync**: Changes in Google Drive are not automatically reflected in the data room. You must manually re-sync to add new files.
+- **Duplicate Detection**: When re-syncing, existing files and folders are detected by their Google Drive IDs and skipped.
 - **Permissions**: Synced files use the data room's security controls, not Google Drive's permissions
 - **File Limits**: Syncing stops at 5 levels of folder depth to prevent excessive recursion
-- **Google Workspace Files**: Google Docs, Sheets, and Presentations are referenced, not downloaded
+- **Google Workspace Files**: Google Docs, Sheets, and Presentations are linked and can be viewed in Google Drive
 
 ## Supported File Types
 
