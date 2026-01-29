@@ -5,7 +5,7 @@ A modern AI-powered ERP system built with React, Express, and tRPC.
 ## Prerequisites
 
 - Node.js 18+ (recommended: use latest LTS)
-- pnpm 10+ (package manager)
+- pnpm 10.4.1+ (package manager)
 - MySQL database
 
 ## Local Development Setup
@@ -92,7 +92,7 @@ PORT=8080 pnpm run start
 
 This application is configured for easy deployment on Railway:
 
-1. **Build Command**: `pnpm install && pnpm run build`
+1. **Build Command**: `pnpm run build` (Railway automatically runs `pnpm install` first)
 2. **Start Command**: `pnpm run start`
 3. **Environment Variables**: Set all required variables from `.env.example` in Railway dashboard
 
