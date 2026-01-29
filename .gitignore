@@ -1,6 +1,7 @@
 # Dependencies
 **/node_modules
 .pnpm-store/
+package-lock.json
 
 # Build outputs
 dist/
@@ -105,3 +106,6 @@ temp/
 *.db
 *.sqlite
 *.sqlite3
+
+# Package locks (using pnpm)
+package-lock.json
