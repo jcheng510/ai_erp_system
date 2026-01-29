@@ -9127,11 +9127,48 @@ Ask if they received the original request and if they can provide a quote.`;
             }
           }
 
+          // Check email-based permissions
+          const visitorEmail = input.visitorEmail || visitor?.email;
+          let emailPermission = null;
+          if (visitorEmail) {
+            emailPermission = await db.getActiveEmailPermission(input.dataRoomId, visitorEmail);
+            
+            // Check if email is blocked
+            const emailBlock = await db.getActiveEmailBlock(input.dataRoomId, visitorEmail);
+            if (emailBlock) {
+              throw new TRPCError({ code: 'FORBIDDEN', message: `Access blocked: ${emailBlock.reason}` });
+            }
+          }
+
           let folders = await db.getDataRoomFolders(input.dataRoomId, input.folderId);
           let documents = await db.getDataRoomDocuments(input.dataRoomId, input.folderId);
 
-          // Apply per-folder/document permissions if invitation has restrictions
-          if (invitation) {
+          // Apply email-based permissions first (takes precedence)
+          if (emailPermission) {
+            const allowedFolders = emailPermission.allowedFolderIds as number[] | null;
+            const allowedDocs = emailPermission.allowedDocumentIds as number[] | null;
+            const deniedFolders = emailPermission.deniedFolderIds as number[] | null;
+            const deniedDocs = emailPermission.deniedDocumentIds as number[] | null;
+
+            // Filter folders - denied takes precedence
+            if (deniedFolders && deniedFolders.length > 0) {
+              folders = folders.filter(f => !deniedFolders.includes(f.id));
+            }
+            if (allowedFolders && allowedFolders.length > 0) {
+              folders = folders.filter(f => allowedFolders.includes(f.id));
+            }
+
+            // Filter documents - denied takes precedence
+            if (deniedDocs && deniedDocs.length > 0) {
+              documents = documents.filter(d => !deniedDocs.includes(d.id));
+            }
+            if (allowedDocs && allowedDocs.length > 0) {
+              documents = documents.filter(d => allowedDocs.includes(d.id));
+            }
+          }
+
+          // Apply per-folder/document permissions from invitation if no email permission
+          else if (invitation) {
             const allowedFolders = invitation.allowedFolderIds as number[] | null;
             const allowedDocs = invitation.allowedDocumentIds as number[] | null;
             const restrictedFolders = invitation.restrictedFolderIds as number[] | null;
@@ -9155,7 +9192,6 @@ Ask if they received the original request and if they can provide a quote.`;
           }
 
           // Generate watermark data if enabled
-          const visitorEmail = input.visitorEmail || visitor?.email || '';
           let watermarkData = null;
           if (room.watermarkEnabled && visitorEmail) {
             const { generateWatermarkData, generateWatermarkText } = await import('./_core/documentWatermark');
@@ -9207,6 +9243,47 @@ Ask if they received the original request and if they can provide a quote.`;
           downloaded: z.boolean().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
+          // Get visitor info for access logging
+          const visitor = await db.getDataRoomVisitorById(input.visitorId);
+          const document = await db.getDataRoomDocumentById(input.documentId);
+          
+          if (!document) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'Document not found' });
+          }
+
+          // Check email-based permissions if visitor has email
+          if (visitor && visitor.email) {
+            const accessCheck = await db.checkEmailAccess(document.dataRoomId, visitor.email, {
+              documentId: input.documentId,
+              ipAddress: ctx.req.ip || undefined,
+              action: input.downloaded ? 'download' : 'view',
+            });
+
+            // Log the access attempt
+            await db.logAccessAttempt({
+              dataRoomId: document.dataRoomId,
+              documentId: input.documentId,
+              email: visitor.email,
+              visitorId: input.visitorId,
+              attemptType: input.downloaded ? 'download' : 'view',
+              success: accessCheck.hasAccess,
+              denialReason: accessCheck.reason,
+              ipAddress: ctx.req.ip || null,
+              userAgent: ctx.req.headers['user-agent'] || null,
+              permissionId: accessCheck.permission?.id,
+            });
+
+            // If access denied, throw error
+            if (!accessCheck.hasAccess) {
+              throw new TRPCError({ code: 'FORBIDDEN', message: accessCheck.reason || 'Access denied' });
+            }
+
+            // Update download count for email permission if downloaded
+            if (input.downloaded && accessCheck.permission) {
+              await db.incrementDownloadCount(accessCheck.permission.id);
+            }
+          }
+
           const { id } = await db.createDocumentView({
             documentId: input.documentId,
             visitorId: input.visitorId,

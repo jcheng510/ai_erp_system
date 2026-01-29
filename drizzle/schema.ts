@@ -1,4 +1,4 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, decimal, boolean, json, bigint } from "drizzle-orm/mysql-core";
+import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, decimal, boolean, json, bigint, index } from "drizzle-orm/mysql-core";
 import { relations } from "drizzle-orm";
 
 // ============================================
@@ -2433,6 +2433,127 @@ export const dataRoomInvitations = mysqlTable("data_room_invitations", {
 
 export type DataRoomInvitation = typeof dataRoomInvitations.$inferSelect;
 export type InsertDataRoomInvitation = typeof dataRoomInvitations.$inferInsert;
+
+// Data Room Email Permissions - granular email-based access control
+export const dataRoomEmailPermissions = mysqlTable("data_room_email_permissions", {
+  id: int("id").autoincrement().primaryKey(),
+  dataRoomId: int("dataRoomId").notNull(),
+  email: varchar("email", { length: 320 }).notNull(),
+  
+  // Permissions level
+  permission: mysqlEnum("permission", ["view", "download", "upload", "manage"]).default("view").notNull(),
+  
+  // Granular access control - null means access to all
+  allowedFolderIds: json("allowedFolderIds"), // Array of folder IDs this email can access (null = all)
+  allowedDocumentIds: json("allowedDocumentIds"), // Array of document IDs this email can access (null = all)
+  deniedFolderIds: json("deniedFolderIds"), // Explicitly blocked folders (takes precedence)
+  deniedDocumentIds: json("deniedDocumentIds"), // Explicitly blocked documents (takes precedence)
+  
+  // Time-based restrictions
+  validFrom: timestamp("validFrom"),
+  validUntil: timestamp("validUntil"),
+  
+  // IP restrictions
+  allowedIpAddresses: json("allowedIpAddresses"), // Array of allowed IP addresses/CIDR ranges
+  deniedIpAddresses: json("deniedIpAddresses"), // Array of denied IP addresses/CIDR ranges
+  
+  // Additional restrictions
+  maxDownloads: int("maxDownloads"), // Max number of downloads allowed (null = unlimited)
+  downloadCount: int("downloadCount").default(0).notNull(),
+  requireMfa: boolean("requireMfa").default(false).notNull(), // Require multi-factor authentication
+  
+  // Status
+  isActive: boolean("isActive").default(true).notNull(),
+  notes: text("notes"),
+  
+  createdBy: int("createdBy").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  emailDataRoomIdx: index("email_dataroom_idx").on(table.email, table.dataRoomId),
+}));
+
+export type DataRoomEmailPermission = typeof dataRoomEmailPermissions.$inferSelect;
+export type InsertDataRoomEmailPermission = typeof dataRoomEmailPermissions.$inferInsert;
+
+// Data Room Access Attempts - detailed logging of all access attempts
+export const dataRoomAccessAttempts = mysqlTable("data_room_access_attempts", {
+  id: int("id").autoincrement().primaryKey(),
+  dataRoomId: int("dataRoomId").notNull(),
+  documentId: int("documentId"), // null for folder or data room access
+  folderId: int("folderId"), // null for document or data room access
+  
+  email: varchar("email", { length: 320 }),
+  visitorId: int("visitorId"),
+  
+  // Attempt details
+  attemptType: mysqlEnum("attemptType", ["view", "download", "upload", "delete", "share"]).notNull(),
+  success: boolean("success").notNull(),
+  denialReason: varchar("denialReason", { length: 255 }), // Reason for access denial
+  
+  // Request details
+  ipAddress: varchar("ipAddress", { length: 45 }),
+  userAgent: text("userAgent"),
+  referrer: varchar("referrer", { length: 512 }),
+  
+  // Permission check details
+  permissionId: int("permissionId"), // Reference to the permission that allowed/denied access
+  
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (table) => ({
+  emailIdx: index("email_idx").on(table.email),
+  dataRoomIdx: index("dataroom_idx").on(table.dataRoomId),
+  createdAtIdx: index("created_at_idx").on(table.createdAt),
+}));
+
+export type DataRoomAccessAttempt = typeof dataRoomAccessAttempts.$inferSelect;
+export type InsertDataRoomAccessAttempt = typeof dataRoomAccessAttempts.$inferInsert;
+
+// Data Room Email Blocks - block specific emails from accessing data room
+export const dataRoomEmailBlocks = mysqlTable("data_room_email_blocks", {
+  id: int("id").autoincrement().primaryKey(),
+  dataRoomId: int("dataRoomId").notNull(),
+  email: varchar("email", { length: 320 }).notNull(),
+  
+  // Block details
+  reason: text("reason").notNull(),
+  blockedBy: int("blockedBy").notNull(),
+  
+  // Auto-unblock settings
+  autoUnblockAt: timestamp("autoUnblockAt"),
+  
+  isActive: boolean("isActive").default(true).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  emailDataRoomIdx: index("email_dataroom_block_idx").on(table.email, table.dataRoomId),
+}));
+
+export type DataRoomEmailBlock = typeof dataRoomEmailBlocks.$inferSelect;
+export type InsertDataRoomEmailBlock = typeof dataRoomEmailBlocks.$inferInsert;
+
+// Data Room Permission Audit Log - track all permission changes
+export const dataRoomPermissionAuditLog = mysqlTable("data_room_permission_audit_log", {
+  id: int("id").autoincrement().primaryKey(),
+  dataRoomId: int("dataRoomId").notNull(),
+  email: varchar("email", { length: 320 }).notNull(),
+  
+  // Change details
+  action: mysqlEnum("action", ["granted", "revoked", "modified", "blocked", "unblocked"]).notNull(),
+  changeDetails: json("changeDetails"), // Detailed change information
+  
+  // Who made the change
+  changedBy: int("changedBy").notNull(),
+  
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (table) => ({
+  dataRoomIdx: index("dataroom_audit_idx").on(table.dataRoomId),
+  emailIdx: index("email_audit_idx").on(table.email),
+  createdAtIdx: index("created_at_audit_idx").on(table.createdAt),
+}));
+
+export type DataRoomPermissionAuditLog = typeof dataRoomPermissionAuditLog.$inferSelect;
+export type InsertDataRoomPermissionAuditLog = typeof dataRoomPermissionAuditLog.$inferInsert;
 
 // ============================================
 // EMAIL IMAP CREDENTIALS

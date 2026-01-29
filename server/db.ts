@@ -38,6 +38,7 @@ import {
   inboundEmails, emailAttachments, parsedDocuments, parsedDocumentLineItems, autoReplyRules, sentEmails,
   // Data room
   dataRooms, dataRoomFolders, dataRoomDocuments, dataRoomLinks, dataRoomVisitors, documentViews, dataRoomInvitations,
+  dataRoomEmailPermissions, dataRoomAccessAttempts, dataRoomEmailBlocks, dataRoomPermissionAuditLog,
   // NDA e-signatures
   ndaDocuments, ndaSignatures, ndaSignatureAuditLog,
   // IMAP credentials
@@ -75,6 +76,7 @@ import {
   InsertInboundEmail, InsertEmailAttachment, InsertParsedDocument, InsertParsedDocumentLineItem,
   // Data room types
   InsertDataRoom, InsertDataRoomFolder, InsertDataRoomDocument, InsertDataRoomLink, InsertDataRoomVisitor, InsertDocumentView, InsertDataRoomInvitation,
+  InsertDataRoomEmailPermission, InsertDataRoomAccessAttempt, InsertDataRoomEmailBlock, InsertDataRoomPermissionAuditLog,
   // NDA types
   InsertNdaDocument, InsertNdaSignature, InsertNdaSignatureAuditLog,
   InsertImapCredential,
@@ -102,6 +104,15 @@ export async function getDb() {
     }
   }
   return _db;
+}
+
+// ============================================
+// UTILITY FUNCTIONS
+// ============================================
+
+// Normalize email for consistent storage and comparison
+export function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
 }
 
 // ============================================
@@ -5268,7 +5279,7 @@ export async function getVisitorByEmail(dataRoomId: number, email: string) {
   const db = await getDb();
   if (!db) return null;
   const result = await db.select().from(dataRoomVisitors)
-    .where(and(eq(dataRoomVisitors.dataRoomId, dataRoomId), eq(dataRoomVisitors.email, email)))
+    .where(and(eq(dataRoomVisitors.dataRoomId, dataRoomId), eq(dataRoomVisitors.email, normalizeEmail(email))))
     .limit(1);
   return result[0] || null;
 }
@@ -5334,10 +5345,372 @@ export async function getInvitationByCode(inviteCode: string) {
   return result[0] || null;
 }
 
+export async function getDataRoomInvitationByEmail(dataRoomId: number, email: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(dataRoomInvitations)
+    .where(and(
+      eq(dataRoomInvitations.dataRoomId, dataRoomId),
+      eq(dataRoomInvitations.email, normalizeEmail(email))
+    ))
+    .orderBy(desc(dataRoomInvitations.createdAt))
+    .limit(1);
+  return result[0] || null;
+}
+
 export async function updateDataRoomInvitation(id: number, data: Partial<InsertDataRoomInvitation>) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.update(dataRoomInvitations).set(data).where(eq(dataRoomInvitations.id, id));
+}
+
+export async function updateDataRoomInvitationPermissions(id: number, data: {
+  allowedFolderIds?: number[] | null;
+  allowedDocumentIds?: number[] | null;
+  restrictedFolderIds?: number[] | null;
+  restrictedDocumentIds?: number[] | null;
+  allowDownload?: boolean;
+  allowPrint?: boolean;
+  role?: 'viewer' | 'editor' | 'admin';
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(dataRoomInvitations).set(data).where(eq(dataRoomInvitations.id, id));
+}
+
+// ============================================
+// DATA ROOM EMAIL PERMISSIONS
+// ============================================
+
+export async function createDataRoomEmailPermission(data: InsertDataRoomEmailPermission) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(dataRoomEmailPermissions).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getDataRoomEmailPermissions(dataRoomId: number, email?: string) {
+  const db = await getDb();
+  if (!db) return [];
+  
+  if (email) {
+    return db.select().from(dataRoomEmailPermissions)
+      .where(and(
+        eq(dataRoomEmailPermissions.dataRoomId, dataRoomId),
+        eq(dataRoomEmailPermissions.email, email)
+      ))
+      .orderBy(desc(dataRoomEmailPermissions.createdAt));
+  }
+  
+  return db.select().from(dataRoomEmailPermissions)
+    .where(eq(dataRoomEmailPermissions.dataRoomId, dataRoomId))
+    .orderBy(desc(dataRoomEmailPermissions.createdAt));
+}
+
+export async function getDataRoomEmailPermissionById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(dataRoomEmailPermissions)
+    .where(eq(dataRoomEmailPermissions.id, id))
+    .limit(1);
+  return result[0] || null;
+}
+
+export async function getActiveEmailPermission(dataRoomId: number, email: string) {
+  const db = await getDb();
+  if (!db) return null;
+  
+  const now = new Date();
+  const result = await db.select().from(dataRoomEmailPermissions)
+    .where(and(
+      eq(dataRoomEmailPermissions.dataRoomId, dataRoomId),
+      eq(dataRoomEmailPermissions.email, email),
+      eq(dataRoomEmailPermissions.isActive, true),
+      or(
+        isNull(dataRoomEmailPermissions.validFrom),
+        lte(dataRoomEmailPermissions.validFrom, now)
+      ),
+      or(
+        isNull(dataRoomEmailPermissions.validUntil),
+        gte(dataRoomEmailPermissions.validUntil, now)
+      )
+    ))
+    .orderBy(desc(dataRoomEmailPermissions.createdAt))
+    .limit(1);
+  
+  return result[0] || null;
+}
+
+export async function updateDataRoomEmailPermission(id: number, data: Partial<InsertDataRoomEmailPermission>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(dataRoomEmailPermissions).set(data).where(eq(dataRoomEmailPermissions.id, id));
+}
+
+export async function deleteDataRoomEmailPermission(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(dataRoomEmailPermissions).where(eq(dataRoomEmailPermissions.id, id));
+}
+
+// Atomically increment download count for a permission
+export async function incrementDownloadCount(permissionId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  // Use SQL expression to increment atomically
+  await db.update(dataRoomEmailPermissions)
+    .set({ downloadCount: sql`${dataRoomEmailPermissions.downloadCount} + 1` })
+    .where(eq(dataRoomEmailPermissions.id, permissionId));
+}
+
+// Check if email has access to a specific document or folder
+export async function checkEmailAccess(
+  dataRoomId: number,
+  email: string,
+  options: {
+    documentId?: number;
+    folderId?: number;
+    ipAddress?: string;
+    action?: 'view' | 'download' | 'upload' | 'manage';
+  }
+): Promise<{ hasAccess: boolean; reason?: string; permission?: any }> {
+  const db = await getDb();
+  if (!db) return { hasAccess: false, reason: "Database not available" };
+  
+  // Check if email is blocked
+  const block = await getActiveEmailBlock(dataRoomId, email);
+  if (block) {
+    return { hasAccess: false, reason: `Access blocked: ${block.reason}` };
+  }
+  
+  // Get active permission
+  const permission = await getActiveEmailPermission(dataRoomId, email);
+  if (!permission) {
+    return { hasAccess: false, reason: "No permission found for this email" };
+  }
+  
+  // Check IP restrictions
+  if (options.ipAddress) {
+    if (permission.deniedIpAddresses && Array.isArray(permission.deniedIpAddresses)) {
+      if (permission.deniedIpAddresses.includes(options.ipAddress)) {
+        return { hasAccess: false, reason: "IP address is blocked", permission };
+      }
+    }
+    if (permission.allowedIpAddresses && Array.isArray(permission.allowedIpAddresses)) {
+      if (permission.allowedIpAddresses.length > 0 && !permission.allowedIpAddresses.includes(options.ipAddress)) {
+        return { hasAccess: false, reason: "IP address not in allowed list", permission };
+      }
+    }
+  }
+  
+  // Check action permission
+  if (options.action) {
+    const permLevel = permission.permission;
+    if (options.action === 'manage' && permLevel !== 'manage') {
+      return { hasAccess: false, reason: "Insufficient permissions for management", permission };
+    }
+    if (options.action === 'upload' && !['upload', 'manage'].includes(permLevel)) {
+      return { hasAccess: false, reason: "Insufficient permissions for upload", permission };
+    }
+    if (options.action === 'download') {
+      if (!['download', 'upload', 'manage'].includes(permLevel)) {
+        return { hasAccess: false, reason: "Insufficient permissions for download", permission };
+      }
+      // Check download limit
+      if (permission.maxDownloads && (permission.downloadCount || 0) >= permission.maxDownloads) {
+        return { hasAccess: false, reason: "Download limit reached", permission };
+      }
+    }
+  }
+  
+  // Check document/folder access
+  if (options.documentId) {
+    // Check if document is explicitly denied
+    if (permission.deniedDocumentIds && Array.isArray(permission.deniedDocumentIds)) {
+      if (permission.deniedDocumentIds.includes(options.documentId)) {
+        return { hasAccess: false, reason: "Document access denied", permission };
+      }
+    }
+    // Check if document is in allowed list (if list exists)
+    if (permission.allowedDocumentIds && Array.isArray(permission.allowedDocumentIds)) {
+      if (permission.allowedDocumentIds.length > 0 && !permission.allowedDocumentIds.includes(options.documentId)) {
+        return { hasAccess: false, reason: "Document not in allowed list", permission };
+      }
+    }
+  }
+  
+  if (options.folderId) {
+    // Check if folder is explicitly denied
+    if (permission.deniedFolderIds && Array.isArray(permission.deniedFolderIds)) {
+      if (permission.deniedFolderIds.includes(options.folderId)) {
+        return { hasAccess: false, reason: "Folder access denied", permission };
+      }
+    }
+    // Check if folder is in allowed list (if list exists)
+    if (permission.allowedFolderIds && Array.isArray(permission.allowedFolderIds)) {
+      if (permission.allowedFolderIds.length > 0 && !permission.allowedFolderIds.includes(options.folderId)) {
+        return { hasAccess: false, reason: "Folder not in allowed list", permission };
+      }
+    }
+  }
+  
+  return { hasAccess: true, permission };
+}
+
+// ============================================
+// DATA ROOM ACCESS ATTEMPTS
+// ============================================
+
+export async function logAccessAttempt(data: InsertDataRoomAccessAttempt) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(dataRoomAccessAttempts).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getAccessAttempts(dataRoomId: number, filters?: {
+  email?: string;
+  success?: boolean;
+  startDate?: Date;
+  endDate?: Date;
+  limit?: number;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+  
+  const conditions = [eq(dataRoomAccessAttempts.dataRoomId, dataRoomId)];
+  
+  if (filters?.email) {
+    conditions.push(eq(dataRoomAccessAttempts.email, filters.email));
+  }
+  if (filters?.success !== undefined) {
+    conditions.push(eq(dataRoomAccessAttempts.success, filters.success));
+  }
+  if (filters?.startDate) {
+    conditions.push(gte(dataRoomAccessAttempts.createdAt, filters.startDate));
+  }
+  if (filters?.endDate) {
+    conditions.push(lte(dataRoomAccessAttempts.createdAt, filters.endDate));
+  }
+  
+  let query = db.select().from(dataRoomAccessAttempts)
+    .where(and(...conditions))
+    .orderBy(desc(dataRoomAccessAttempts.createdAt));
+  
+  if (filters?.limit) {
+    return query.limit(filters.limit);
+  }
+  
+  return query;
+}
+
+// ============================================
+// DATA ROOM EMAIL BLOCKS
+// ============================================
+
+export async function createEmailBlock(data: InsertDataRoomEmailBlock) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(dataRoomEmailBlocks).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getEmailBlocks(dataRoomId: number, email?: string) {
+  const db = await getDb();
+  if (!db) return [];
+  
+  if (email) {
+    return db.select().from(dataRoomEmailBlocks)
+      .where(and(
+        eq(dataRoomEmailBlocks.dataRoomId, dataRoomId),
+        eq(dataRoomEmailBlocks.email, email)
+      ))
+      .orderBy(desc(dataRoomEmailBlocks.createdAt));
+  }
+  
+  return db.select().from(dataRoomEmailBlocks)
+    .where(eq(dataRoomEmailBlocks.dataRoomId, dataRoomId))
+    .orderBy(desc(dataRoomEmailBlocks.createdAt));
+}
+
+export async function getEmailBlockById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(dataRoomEmailBlocks)
+    .where(eq(dataRoomEmailBlocks.id, id))
+    .limit(1);
+  return result[0] || null;
+}
+
+export async function getActiveEmailBlock(dataRoomId: number, email: string) {
+  const db = await getDb();
+  if (!db) return null;
+  
+  const now = new Date();
+  const result = await db.select().from(dataRoomEmailBlocks)
+    .where(and(
+      eq(dataRoomEmailBlocks.dataRoomId, dataRoomId),
+      eq(dataRoomEmailBlocks.email, email),
+      eq(dataRoomEmailBlocks.isActive, true),
+      or(
+        isNull(dataRoomEmailBlocks.autoUnblockAt),
+        gte(dataRoomEmailBlocks.autoUnblockAt, now)
+      )
+    ))
+    .orderBy(desc(dataRoomEmailBlocks.createdAt))
+    .limit(1);
+  
+  return result[0] || null;
+}
+
+export async function unblockEmail(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(dataRoomEmailBlocks).set({ isActive: false }).where(eq(dataRoomEmailBlocks.id, id));
+}
+
+// ============================================
+// DATA ROOM PERMISSION AUDIT LOG
+// ============================================
+
+export async function logPermissionChange(data: InsertDataRoomPermissionAuditLog) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(dataRoomPermissionAuditLog).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getPermissionAuditLog(dataRoomId: number, filters?: {
+  email?: string;
+  startDate?: Date;
+  endDate?: Date;
+  limit?: number;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+  
+  const conditions = [eq(dataRoomPermissionAuditLog.dataRoomId, dataRoomId)];
+  
+  if (filters?.email) {
+    conditions.push(eq(dataRoomPermissionAuditLog.email, filters.email));
+  }
+  if (filters?.startDate) {
+    conditions.push(gte(dataRoomPermissionAuditLog.createdAt, filters.startDate));
+  }
+  if (filters?.endDate) {
+    conditions.push(lte(dataRoomPermissionAuditLog.createdAt, filters.endDate));
+  }
+  
+  let query = db.select().from(dataRoomPermissionAuditLog)
+    .where(and(...conditions))
+    .orderBy(desc(dataRoomPermissionAuditLog.createdAt));
+  
+  if (filters?.limit) {
+    return query.limit(filters.limit);
+  }
+  
+  return query;
 }
 
 // ============================================
@@ -5906,18 +6279,6 @@ export async function getDataRoomVisitorById(id: number) {
   return visitor || null;
 }
 
-// Get invitation by email for a data room
-export async function getDataRoomInvitationByEmail(dataRoomId: number, email: string) {
-  const db = await getDb();
-  if (!db) return null;
-  const [invitation] = await db.select().from(dataRoomInvitations)
-    .where(and(
-      eq(dataRoomInvitations.dataRoomId, dataRoomId),
-      eq(dataRoomInvitations.email, email.toLowerCase())
-    ));
-  return invitation || null;
-}
-
 // Block a visitor
 export async function blockDataRoomVisitor(id: number, reason?: string) {
   const db = await getDb();
@@ -5960,21 +6321,6 @@ export async function restoreDataRoomVisitorAccess(id: number) {
     revokedAt: null,
     revokedReason: null,
   }).where(eq(dataRoomVisitors.id, id));
-}
-
-// Update invitation permissions
-export async function updateDataRoomInvitationPermissions(id: number, data: {
-  allowedFolderIds?: number[] | null;
-  allowedDocumentIds?: number[] | null;
-  restrictedFolderIds?: number[] | null;
-  restrictedDocumentIds?: number[] | null;
-  allowDownload?: boolean;
-  allowPrint?: boolean;
-  role?: 'viewer' | 'editor' | 'admin';
-}) {
-  const db = await getDb();
-  if (!db) return;
-  await db.update(dataRoomInvitations).set(data).where(eq(dataRoomInvitations.id, id));
 }
 
 // Link visitor to their NDA signature
