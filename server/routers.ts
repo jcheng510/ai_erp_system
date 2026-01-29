@@ -127,8 +127,10 @@ async function getValidGoogleToken(userId: number): Promise<{ accessToken: strin
     
     if (refreshed.accessToken && refreshed.expiresAt) {
       // Update database with new token
-      await db.updateGoogleOAuthToken(userId, {
+      await db.upsertGoogleOAuthToken({
+        userId,
         accessToken: refreshed.accessToken,
+        refreshToken: token.refreshToken,
         expiresAt: refreshed.expiresAt,
       });
       return { accessToken: refreshed.accessToken };
@@ -3121,7 +3123,7 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
           
           await db.updateAiAgentTask(input.id, {
             taskData: input.taskData,
-            aiReasoning: input.aiReasoning || task.aiReasoning,
+            aiReasoning: input.aiReasoning || task.aiReasoning || undefined,
           });
           
           await db.createAiAgentLog({

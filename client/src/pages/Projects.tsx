@@ -591,17 +591,18 @@ export default function Projects() {
                 enableInlineCreate
                 inlineCreatePlaceholder="Click to add a new task..."
                 onInlineCreate={(rowData) => {
-                  if (!rowData.title) {
+                  const name = (rowData as any).name || (rowData as any).title;
+                  if (!name) {
                     toast.error("Title is required");
                     return;
                   }
                   createTask.mutate({
-                    name: rowData.title as string,
-                    description: rowData.description as string || undefined,
-                    projectId: rowData.projectId ? parseInt(rowData.projectId as string) : 0,
-                    priority: (rowData.priority as any) || "medium",
-                    dueDate: rowData.dueDate ? new Date(rowData.dueDate as string) : undefined,
-                    assigneeId: rowData.assigneeId ? parseInt(rowData.assigneeId as string) : undefined,
+                    name: name as string,
+                    description: (rowData as any).description as string || undefined,
+                    projectId: (rowData as any).projectId ? parseInt(String((rowData as any).projectId)) : 0,
+                    priority: ((rowData as any).priority as any) || "medium",
+                    dueDate: (rowData as any).dueDate ? new Date(String((rowData as any).dueDate)) : undefined,
+                    assigneeId: (rowData as any).assigneeId ? parseInt(String((rowData as any).assigneeId)) : undefined,
                   });
                 }}
                 compact
