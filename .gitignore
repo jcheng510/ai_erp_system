@@ -106,6 +106,3 @@ temp/
 *.db
 *.sqlite
 *.sqlite3
-
-# Package locks (using pnpm)
-package-lock.json
