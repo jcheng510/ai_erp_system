@@ -9488,6 +9488,7 @@ Ask if they received the original request and if they can provide a quote.`;
         return {
           folders: data.files || [],
           nextPageToken: data.nextPageToken,
+          notConnected: false,
         };
       }),
 
@@ -9562,6 +9563,7 @@ Ask if they received the original request and if they can provide a quote.`;
         return {
           files: data.files || [],
           nextPageToken: data.nextPageToken,
+          notConnected: false,
         };
       }),
 
