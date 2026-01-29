@@ -27,6 +27,7 @@ import {
   Plus,
   ArrowUpDown,
   X,
+  CheckCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -80,6 +81,10 @@ export interface SpreadsheetTableProps<T extends { id: number | string }> {
   // Bulk actions
   bulkActions?: BulkAction[];
   onBulkAction?: (action: string, selectedIds: Set<number | string>) => void;
+  // Inline row creation
+  enableInlineCreate?: boolean;
+  onInlineCreate?: (rowData: Partial<T>) => void | Promise<void>;
+  inlineCreatePlaceholder?: string;
 }
 
 function formatCurrency(value: number | string | null | undefined): string {
@@ -127,6 +132,9 @@ export function SpreadsheetTable<T extends { id: number | string }>({
   onExpandChange,
   bulkActions = [],
   onBulkAction,
+  enableInlineCreate = false,
+  onInlineCreate,
+  inlineCreatePlaceholder = "Click to add...",
 }: SpreadsheetTableProps<T>) {
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<string | null>(null);
@@ -135,6 +143,8 @@ export function SpreadsheetTable<T extends { id: number | string }>({
   const [editingCell, setEditingCell] = useState<{ rowId: number | string; key: string } | null>(null);
   const [editValue, setEditValue] = useState("");
   const [internalExpandedId, setInternalExpandedId] = useState<number | string | null>(null);
+  const [isCreatingNewRow, setIsCreatingNewRow] = useState(false);
+  const [newRowData, setNewRowData] = useState<Record<string, any>>({});
 
   // Use controlled or internal expanded state
   const expandedId = controlledExpandedId !== undefined ? controlledExpandedId : internalExpandedId;
@@ -209,6 +219,40 @@ export function SpreadsheetTable<T extends { id: number | string }>({
       commitEdit();
     } else if (e.key === "Escape") {
       cancelEdit();
+    }
+  };
+
+  const startNewRow = () => {
+    setIsCreatingNewRow(true);
+    setNewRowData({});
+  };
+
+  const cancelNewRow = () => {
+    setIsCreatingNewRow(false);
+    setNewRowData({});
+  };
+
+  const updateNewRowField = (key: string, value: any) => {
+    setNewRowData((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const commitNewRow = async () => {
+    if (!onInlineCreate) return;
+    
+    // Check if at least one field is filled
+    const hasData = Object.values(newRowData).some((v) => v !== "" && v !== null && v !== undefined);
+    if (!hasData) {
+      cancelNewRow();
+      return;
+    }
+
+    try {
+      await onInlineCreate(newRowData as Partial<T>);
+      setIsCreatingNewRow(false);
+      setNewRowData({});
+    } catch (error) {
+      // Error handling is left to the parent component
+      console.error("Failed to create row:", error);
     }
   };
 
@@ -364,6 +408,43 @@ export function SpreadsheetTable<T extends { id: number | string }>({
         }
         return <span>{col.format ? col.format(value) : value?.toString() || "-"}</span>;
     }
+  };
+
+  const renderNewRowCell = (col: Column<T>) => {
+    const value = newRowData[col.key as string] || "";
+
+    // Skip rendering for non-editable columns
+    if (col.type === "actions" || col.type === "checkbox") {
+      return null;
+    }
+
+    if (col.type === "status" && col.options) {
+      return (
+        <Select 
+          value={value} 
+          onValueChange={(v) => updateNewRowField(col.key as string, v)}
+        >
+          <SelectTrigger className="h-7 text-xs">
+            <SelectValue placeholder={inlineCreatePlaceholder} />
+          </SelectTrigger>
+          <SelectContent>
+            {col.options.map((opt) => (
+              <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      );
+    }
+
+    return (
+      <Input
+        value={value}
+        onChange={(e) => updateNewRowField(col.key as string, e.target.value)}
+        placeholder={inlineCreatePlaceholder}
+        className="h-7 text-xs"
+        type={col.type === "number" || col.type === "currency" ? "number" : "text"}
+      />
+    );
   };
 
   const cellPadding = compact ? "px-2 py-1" : "px-3 py-2";
@@ -587,6 +668,63 @@ export function SpreadsheetTable<T extends { id: number | string }>({
                   )}
                 </React.Fragment>
               ))
+            )}
+            {/* Inline Create Row */}
+            {enableInlineCreate && onInlineCreate && !isLoading && (
+              isCreatingNewRow ? (
+                <tr className="border-b bg-primary/5">
+                  {expandable && <td className={cn(cellPadding, "w-8")} />}
+                  {onSelectionChange && <td className={cn(cellPadding, "w-10")} />}
+                  {columns.map((col) => (
+                    <td
+                      key={col.key as string}
+                      className={cn(
+                        cellPadding,
+                        fontSize,
+                        col.type === "currency" && "text-right font-mono",
+                        col.type === "actions" && "w-10"
+                      )}
+                    >
+                      {col.type === "actions" ? (
+                        <div className="flex gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={commitNewRow}
+                            className="h-7 w-7 p-0 text-green-600 hover:text-green-700"
+                          >
+                            <CheckCircle className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={cancelNewRow}
+                            className="h-7 w-7 p-0 text-red-600 hover:text-red-700"
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      ) : (
+                        renderNewRowCell(col)
+                      )}
+                    </td>
+                  ))}
+                </tr>
+              ) : (
+                <tr className="border-b hover:bg-muted/30 cursor-pointer" onClick={startNewRow}>
+                  {expandable && <td className={cn(cellPadding, "w-8")} />}
+                  {onSelectionChange && <td className={cn(cellPadding, "w-10")} />}
+                  <td
+                    colSpan={columns.length}
+                    className={cn(cellPadding, fontSize, "text-muted-foreground italic text-center")}
+                  >
+                    <div className="flex items-center justify-center gap-2">
+                      <Plus className="h-4 w-4" />
+                      <span>{inlineCreatePlaceholder}</span>
+                    </div>
+                  </td>
+                </tr>
+              )
             )}
           </tbody>
         </table>
