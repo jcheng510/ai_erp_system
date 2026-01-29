@@ -23,6 +23,9 @@ import Transactions from "./pages/finance/Transactions";
 import Orders from "./pages/sales/Orders";
 import Customers from "./pages/sales/Customers";
 import SalesHub from "./pages/sales/SalesHub";
+import CRMDashboard from "./pages/sales/CRMDashboard";
+import CRMInvestors from "./pages/sales/CRMInvestors";
+import FundraisingCampaigns from "./pages/sales/FundraisingCampaigns";
 
 // Operations
 import Products from "./pages/operations/Products";
@@ -117,6 +120,9 @@ function Router() {
         <Route path="/sales/orders" component={Orders} />
         <Route path="/sales/customers" component={Customers} />
         <Route path="/sales/hub" component={SalesHub} />
+        <Route path="/crm" component={CRMDashboard} />
+        <Route path="/crm/investors" component={CRMInvestors} />
+        <Route path="/crm/campaigns" component={FundraisingCampaigns} />
 
         {/* Operations */}
         <Route path="/operations/products" component={Products} />
