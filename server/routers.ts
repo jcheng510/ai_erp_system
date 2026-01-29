@@ -2041,6 +2041,10 @@ export const appRouter = router({
       const googleToken = await db.getGoogleOAuthToken(ctx.user.id);
       const googleConnected = googleToken && (!googleToken.expiresAt || new Date(googleToken.expiresAt) > new Date());
       
+      // Check QuickBooks OAuth connection
+      const quickbooksToken = await db.getQuickBooksOAuthToken(ctx.user.id);
+      const quickbooksConnected = quickbooksToken && (!quickbooksToken.expiresAt || new Date(quickbooksToken.expiresAt) > new Date());
+      
       return {
         sendgrid: {
           configured: sendgridConfigured,
@@ -2068,8 +2072,9 @@ export const appRouter = router({
           email: googleToken?.googleEmail,
         },
         quickbooks: {
-          configured: false,
-          status: 'not_configured',
+          configured: quickbooksConnected,
+          status: quickbooksConnected ? 'connected' : 'not_configured',
+          realmId: quickbooksToken?.realmId,
         },
         syncHistory,
       };

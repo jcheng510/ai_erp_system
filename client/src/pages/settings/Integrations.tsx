@@ -213,6 +213,7 @@ export default function IntegrationsPage() {
             <TabsTrigger value="email">Email (SendGrid)</TabsTrigger>
             <TabsTrigger value="gmail">Gmail</TabsTrigger>
             <TabsTrigger value="workspace">Google Workspace</TabsTrigger>
+            <TabsTrigger value="quickbooks">QuickBooks</TabsTrigger>
             <TabsTrigger value="history">Sync History</TabsTrigger>
           </TabsList>
 
@@ -417,11 +418,20 @@ export default function IntegrationsPage() {
                 </CardHeader>
                 <CardContent>
                   <p className="text-sm text-muted-foreground mb-4">
-                    Connect QuickBooks for automatic financial sync.
+                    {status?.quickbooks?.configured 
+                      ? `Connected to QuickBooks company ${status.quickbooks.realmId}. Sync financial data automatically.`
+                      : "Connect QuickBooks for automatic financial sync. Add QUICKBOOKS_CLIENT_ID and QUICKBOOKS_CLIENT_SECRET in Settings → Secrets."}
                   </p>
-                  <Button variant="outline" size="sm" disabled>
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    onClick={() => {
+                      const tab = document.querySelector('[data-value="quickbooks"]');
+                      if (tab) (tab as HTMLElement).click();
+                    }}
+                  >
                     <Settings className="w-4 h-4 mr-2" />
-                    Coming Soon
+                    Configure
                   </Button>
                 </CardContent>
               </Card>
@@ -910,6 +920,140 @@ export default function IntegrationsPage() {
                           </p>
                         </div>
                         <Button variant="outline" size="sm">
+                          Disconnect
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* QuickBooks Tab */}
+          <TabsContent value="quickbooks" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>QuickBooks Integration</CardTitle>
+                <CardDescription>
+                  Connect QuickBooks for automatic financial data synchronization
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="flex items-center gap-4 p-4 bg-muted/50 rounded-lg">
+                  <div className={`p-3 rounded-full ${status?.quickbooks?.configured ? 'bg-green-500/10' : 'bg-yellow-500/10'}`}>
+                    {status?.quickbooks?.configured ? (
+                      <CheckCircle2 className="w-6 h-6 text-green-500" />
+                    ) : (
+                      <AlertCircle className="w-6 h-6 text-yellow-500" />
+                    )}
+                  </div>
+                  <div>
+                    <h4 className="font-medium">
+                      {status?.quickbooks?.configured ? 'QuickBooks Connected' : 'QuickBooks Not Connected'}
+                    </h4>
+                    <p className="text-sm text-muted-foreground">
+                      {status?.quickbooks?.configured 
+                        ? `Connected to company ${status.quickbooks.realmId}`
+                        : 'Connect your QuickBooks account to sync financial data'}
+                    </p>
+                  </div>
+                </div>
+
+                {!status?.quickbooks?.configured ? (
+                  <div className="space-y-4">
+                    <div className="p-4 border rounded-lg">
+                      <h4 className="font-medium mb-2">Connect QuickBooks</h4>
+                      <p className="text-sm text-muted-foreground mb-4">
+                        To enable QuickBooks integration, add the following environment variables in Settings → Secrets:
+                      </p>
+                      <ul className="text-sm text-muted-foreground space-y-2 mb-4 list-disc list-inside">
+                        <li><code className="bg-muted px-2 py-1 rounded">QUICKBOOKS_CLIENT_ID</code> - Your QuickBooks app client ID</li>
+                        <li><code className="bg-muted px-2 py-1 rounded">QUICKBOOKS_CLIENT_SECRET</code> - Your QuickBooks app client secret</li>
+                        <li><code className="bg-muted px-2 py-1 rounded">QUICKBOOKS_REDIRECT_URI</code> - OAuth callback URL (optional)</li>
+                        <li><code className="bg-muted px-2 py-1 rounded">QUICKBOOKS_ENVIRONMENT</code> - sandbox or production (optional, defaults to sandbox)</li>
+                      </ul>
+                      <Button
+                        onClick={async () => {
+                          try {
+                            const result = await getQuickBooksAuthUrlMutation.refetch();
+                            if (result.data?.error) {
+                              toast.error(result.data.error);
+                            } else if (result.data?.url) {
+                              window.location.href = result.data.url;
+                            }
+                          } catch (error: any) {
+                            toast.error(error.message || 'Failed to get QuickBooks auth URL');
+                          }
+                        }}
+                      >
+                        <Calculator className="w-4 h-4 mr-2" />
+                        Connect QuickBooks
+                      </Button>
+                    </div>
+
+                    <div className="p-4 bg-blue-500/5 border border-blue-500/20 rounded-lg">
+                      <h4 className="font-medium text-blue-600 dark:text-blue-400 mb-2">
+                        What you can do with QuickBooks:
+                      </h4>
+                      <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
+                        <li>Sync customers and vendors automatically</li>
+                        <li>Create and manage invoices</li>
+                        <li>Track payments and transactions</li>
+                        <li>Sync chart of accounts</li>
+                        <li>Generate financial reports</li>
+                        <li>Reconcile inventory and purchases</li>
+                      </ul>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div className="p-4 border rounded-lg">
+                        <h4 className="font-medium mb-2">Connection Info</h4>
+                        <div className="space-y-2 text-sm">
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Company ID:</span>
+                            <span className="font-medium">{status.quickbooks.realmId}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Status:</span>
+                            <Badge className="bg-green-500/10 text-green-500 border-green-500/20">Active</Badge>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="p-4 border rounded-lg">
+                        <h4 className="font-medium mb-2">Quick Actions</h4>
+                        <div className="space-y-2">
+                          <Button variant="outline" size="sm" className="w-full justify-start" disabled>
+                            <RefreshCw className="w-4 h-4 mr-2" />
+                            Sync Customers
+                          </Button>
+                          <Button variant="outline" size="sm" className="w-full justify-start" disabled>
+                            <RefreshCw className="w-4 h-4 mr-2" />
+                            Sync Invoices
+                          </Button>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-2">
+                          Sync features coming soon
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="p-4 bg-muted/50 rounded-lg">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h4 className="font-medium">Disconnect QuickBooks</h4>
+                          <p className="text-sm text-muted-foreground">
+                            Remove QuickBooks integration from your account
+                          </p>
+                        </div>
+                        <Button 
+                          variant="outline" 
+                          size="sm"
+                          onClick={() => disconnectQuickBooksMutation.mutate()}
+                        >
                           Disconnect
                         </Button>
                       </div>
