@@ -7208,6 +7208,31 @@ Ask if they received the original request and if they can provide a quote.`;
   }),
 
   // ============================================
+  // INVENTORY MANAGEMENT HUB
+  // ============================================
+  inventoryManagement: router({
+    list: opsProcedure
+      .query(async () => {
+        return db.getInventoryManagementData();
+      }),
+    update: opsProcedure
+      .input(z.object({
+        id: z.number(),
+        forecastedQuantity: z.string().optional(),
+        poStatus: z.string().optional(),
+        freightStatus: z.string().optional(),
+        freightTrackingNumber: z.string().optional(),
+        expectedDeliveryDate: z.date().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { id, ...data } = input;
+        await db.updateInventoryManagementItem(id, data);
+        await createAuditLog(ctx.user.id, 'update', 'inventory_management', id);
+        return { success: true };
+      }),
+  }),
+
+  // ============================================
   // SHOPIFY INTEGRATION
   // ============================================
   shopify: router({
