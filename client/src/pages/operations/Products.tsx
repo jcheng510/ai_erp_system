@@ -32,6 +32,7 @@ import {
 } from "@/components/ui/table";
 import { Package, Plus, Search, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { Link } from "wouter";
 
 function formatCurrency(value: string | null | undefined) {
   const num = parseFloat(value || "0");
@@ -290,8 +291,12 @@ export default function Products() {
               </TableHeader>
               <TableBody>
                 {filteredProducts.map((product) => (
-                  <TableRow key={product.id}>
-                    <TableCell className="font-mono">{product.sku}</TableCell>
+                  <TableRow key={product.id} className="cursor-pointer hover:bg-muted/50">
+                    <TableCell className="font-mono">
+                      <Link href={`/operations/products/${product.id}`}>
+                        <span className="hover:underline">{product.sku}</span>
+                      </Link>
+                    </TableCell>
                     <TableCell className="font-medium">{product.name}</TableCell>
                     <TableCell>{product.category || "-"}</TableCell>
                     <TableCell>

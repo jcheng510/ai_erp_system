@@ -21,7 +21,9 @@ import Transactions from "./pages/finance/Transactions";
 
 // Sales
 import Orders from "./pages/sales/Orders";
+import OrderDetail from "./pages/sales/OrderDetail";
 import Customers from "./pages/sales/Customers";
+import CustomerDetail from "./pages/sales/CustomerDetail";
 import SalesHub from "./pages/sales/SalesHub";
 import CRMDashboard from "./pages/sales/CRMDashboard";
 import CRMInvestors from "./pages/sales/CRMInvestors";
@@ -29,6 +31,7 @@ import FundraisingCampaigns from "./pages/sales/FundraisingCampaigns";
 
 // Operations
 import Products from "./pages/operations/Products";
+import ProductDetail from "./pages/operations/ProductDetail";
 import Inventory from "./pages/operations/Inventory";
 import Vendors from "./pages/operations/Vendors";
 import PurchaseOrders from "./pages/operations/PurchaseOrders";
@@ -117,7 +120,9 @@ function Router() {
         <Route path="/finance/transactions" component={Transactions} />
 
         {/* Sales */}
+        <Route path="/sales/orders/:id" component={OrderDetail} />
         <Route path="/sales/orders" component={Orders} />
+        <Route path="/sales/customers/:id" component={CustomerDetail} />
         <Route path="/sales/customers" component={Customers} />
         <Route path="/sales/hub" component={SalesHub} />
         <Route path="/crm" component={CRMDashboard} />
@@ -125,6 +130,7 @@ function Router() {
         <Route path="/crm/campaigns" component={FundraisingCampaigns} />
 
         {/* Operations */}
+        <Route path="/operations/products/:id" component={ProductDetail} />
         <Route path="/operations/products" component={Products} />
         <Route path="/operations/inventory" component={Inventory} />
         <Route path="/operations/vendors" component={Vendors} />
