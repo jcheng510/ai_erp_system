@@ -349,12 +349,12 @@ export default function Projects() {
 
   // Column definitions for spreadsheet view
   const taskColumns: Column<any>[] = [
-    { key: "title", header: "Task", type: "text", sortable: true },
+    { key: "title", header: "Task", type: "text", sortable: true, editable: true },
     { key: "project", header: "Project", type: "text", render: (row) => row.project?.name || "-" },
     { key: "status", header: "Status", type: "status", options: taskStatusOptions, editable: true, filterable: true },
     { key: "priority", header: "Priority", type: "badge", options: priorityOptions, editable: true, filterable: true },
     { key: "assignee", header: "Assignee", type: "text", render: (row) => row.assignee?.name || "-" },
-    { key: "dueDate", header: "Due", type: "date", sortable: true, render: (row) => {
+    { key: "dueDate", header: "Due", type: "date", sortable: true, editable: true, render: (row) => {
       const isOverdue = row.dueDate && new Date(row.dueDate) < new Date() && row.status !== "done";
       return (
         <span className={cn(isOverdue && "text-red-600 font-medium")}>
@@ -587,6 +587,22 @@ export default function Projects() {
                   if (key === "status") {
                     handleStatusChange(rowId as number, value);
                   }
+                }}
+                enableInlineCreate
+                inlineCreatePlaceholder="Click to add a new task..."
+                onInlineCreate={(rowData) => {
+                  if (!rowData.title) {
+                    toast.error("Title is required");
+                    return;
+                  }
+                  createTask.mutate({
+                    name: rowData.title as string,
+                    description: rowData.description as string || undefined,
+                    projectId: rowData.projectId ? parseInt(rowData.projectId as string) : 0,
+                    priority: (rowData.priority as any) || "medium",
+                    dueDate: rowData.dueDate ? new Date(rowData.dueDate as string) : undefined,
+                    assigneeId: rowData.assigneeId ? parseInt(rowData.assigneeId as string) : undefined,
+                  });
                 }}
                 compact
               />
