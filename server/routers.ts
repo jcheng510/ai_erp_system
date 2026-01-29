@@ -13,7 +13,7 @@ import { storagePut } from "./storage";
 import { nanoid } from "nanoid";
 import { sendGmailMessage, createGmailDraft, listGmailMessages, getGmailMessage, replyToGmailMessage, getGmailProfile } from "./_core/gmail";
 import { createGoogleDoc, insertTextInDoc, getGoogleDoc, updateGoogleDoc, createGoogleSheet, updateGoogleSheet, appendToGoogleSheet, getGoogleSheetValues, shareGoogleFile, getFileShareableLink } from "./_core/googleWorkspace";
-import { getGoogleFullAccessAuthUrl } from "./_core/googleDrive";
+import { getGoogleFullAccessAuthUrl, syncDriveFolder, listDriveFolders, getFolderInfo, getSimpleFileType } from "./_core/googleDrive";
 
 // Role-based access middleware
 const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
@@ -3088,6 +3088,50 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
             status: 'warning',
             message: `Task rejected by ${ctx.user.name}: ${input.reason || 'No reason provided'}`,
           });
+          return { success: true };
+        }),
+      
+      update: adminProcedure
+        .input(z.object({ 
+          id: z.number(), 
+          taskData: z.string(),
+          aiReasoning: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const task = await db.getAiAgentTaskById(input.id);
+          if (!task) throw new TRPCError({ code: 'NOT_FOUND', message: 'Task not found' });
+          
+          // Validate JSON format
+          try {
+            JSON.parse(input.taskData);
+          } catch (e) {
+            throw new TRPCError({ 
+              code: 'BAD_REQUEST', 
+              message: 'Invalid JSON format in taskData' 
+            });
+          }
+          
+          // Only allow updates on pending or approved tasks
+          if (!['pending_approval', 'approved'].includes(task.status)) {
+            throw new TRPCError({ 
+              code: 'BAD_REQUEST', 
+              message: 'Can only update pending or approved tasks' 
+            });
+          }
+          
+          await db.updateAiAgentTask(input.id, {
+            taskData: input.taskData,
+            aiReasoning: input.aiReasoning || task.aiReasoning,
+          });
+          
+          await db.createAiAgentLog({
+            taskId: input.id,
+            action: 'task_updated',
+            status: 'info',
+            message: `Task data updated by ${ctx.user.name}`,
+            details: input.taskData,
+          });
+          
           return { success: true };
         }),
       
@@ -7832,6 +7876,7 @@ Ask if they received the original request and if they can provide a quote.`;
         allowPrint: z.boolean().optional(),
         welcomeMessage: z.string().optional(),
         status: z.enum(['active', 'archived', 'draft']).optional(),
+        googleDriveFolderId: z.string().nullable().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const room = await db.getDataRoomById(input.id);
@@ -8208,6 +8253,175 @@ Ask if they received the original request and if they can provide a quote.`;
         .mutation(async ({ input }) => {
           // TODO: Resend invitation email
           return { success: true };
+        }),
+    }),
+
+    // Google Drive sync
+    googleDrive: router({
+      // List available Google Drive folders
+      listFolders: protectedProcedure
+        .input(z.object({ 
+          parentFolderId: z.string().optional() 
+        }))
+        .query(async ({ ctx, input }) => {
+          const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+          if (error) {
+            throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
+          }
+
+          const result = await listDriveFolders(accessToken, input.parentFolderId);
+          if (result.error) {
+            throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error });
+          }
+
+          return { folders: result.folders };
+        }),
+
+      // Sync a Google Drive folder to a data room
+      syncFolder: protectedProcedure
+        .input(z.object({
+          dataRoomId: z.number(),
+          googleDriveFolderId: z.string(),
+        }))
+        .mutation(async ({ ctx, input }) => {
+          // Verify data room ownership
+          const room = await db.getDataRoomById(input.dataRoomId);
+          if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
+          if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
+          }
+
+          // Get valid Google OAuth token
+          const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+          if (error) {
+            throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
+          }
+
+          // Verify folder exists and get info
+          const folderInfo = await getFolderInfo(accessToken, input.googleDriveFolderId);
+          if (folderInfo.error || !folderInfo.folder) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: folderInfo.error || 'Folder not found' });
+          }
+
+          // Sync folder structure and files
+          const syncResult = await syncDriveFolder(accessToken, input.googleDriveFolderId);
+          if (!syncResult.success) {
+            throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: syncResult.error || 'Sync failed' });
+          }
+
+          // Get existing folders and documents to avoid duplicates
+          const existingFolders = await db.getDataRoomFolders(input.dataRoomId, null);
+          const existingDocs = await db.getDataRoomDocuments(input.dataRoomId, null);
+          const existingFoldersByDriveId = new Map(
+            existingFolders
+              .filter(f => f.googleDriveFolderId)
+              .map(f => [f.googleDriveFolderId!, f.id])
+          );
+          const existingDocsByDriveId = new Map(
+            existingDocs
+              .filter(d => d.googleDriveFileId)
+              .map(d => [d.googleDriveFileId!, d.id])
+          );
+
+          // Create folder hierarchy in data room
+          const folderMap = new Map<string, number>(); // Google Drive folder ID -> data room folder ID
+          
+          // Sort folders by depth to ensure parents are created before children
+          const sortedFolders = [...syncResult.folders].sort((a, b) => {
+            const aDepth = a.parents?.length || 0;
+            const bDepth = b.parents?.length || 0;
+            return aDepth - bDepth;
+          });
+          
+          // Process folders
+          let foldersCreated = 0;
+          for (const driveFolder of sortedFolders) {
+            // Check if folder already exists
+            if (existingFoldersByDriveId.has(driveFolder.id)) {
+              folderMap.set(driveFolder.id, existingFoldersByDriveId.get(driveFolder.id)!);
+              continue;
+            }
+
+            const parentDriveId = driveFolder.parents?.[0];
+            const parentDataRoomId = parentDriveId && parentDriveId !== input.googleDriveFolderId 
+              ? folderMap.get(parentDriveId) 
+              : null;
+
+            // Log warning if parent folder is missing
+            if (parentDriveId && parentDriveId !== input.googleDriveFolderId && !parentDataRoomId) {
+              console.warn(`[GoogleDrive Sync] Parent folder ${parentDriveId} not found for folder ${driveFolder.name}`);
+            }
+
+            const { id } = await db.createDataRoomFolder({
+              dataRoomId: input.dataRoomId,
+              parentId: parentDataRoomId,
+              name: driveFolder.name,
+              googleDriveFolderId: driveFolder.id,
+            });
+
+            folderMap.set(driveFolder.id, id);
+            foldersCreated++;
+          }
+
+          // Process files
+          let filesCreated = 0;
+          for (const driveFile of syncResult.files) {
+            // Check if file already exists
+            if (existingDocsByDriveId.has(driveFile.id)) {
+              continue;
+            }
+
+            const parentDriveId = driveFile.parents?.[0];
+            let folderId: number | null = null;
+
+            // Determine which folder this file belongs to
+            if (parentDriveId === input.googleDriveFolderId) {
+              // Root level file
+              folderId = null;
+            } else if (parentDriveId) {
+              folderId = folderMap.get(parentDriveId) || existingFoldersByDriveId.get(parentDriveId) || null;
+              
+              // Log warning if parent folder is missing
+              if (!folderId) {
+                console.warn(`[GoogleDrive Sync] Parent folder ${parentDriveId} not found for file ${driveFile.name}`);
+              }
+            }
+
+            const fileType = getSimpleFileType(driveFile.mimeType);
+            const fileSize = driveFile.size && !isNaN(parseInt(driveFile.size)) 
+              ? parseInt(driveFile.size) 
+              : undefined;
+
+            await db.createDataRoomDocument({
+              dataRoomId: input.dataRoomId,
+              folderId,
+              name: driveFile.name,
+              fileType,
+              mimeType: driveFile.mimeType,
+              fileSize,
+              storageType: 'google_drive',
+              googleDriveFileId: driveFile.id,
+              googleDriveWebViewLink: driveFile.webViewLink,
+              thumbnailUrl: driveFile.thumbnailLink,
+              uploadedBy: ctx.user.id,
+            });
+
+            filesCreated++;
+          }
+
+          // Update data room with Google Drive folder ID and last sync time
+          await db.updateDataRoom(input.dataRoomId, {
+            googleDriveFolderId: input.googleDriveFolderId,
+            lastSyncedAt: new Date(),
+          });
+
+          return {
+            success: true,
+            foldersCreated,
+            filesCreated,
+            totalFolders: syncResult.folders.length,
+            totalFiles: syncResult.files.length,
+          };
         }),
     }),
 
@@ -9431,7 +9645,8 @@ Ask if they received the original request and if they can provide a quote.`;
       .query(async ({ ctx, input }) => {
         const token = await db.getGoogleOAuthToken(ctx.user.id);
         if (!token) {
-          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Google account not connected' });
+          // Return empty result instead of throwing error
+          return { folders: [], nextPageToken: undefined, notConnected: true };
         }
         
         // Refresh token if needed
@@ -9499,7 +9714,8 @@ Ask if they received the original request and if they can provide a quote.`;
       .query(async ({ ctx, input }) => {
         const token = await db.getGoogleOAuthToken(ctx.user.id);
         if (!token) {
-          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Google account not connected' });
+          // Return empty result instead of throwing error
+          return { files: [], nextPageToken: undefined, notConnected: true };
         }
         
         // Refresh token if needed
@@ -9573,7 +9789,7 @@ Ask if they received the original request and if they can provide a quote.`;
       .mutation(async ({ ctx, input }) => {
         const token = await db.getGoogleOAuthToken(ctx.user.id);
         if (!token) {
-          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Google account not connected' });
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Google account not connected. Please connect your Google account first.' });
         }
         
         // Refresh token if needed
@@ -9639,7 +9855,7 @@ Ask if they received the original request and if they can provide a quote.`;
       .mutation(async ({ ctx, input }) => {
         const token = await db.getGoogleOAuthToken(ctx.user.id);
         if (!token) {
-          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Google account not connected' });
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Google account not connected. Please connect your Google account first.' });
         }
         
         // Refresh token if needed
@@ -9724,6 +9940,477 @@ Ask if they received the original request and if they can provide a quote.`;
         }
         
         return { results };
+      }),
+  }),
+
+  // ============================================
+  // CRM & FUNDRAISING
+  // ============================================
+  crm: router({
+    // Investors
+    listInvestors: protectedProcedure
+      .input(z.object({ 
+        status: z.string().optional(),
+        type: z.string().optional(),
+        priority: z.string().optional(),
+      }).optional())
+      .query(({ input }) => db.getInvestors(input || {})),
+    
+    getInvestor: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(({ input }) => db.getInvestorById(input.id)),
+    
+    createInvestor: protectedProcedure
+      .input(z.object({
+        name: z.string().min(1),
+        email: z.string().email().optional(),
+        phone: z.string().optional(),
+        company: z.string().optional(),
+        title: z.string().optional(),
+        type: z.enum(['angel', 'vc', 'family_office', 'strategic', 'accelerator', 'other']).default('other'),
+        status: z.enum(['lead', 'contacted', 'interested', 'committed', 'invested', 'passed']).default('lead'),
+        linkedinUrl: z.string().optional(),
+        twitterHandle: z.string().optional(),
+        website: z.string().optional(),
+        address: z.string().optional(),
+        investmentFocus: z.string().optional(),
+        typicalCheckSize: z.string().optional(),
+        investmentStage: z.string().optional(),
+        source: z.string().optional(),
+        tags: z.string().optional(),
+        priority: z.enum(['low', 'medium', 'high', 'critical']).default('medium'),
+        nextFollowUpAt: z.date().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const investor = await db.createInvestor(input as any);
+        await createAuditLog(ctx.user.id, 'create', 'investor', investor.id, input.name);
+        return investor;
+      }),
+    
+    updateInvestor: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        data: z.object({
+          name: z.string().optional(),
+          email: z.string().email().optional(),
+          phone: z.string().optional(),
+          company: z.string().optional(),
+          title: z.string().optional(),
+          type: z.enum(['angel', 'vc', 'family_office', 'strategic', 'accelerator', 'other']).optional(),
+          status: z.enum(['lead', 'contacted', 'interested', 'committed', 'invested', 'passed']).optional(),
+          linkedinUrl: z.string().optional(),
+          twitterHandle: z.string().optional(),
+          website: z.string().optional(),
+          address: z.string().optional(),
+          investmentFocus: z.string().optional(),
+          typicalCheckSize: z.string().optional(),
+          investmentStage: z.string().optional(),
+          source: z.string().optional(),
+          tags: z.string().optional(),
+          priority: z.enum(['low', 'medium', 'high', 'critical']).optional(),
+          totalInvested: z.string().optional(),
+          equityPercentage: z.string().optional(),
+          lastContactedAt: z.date().optional(),
+          nextFollowUpAt: z.date().optional(),
+          followUpNotes: z.string().optional(),
+          notes: z.string().optional(),
+        }),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        await db.updateInvestor(input.id, input.data as any);
+        await createAuditLog(ctx.user.id, 'update', 'investor', input.id);
+        return { success: true };
+      }),
+    
+    deleteInvestor: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deleteInvestor(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'investor', input.id);
+        return { success: true };
+      }),
+
+    // Fundraising Campaigns
+    listCampaigns: protectedProcedure
+      .input(z.object({ status: z.string().optional() }).optional())
+      .query(({ input }) => db.getFundraisingCampaigns(input || {})),
+    
+    getCampaign: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(({ input }) => db.getFundraisingCampaignById(input.id)),
+    
+    createCampaign: protectedProcedure
+      .input(z.object({
+        name: z.string().min(1),
+        description: z.string().optional(),
+        targetAmount: z.string(),
+        minimumInvestment: z.string().optional(),
+        valuation: z.string().optional(),
+        roundType: z.enum(['pre_seed', 'seed', 'series_a', 'series_b', 'series_c', 'bridge', 'other']),
+        equityOffered: z.string().optional(),
+        startDate: z.date().optional(),
+        targetCloseDate: z.date().optional(),
+        status: z.enum(['planning', 'active', 'paused', 'closed', 'cancelled']).default('planning'),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const campaign = await db.createFundraisingCampaign({ ...input, createdBy: ctx.user.id } as any);
+        await createAuditLog(ctx.user.id, 'create', 'fundraising_campaign', campaign.id, input.name);
+        return campaign;
+      }),
+    
+    updateCampaign: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        data: z.object({
+          name: z.string().optional(),
+          description: z.string().optional(),
+          targetAmount: z.string().optional(),
+          raisedAmount: z.string().optional(),
+          minimumInvestment: z.string().optional(),
+          valuation: z.string().optional(),
+          roundType: z.enum(['pre_seed', 'seed', 'series_a', 'series_b', 'series_c', 'bridge', 'other']).optional(),
+          equityOffered: z.string().optional(),
+          startDate: z.date().optional(),
+          targetCloseDate: z.date().optional(),
+          actualCloseDate: z.date().optional(),
+          status: z.enum(['planning', 'active', 'paused', 'closed', 'cancelled']).optional(),
+          dataRoomId: z.number().optional(),
+          notes: z.string().optional(),
+        }),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        await db.updateFundraisingCampaign(input.id, input.data as any);
+        await createAuditLog(ctx.user.id, 'update', 'fundraising_campaign', input.id);
+        return { success: true };
+      }),
+
+    // Communications
+    listCommunications: protectedProcedure
+      .input(z.object({
+        investorId: z.number(),
+        campaignId: z.number().optional(),
+      }))
+      .query(({ input }) => db.getInvestorCommunications(input.investorId, input.campaignId)),
+    
+    createCommunication: protectedProcedure
+      .input(z.object({
+        investorId: z.number(),
+        campaignId: z.number().optional(),
+        type: z.enum(['email', 'whatsapp', 'call', 'meeting', 'linkedin', 'other']),
+        direction: z.enum(['inbound', 'outbound']),
+        subject: z.string().optional(),
+        body: z.string().optional(),
+        fromEmail: z.string().optional(),
+        toEmail: z.string().optional(),
+        ccEmails: z.string().optional(),
+        whatsappPhone: z.string().optional(),
+        sentAt: z.date().optional(),
+        deliveredAt: z.date().optional(),
+        readAt: z.date().optional(),
+        repliedAt: z.date().optional(),
+        sentiment: z.enum(['positive', 'neutral', 'negative']).optional(),
+        aiSummary: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const comm = await db.createInvestorCommunication({ ...input, userId: ctx.user.id } as any);
+        
+        // Update investor's last contacted date
+        if (input.direction === 'outbound') {
+          await db.updateInvestor(input.investorId, { lastContactedAt: new Date() } as any);
+        }
+        
+        await createAuditLog(ctx.user.id, 'create', 'investor_communication', comm.id);
+        return comm;
+      }),
+
+    // Investments
+    listInvestments: protectedProcedure
+      .input(z.object({
+        investorId: z.number().optional(),
+        campaignId: z.number().optional(),
+        status: z.string().optional(),
+      }).optional())
+      .query(({ input }) => db.getInvestments(input || {})),
+    
+    getInvestment: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(({ input }) => db.getInvestmentById(input.id)),
+    
+    createInvestment: protectedProcedure
+      .input(z.object({
+        investorId: z.number(),
+        campaignId: z.number(),
+        amount: z.string(),
+        currency: z.string().default('USD'),
+        equityPercentage: z.string().optional(),
+        valuation: z.string().optional(),
+        instrumentType: z.enum(['equity', 'safe', 'convertible_note', 'warrant', 'other']).default('equity'),
+        status: z.enum(['committed', 'wired', 'received', 'cancelled']).default('committed'),
+        commitmentDate: z.date().optional(),
+        wireDate: z.date().optional(),
+        receivedDate: z.date().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const investment = await db.createInvestment(input as any);
+        
+        // Update investor status and total invested
+        const investor = await db.getInvestorById(input.investorId);
+        if (investor) {
+          const totalInvested = (parseFloat(investor.totalInvested || '0') + parseFloat(input.amount)).toString();
+          await db.updateInvestor(input.investorId, { 
+            totalInvested,
+            status: 'invested' as any,
+          } as any);
+        }
+        
+        // Update campaign raised amount
+        const campaign = await db.getFundraisingCampaignById(input.campaignId);
+        if (campaign) {
+          const raisedAmount = (parseFloat(campaign.raisedAmount || '0') + parseFloat(input.amount)).toString();
+          await db.updateFundraisingCampaign(input.campaignId, { raisedAmount } as any);
+        }
+        
+        await createAuditLog(ctx.user.id, 'create', 'investment', investment.id);
+        return investment;
+      }),
+    
+    updateInvestment: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        data: z.object({
+          amount: z.string().optional(),
+          equityPercentage: z.string().optional(),
+          valuation: z.string().optional(),
+          instrumentType: z.enum(['equity', 'safe', 'convertible_note', 'warrant', 'other']).optional(),
+          status: z.enum(['committed', 'wired', 'received', 'cancelled']).optional(),
+          commitmentDate: z.date().optional(),
+          wireDate: z.date().optional(),
+          receivedDate: z.date().optional(),
+          notes: z.string().optional(),
+        }),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        await db.updateInvestment(input.id, input.data as any);
+        await createAuditLog(ctx.user.id, 'update', 'investment', input.id);
+        return { success: true };
+      }),
+
+    // Cap Table
+    listCapTableSnapshots: protectedProcedure
+      .input(z.object({ campaignId: z.number().optional() }).optional())
+      .query(({ input }) => db.getCapTableSnapshots(input?.campaignId)),
+    
+    getCapTableSnapshot: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const snapshot = await db.getCapTableSnapshotById(input.id);
+        if (!snapshot) return null;
+        const entries = await db.getCapTableEntries(input.id);
+        return { ...snapshot, entries };
+      }),
+    
+    createCapTableSnapshot: protectedProcedure
+      .input(z.object({
+        name: z.string(),
+        date: z.date(),
+        preMoneyValuation: z.string().optional(),
+        postMoneyValuation: z.string().optional(),
+        totalShares: z.number().optional(),
+        pricePerShare: z.string().optional(),
+        campaignId: z.number().optional(),
+        entries: z.array(z.object({
+          holderType: z.enum(['founder', 'investor', 'employee', 'advisor', 'other']),
+          holderName: z.string(),
+          investorId: z.number().optional(),
+          shares: z.number(),
+          equityPercentage: z.string(),
+          shareClass: z.string().default('Common'),
+          fullyDilutedShares: z.number().optional(),
+          fullyDilutedPercentage: z.string().optional(),
+        })),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { entries, ...snapshotData } = input;
+        const snapshot = await db.createCapTableSnapshot(snapshotData as any);
+        
+        for (const entry of entries) {
+          await db.createCapTableEntry({ ...entry, snapshotId: snapshot.id } as any);
+        }
+        
+        await createAuditLog(ctx.user.id, 'create', 'cap_table_snapshot', snapshot.id, input.name);
+        return snapshot;
+      }),
+
+    // Follow-up Reminders
+    listReminders: protectedProcedure
+      .input(z.object({
+        investorId: z.number().optional(),
+        campaignId: z.number().optional(),
+        status: z.string().optional(),
+        assignedTo: z.number().optional(),
+        dueBefore: z.date().optional(),
+      }).optional())
+      .query(({ input }) => db.getFollowUpReminders(input || {})),
+    
+    createReminder: protectedProcedure
+      .input(z.object({
+        investorId: z.number(),
+        campaignId: z.number().optional(),
+        title: z.string(),
+        description: z.string().optional(),
+        dueDate: z.date(),
+        priority: z.enum(['low', 'medium', 'high', 'critical']).default('medium'),
+        assignedTo: z.number().optional(),
+        autoGenerated: z.boolean().default(false),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const reminder = await db.createFollowUpReminder({ 
+          ...input, 
+          assignedTo: input.assignedTo || ctx.user.id 
+        } as any);
+        await createAuditLog(ctx.user.id, 'create', 'follow_up_reminder', reminder.id, input.title);
+        return reminder;
+      }),
+    
+    updateReminder: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        data: z.object({
+          title: z.string().optional(),
+          description: z.string().optional(),
+          dueDate: z.date().optional(),
+          priority: z.enum(['low', 'medium', 'high', 'critical']).optional(),
+          status: z.enum(['pending', 'completed', 'cancelled', 'snoozed']).optional(),
+          completedAt: z.date().optional(),
+          snoozedUntil: z.date().optional(),
+          assignedTo: z.number().optional(),
+          notes: z.string().optional(),
+        }),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        await db.updateFollowUpReminder(input.id, input.data as any);
+        await createAuditLog(ctx.user.id, 'update', 'follow_up_reminder', input.id);
+        return { success: true };
+      }),
+
+    // Airtable Import
+    listAirtableConfigs: protectedProcedure
+      .query(() => db.getAirtableConfigs()),
+    
+    createAirtableConfig: protectedProcedure
+      .input(z.object({
+        name: z.string(),
+        apiKey: z.string(),
+        baseId: z.string(),
+        tableId: z.string(),
+        viewId: z.string().optional(),
+        fieldMappings: z.string(),
+        syncEnabled: z.boolean().default(false),
+        syncFrequency: z.enum(['manual', 'hourly', 'daily', 'weekly']).default('manual'),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const config = await db.createAirtableConfig({ ...input, createdBy: ctx.user.id } as any);
+        await createAuditLog(ctx.user.id, 'create', 'airtable_config', config.id, input.name);
+        return config;
+      }),
+    
+    syncFromAirtable: protectedProcedure
+      .input(z.object({ configId: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const config = await db.getAirtableConfigById(input.configId);
+        if (!config) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'Airtable config not found' });
+        }
+        
+        // Update status to in_progress
+        await db.updateAirtableConfig(input.configId, { lastSyncStatus: 'in_progress' } as any);
+        
+        try {
+          // Fetch data from Airtable
+          const response = await fetch(
+            `https://api.airtable.com/v0/${config.baseId}/${config.tableId}${config.viewId ? `?view=${config.viewId}` : ''}`,
+            {
+              headers: {
+                Authorization: `Bearer ${config.apiKey}`,
+              },
+            }
+          );
+          
+          if (!response.ok) {
+            throw new Error(`Airtable API error: ${response.statusText}`);
+          }
+          
+          const data = await response.json();
+          const fieldMappings = JSON.parse(config.fieldMappings);
+          
+          let importedCount = 0;
+          let updatedCount = 0;
+          
+          // Fetch all existing investors with airtableId once for efficient lookup
+          const existingInvestors = await db.getInvestors({});
+          const investorMap = new Map(
+            existingInvestors
+              .filter(i => i.airtableId)
+              .map(i => [i.airtableId, i])
+          );
+          
+          // Process each record
+          for (const record of data.records || []) {
+            const investorData: any = {};
+            
+            // Map Airtable fields to our schema
+            for (const [ourField, airtableField] of Object.entries(fieldMappings)) {
+              const fieldValue = (record.fields as any)[airtableField as string];
+              if (fieldValue) {
+                (investorData as any)[ourField] = fieldValue;
+              }
+            }
+            
+            investorData.airtableId = record.id;
+            investorData.airtableLastSynced = new Date();
+            
+            // Check if investor already exists using the pre-loaded map
+            const existing = investorMap.get(record.id);
+            
+            if (existing) {
+              await db.updateInvestor(existing.id, investorData);
+              updatedCount++;
+            } else {
+              await db.createInvestor(investorData);
+              importedCount++;
+            }
+          }
+          
+          // Update config with success
+          await db.updateAirtableConfig(input.configId, {
+            lastSyncedAt: new Date(),
+            lastSyncStatus: 'success',
+            lastSyncError: null,
+          } as any);
+          
+          await createAuditLog(ctx.user.id, 'create', 'airtable_sync', input.configId, undefined, undefined, {
+            importedCount,
+            updatedCount,
+          });
+          
+          return { success: true, importedCount, updatedCount };
+        } catch (error: any) {
+          // Update config with error
+          await db.updateAirtableConfig(input.configId, {
+            lastSyncStatus: 'failed',
+            lastSyncError: error.message,
+          } as any);
+          
+          throw new TRPCError({ 
+            code: 'INTERNAL_SERVER_ERROR', 
+            message: `Airtable sync failed: ${error.message}` 
+          });
+        }
       }),
   }),
 });
