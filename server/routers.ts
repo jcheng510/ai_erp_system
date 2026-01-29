@@ -3101,6 +3101,16 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
           const task = await db.getAiAgentTaskById(input.id);
           if (!task) throw new TRPCError({ code: 'NOT_FOUND', message: 'Task not found' });
           
+          // Validate JSON format
+          try {
+            JSON.parse(input.taskData);
+          } catch (e) {
+            throw new TRPCError({ 
+              code: 'BAD_REQUEST', 
+              message: 'Invalid JSON format in taskData' 
+            });
+          }
+          
           // Only allow updates on pending or approved tasks
           if (!['pending_approval', 'approved'].includes(task.status)) {
             throw new TRPCError({ 

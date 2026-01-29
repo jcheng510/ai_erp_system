@@ -655,7 +655,14 @@ export default function ApprovalQueue() {
       </Dialog>
       
       {/* Task Detail Dialog */}
-      <Dialog open={isDetailDialogOpen} onOpenChange={setIsDetailDialogOpen}>
+      <Dialog open={isDetailDialogOpen} onOpenChange={(open) => {
+        setIsDetailDialogOpen(open);
+        if (!open) {
+          // Reset state when dialog closes
+          setSelectedTask(null);
+          setEditedTaskData("");
+        }
+      }}>
         <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -705,7 +712,7 @@ export default function ApprovalQueue() {
                     AI Reasoning
                     {selectedTask.aiConfidence && (
                       <Badge variant="outline" className="text-xs">
-                        {parseFloat(selectedTask.aiConfidence)}% confidence
+                        {parseFloat(selectedTask.aiConfidence).toFixed(1)}% confidence
                       </Badge>
                     )}
                   </label>
@@ -736,7 +743,13 @@ export default function ApprovalQueue() {
                   />
                 ) : (
                   <pre className="text-xs bg-muted p-3 rounded overflow-x-auto">
-                    {JSON.stringify(JSON.parse(selectedTask.taskData || "{}"), null, 2)}
+                    {(() => {
+                      try {
+                        return JSON.stringify(JSON.parse(selectedTask.taskData || "{}"), null, 2);
+                      } catch {
+                        return selectedTask.taskData || "{}";
+                      }
+                    })()}
                   </pre>
                 )}
               </div>
@@ -749,7 +762,13 @@ export default function ApprovalQueue() {
                     Execution Result
                   </label>
                   <pre className="text-xs bg-green-50 p-3 rounded border border-green-200 overflow-x-auto">
-                    {JSON.stringify(JSON.parse(selectedTask.executionResult), null, 2)}
+                    {(() => {
+                      try {
+                        return JSON.stringify(JSON.parse(selectedTask.executionResult), null, 2);
+                      } catch {
+                        return selectedTask.executionResult;
+                      }
+                    })()}
                   </pre>
                 </div>
               )}
