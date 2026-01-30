@@ -793,3 +793,14 @@
 - [x] Fix "Google account not connected" error on /operations/document-import page
 - [x] Make Google Drive integration optional for basic document upload
 - [x] Ensure upload tab works without Google connection
+
+## Consolidate Operations Pages
+- [x] Design unified Operations page structure with tabs for Inventory, Manufacturing, and Procurement
+- [x] Create new consolidated Operations page component
+- [x] Move Inventory content to Operations/Inventory tab
+- [x] Move Manufacturing content to Operations/Manufacturing tab
+- [x] Move Procurement content to Operations/Procurement tab
+- [x] Update sidebar navigation to remove separate Inventory, Manufacturing, Procurement items
+- [x] Add single "Operations" menu item in sidebar
+- [x] Update routing in App.tsx
+- [x] Test all functionality in consolidated view

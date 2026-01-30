@@ -97,9 +97,7 @@ const menuGroups = [
   {
     label: "Operations",
     items: [
-      { icon: Package, label: "Inventory", path: "/operations/inventory-hub" },
-      { icon: Warehouse, label: "Manufacturing", path: "/operations/manufacturing-hub" },
-      { icon: Building2, label: "Procurement", path: "/operations/procurement-hub" },
+      { icon: Package, label: "Operations", path: "/operations" },
       { icon: Truck, label: "Logistics", path: "/operations/logistics-hub" },
       { icon: Mail, label: "Email Inbox", path: "/operations/email-inbox" },
       { icon: FileSpreadsheet, label: "Document Import", path: "/operations/document-import" },
