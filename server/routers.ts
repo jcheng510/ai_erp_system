@@ -1788,13 +1788,14 @@ export const appRouter = router({
         tags: z.array(z.string()).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
-        const { fileData, mimeType, ...docData } = input;
-        
+        const { fileData, mimeType: inputMimeType, ...docData } = input;
+        const mimeType = inputMimeType || 'application/octet-stream';
+
         // Decode base64 and upload to S3
         const buffer = Buffer.from(fileData, 'base64');
         const fileKey = `documents/${ctx.user.id}/${nanoid()}-${input.name}`;
         const { url } = await storagePut(fileKey, buffer, mimeType);
-        
+
         const result = await db.createDocument({
           ...docData,
           fileUrl: url,
