@@ -4974,7 +4974,14 @@ Provide a brief status summary, any missing documents, and next steps.`;
         }
 
         await db.updateInventoryQuantityById(input.inventoryId, input.quantity, ctx.user.id, input.notes);
-        return { success: true };
+
+        // Check if stock is low and trigger auto-purchase order if needed
+        const autoPurchaseResult = await db.checkAndTriggerLowStockPurchaseOrder(input.inventoryId, ctx.user.id);
+
+        return {
+          success: true,
+          autoPurchase: autoPurchaseResult
+        };
       }),
 
     // Get shipments for copacker's warehouse (filter by PO vendor)
