@@ -2375,9 +2375,43 @@ export async function getRawMaterials(filters?: { status?: string; category?: st
 export async function getRawMaterialById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
-  
+
   const result = await db.select().from(rawMaterials).where(eq(rawMaterials.id, id)).limit(1);
   return result[0];
+}
+
+export async function getRawMaterialByNameOrSku(name: string, sku: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+
+  const result = await db.select().from(rawMaterials)
+    .where(or(
+      eq(rawMaterials.name, name),
+      eq(rawMaterials.sku, sku)
+    ))
+    .limit(1);
+  return result[0];
+}
+
+export async function createPurchaseOrderRawMaterialLink(data: {
+  purchaseOrderItemId: number;
+  rawMaterialId: number;
+  orderedQuantity: string;
+  unit: string;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const result = await db.insert(purchaseOrderRawMaterials).values({
+    purchaseOrderItemId: data.purchaseOrderItemId,
+    rawMaterialId: data.rawMaterialId,
+    orderedQuantity: data.orderedQuantity,
+    receivedQuantity: '0',
+    unit: data.unit,
+    status: 'ordered',
+  }).$returningId();
+
+  return { id: result[0].id };
 }
 
 export async function createRawMaterial(data: Omit<InsertRawMaterial, 'id' | 'createdAt' | 'updatedAt'>) {
@@ -2775,7 +2809,41 @@ export async function receivePurchaseOrderItems(
     await db.update(purchaseOrders).set({ status: 'partial' })
       .where(eq(purchaseOrders.id, purchaseOrderId));
   }
-  
+
+  // Update linked shipment status
+  let shipmentToUpdate = shipmentId;
+  if (!shipmentToUpdate) {
+    // Find shipment linked to this PO
+    const linkedShipment = await db.select()
+      .from(shipments)
+      .where(eq(shipments.purchaseOrderId, purchaseOrderId))
+      .limit(1);
+    if (linkedShipment[0]) {
+      shipmentToUpdate = linkedShipment[0].id;
+    }
+  }
+
+  if (shipmentToUpdate) {
+    if (allReceived) {
+      // Mark shipment as delivered
+      await db.update(shipments)
+        .set({
+          status: 'delivered',
+          deliveryDate: new Date(),
+        })
+        .where(eq(shipments.id, shipmentToUpdate));
+    } else if (anyReceived) {
+      // Shipment is in progress (partial delivery)
+      const currentShipment = await db.select().from(shipments)
+        .where(eq(shipments.id, shipmentToUpdate)).limit(1);
+      if (currentShipment[0]?.status === 'pending') {
+        await db.update(shipments)
+          .set({ status: 'in_transit' })
+          .where(eq(shipments.id, shipmentToUpdate));
+      }
+    }
+  }
+
   return receiving;
 }
 
@@ -3066,26 +3134,191 @@ export async function getHistoricalSalesData(productId?: number, months?: number
 export async function getPendingOrdersForMaterial(rawMaterialId: number) {
   const db = await getDb();
   if (!db) return [];
-  
-  // Get PO items that reference products linked to this raw material
-  const pendingPOs = await db.select({
+
+  // First check purchaseOrderRawMaterials for explicit links
+  const linkedPOs = await db.select({
     poId: purchaseOrders.id,
     poNumber: purchaseOrders.poNumber,
-    quantity: purchaseOrderItems.quantity,
-    receivedQuantity: purchaseOrderItems.receivedQuantity,
+    quantity: purchaseOrderRawMaterials.orderedQuantity,
+    receivedQuantity: purchaseOrderRawMaterials.receivedQuantity,
     expectedDate: purchaseOrders.expectedDate,
+    shipmentId: shipments.id,
+    shipmentStatus: shipments.status,
+  })
+  .from(purchaseOrderRawMaterials)
+  .innerJoin(purchaseOrderItems, eq(purchaseOrderRawMaterials.purchaseOrderItemId, purchaseOrderItems.id))
+  .innerJoin(purchaseOrders, eq(purchaseOrderItems.purchaseOrderId, purchaseOrders.id))
+  .leftJoin(shipments, eq(shipments.purchaseOrderId, purchaseOrders.id))
+  .where(and(
+    eq(purchaseOrderRawMaterials.rawMaterialId, rawMaterialId),
+    or(
+      eq(purchaseOrders.status, 'sent'),
+      eq(purchaseOrders.status, 'confirmed'),
+      eq(purchaseOrders.status, 'partial')
+    ),
+    or(
+      eq(purchaseOrderRawMaterials.status, 'ordered'),
+      eq(purchaseOrderRawMaterials.status, 'partial')
+    )
+  ));
+
+  // Also check PO items linked to products that match raw material by name
+  const rm = await getRawMaterialById(rawMaterialId);
+  if (rm) {
+    const productMatches = await db.select({
+      poId: purchaseOrders.id,
+      poNumber: purchaseOrders.poNumber,
+      quantity: purchaseOrderItems.quantity,
+      receivedQuantity: purchaseOrderItems.receivedQuantity,
+      expectedDate: purchaseOrders.expectedDate,
+      shipmentId: shipments.id,
+      shipmentStatus: shipments.status,
+    })
+    .from(purchaseOrderItems)
+    .innerJoin(purchaseOrders, eq(purchaseOrderItems.purchaseOrderId, purchaseOrders.id))
+    .innerJoin(products, eq(purchaseOrderItems.productId, products.id))
+    .leftJoin(shipments, eq(shipments.purchaseOrderId, purchaseOrders.id))
+    .where(and(
+      or(
+        eq(products.name, rm.name),
+        eq(products.sku, rm.sku || '')
+      ),
+      or(
+        eq(purchaseOrders.status, 'sent'),
+        eq(purchaseOrders.status, 'confirmed'),
+        eq(purchaseOrders.status, 'partial')
+      )
+    ));
+
+    // Combine results, avoiding duplicates
+    const allPOs = [...linkedPOs];
+    for (const po of productMatches) {
+      if (!allPOs.find(p => p.poId === po.poId && p.quantity === po.quantity)) {
+        allPOs.push(po);
+      }
+    }
+    return allPOs;
+  }
+
+  return linkedPOs;
+}
+
+// Get all pending/inbound inventory from POs (for InventoryHub display)
+export async function getPendingInventoryFromPOs() {
+  const db = await getDb();
+  if (!db) return [];
+
+  // Get all pending PO items with shipment info
+  const pendingItems = await db.select({
+    purchaseOrderId: purchaseOrders.id,
+    poNumber: purchaseOrders.poNumber,
+    poStatus: purchaseOrders.status,
+    vendorId: purchaseOrders.vendorId,
+    expectedDate: purchaseOrders.expectedDate,
+    poItemId: purchaseOrderItems.id,
+    productId: purchaseOrderItems.productId,
+    description: purchaseOrderItems.description,
+    orderedQuantity: purchaseOrderItems.quantity,
+    receivedQuantity: purchaseOrderItems.receivedQuantity,
+    shipmentId: shipments.id,
+    shipmentNumber: shipments.shipmentNumber,
+    shipmentStatus: shipments.status,
+    trackingNumber: shipments.trackingNumber,
+    carrier: shipments.carrier,
+    shipDate: shipments.shipDate,
+    deliveryDate: shipments.deliveryDate,
   })
   .from(purchaseOrderItems)
   .innerJoin(purchaseOrders, eq(purchaseOrderItems.purchaseOrderId, purchaseOrders.id))
-  .where(and(
+  .leftJoin(shipments, eq(shipments.purchaseOrderId, purchaseOrders.id))
+  .where(
     or(
       eq(purchaseOrders.status, 'sent'),
       eq(purchaseOrders.status, 'confirmed'),
       eq(purchaseOrders.status, 'partial')
     )
-  ));
-  
-  return pendingPOs;
+  );
+
+  // Enhance with raw material info if linked
+  const enhancedItems = [];
+  for (const item of pendingItems) {
+    const orderedQty = parseFloat(item.orderedQuantity?.toString() || '0');
+    const receivedQty = parseFloat(item.receivedQuantity?.toString() || '0');
+    const pendingQty = orderedQty - receivedQty;
+
+    if (pendingQty <= 0) continue;
+
+    // Check for raw material link
+    const rmLink = await db.select()
+      .from(purchaseOrderRawMaterials)
+      .where(eq(purchaseOrderRawMaterials.purchaseOrderItemId, item.poItemId))
+      .limit(1);
+
+    let rawMaterialId = rmLink[0]?.rawMaterialId;
+    let rawMaterialName = null;
+
+    // If no explicit link, try matching by product
+    if (!rawMaterialId && item.productId) {
+      const product = await getProductById(item.productId);
+      if (product) {
+        const rm = await db.select().from(rawMaterials)
+          .where(or(
+            eq(rawMaterials.name, product.name),
+            eq(rawMaterials.sku, product.sku || '')
+          ))
+          .limit(1);
+        if (rm[0]) {
+          rawMaterialId = rm[0].id;
+          rawMaterialName = rm[0].name;
+        }
+      }
+    } else if (rawMaterialId) {
+      const rm = await getRawMaterialById(rawMaterialId);
+      rawMaterialName = rm?.name;
+    }
+
+    enhancedItems.push({
+      ...item,
+      rawMaterialId,
+      rawMaterialName,
+      pendingQuantity: pendingQty,
+      status: item.shipmentStatus === 'in_transit' ? 'in_transit' :
+              item.shipmentStatus === 'delivered' ? 'arrived' : 'on_order',
+    });
+  }
+
+  return enhancedItems;
+}
+
+// Get inbound shipments from POs
+export async function getInboundShipmentsFromPOs() {
+  const db = await getDb();
+  if (!db) return [];
+
+  return db.select({
+    shipmentId: shipments.id,
+    shipmentNumber: shipments.shipmentNumber,
+    status: shipments.status,
+    carrier: shipments.carrier,
+    trackingNumber: shipments.trackingNumber,
+    shipDate: shipments.shipDate,
+    deliveryDate: shipments.deliveryDate,
+    purchaseOrderId: purchaseOrders.id,
+    poNumber: purchaseOrders.poNumber,
+    poStatus: purchaseOrders.status,
+    vendorId: purchaseOrders.vendorId,
+    expectedDate: purchaseOrders.expectedDate,
+  })
+  .from(shipments)
+  .innerJoin(purchaseOrders, eq(shipments.purchaseOrderId, purchaseOrders.id))
+  .where(and(
+    eq(shipments.type, 'inbound'),
+    or(
+      eq(shipments.status, 'pending'),
+      eq(shipments.status, 'in_transit')
+    )
+  ))
+  .orderBy(desc(shipments.createdAt));
 }
 
 // Convert suggested PO to actual PO
