@@ -85,7 +85,11 @@ import {
   // AI Agent types
   InsertAiAgentTask, InsertAiAgentRule, InsertAiAgentLog, InsertEmailTemplate,
   // Vendor Quote types
-  InsertVendorRfq, InsertVendorQuote, InsertVendorRfqEmail, InsertVendorRfqInvitation
+  InsertVendorRfq, InsertVendorQuote, InsertVendorRfqEmail, InsertVendorRfqInvitation,
+  // Due diligence checklist
+  dueDiligenceTemplates, dueDiligenceCategories, dueDiligenceItems, dataRoomChecklists, dataRoomChecklistItems,
+  InsertDueDiligenceTemplate, InsertDueDiligenceCategory, InsertDueDiligenceItem, InsertDataRoomChecklist, InsertDataRoomChecklistItem,
+  STANDARD_DD_CATEGORIES
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -7187,5 +7191,406 @@ export async function getDataRoomEngagementReport(dataRoomId: number, startDate?
     },
     visitorEngagement: visitorEngagement.sort((a, b) => b.totalTimeMs - a.totalTimeMs),
     documentEngagement: documentEngagement.sort((a, b) => b.views - a.views),
+  };
+}
+
+
+// ============================================
+// DUE DILIGENCE CHECKLIST FUNCTIONS
+// ============================================
+
+// Due Diligence Templates
+export async function createDueDiligenceTemplate(data: InsertDueDiligenceTemplate) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(dueDiligenceTemplates).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getDueDiligenceTemplates(userId?: number, includePublic: boolean = true) {
+  const db = await getDb();
+  if (!db) return [];
+
+  if (userId && includePublic) {
+    return db.select().from(dueDiligenceTemplates)
+      .where(or(eq(dueDiligenceTemplates.createdBy, userId), eq(dueDiligenceTemplates.isPublic, true)))
+      .orderBy(desc(dueDiligenceTemplates.createdAt));
+  } else if (userId) {
+    return db.select().from(dueDiligenceTemplates)
+      .where(eq(dueDiligenceTemplates.createdBy, userId))
+      .orderBy(desc(dueDiligenceTemplates.createdAt));
+  } else {
+    return db.select().from(dueDiligenceTemplates)
+      .where(eq(dueDiligenceTemplates.isPublic, true))
+      .orderBy(desc(dueDiligenceTemplates.createdAt));
+  }
+}
+
+export async function getDueDiligenceTemplateById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(dueDiligenceTemplates).where(eq(dueDiligenceTemplates.id, id));
+  return result[0] || null;
+}
+
+export async function getTemplateWithItems(templateId: number) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const template = await getDueDiligenceTemplateById(templateId);
+  if (!template) return null;
+
+  const categories = await db.select().from(dueDiligenceCategories)
+    .where(eq(dueDiligenceCategories.templateId, templateId))
+    .orderBy(dueDiligenceCategories.sortOrder);
+
+  const items = await db.select().from(dueDiligenceItems)
+    .where(eq(dueDiligenceItems.templateId, templateId))
+    .orderBy(dueDiligenceItems.sortOrder);
+
+  return {
+    ...template,
+    categories: categories.map(cat => ({
+      ...cat,
+      items: items.filter(item => item.categoryId === cat.id),
+    })),
+  };
+}
+
+export async function createDueDiligenceCategory(data: InsertDueDiligenceCategory) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(dueDiligenceCategories).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function createDueDiligenceItem(data: InsertDueDiligenceItem) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(dueDiligenceItems).values(data);
+  return { id: result[0].insertId };
+}
+
+// Data Room Checklists
+export async function createDataRoomChecklist(data: InsertDataRoomChecklist) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(dataRoomChecklists).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getDataRoomChecklists(dataRoomId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(dataRoomChecklists)
+    .where(eq(dataRoomChecklists.dataRoomId, dataRoomId))
+    .orderBy(desc(dataRoomChecklists.createdAt));
+}
+
+export async function getDataRoomChecklistById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(dataRoomChecklists).where(eq(dataRoomChecklists.id, id));
+  return result[0] || null;
+}
+
+export async function updateDataRoomChecklist(id: number, data: Partial<InsertDataRoomChecklist>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(dataRoomChecklists).set(data).where(eq(dataRoomChecklists.id, id));
+}
+
+export async function deleteDataRoomChecklist(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(dataRoomChecklistItems).where(eq(dataRoomChecklistItems.checklistId, id));
+  await db.delete(dataRoomChecklists).where(eq(dataRoomChecklists.id, id));
+}
+
+// Data Room Checklist Items
+export async function createDataRoomChecklistItem(data: InsertDataRoomChecklistItem) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(dataRoomChecklistItems).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getChecklistItems(checklistId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(dataRoomChecklistItems)
+    .where(eq(dataRoomChecklistItems.checklistId, checklistId))
+    .orderBy(dataRoomChecklistItems.categoryName, dataRoomChecklistItems.sortOrder);
+}
+
+export async function getChecklistItemById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(dataRoomChecklistItems).where(eq(dataRoomChecklistItems.id, id));
+  return result[0] || null;
+}
+
+export async function updateChecklistItem(id: number, data: Partial<InsertDataRoomChecklistItem>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(dataRoomChecklistItems).set(data).where(eq(dataRoomChecklistItems.id, id));
+}
+
+export async function deleteChecklistItem(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(dataRoomChecklistItems).where(eq(dataRoomChecklistItems.id, id));
+}
+
+export async function bulkCreateChecklistItems(items: InsertDataRoomChecklistItem[]) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  if (items.length === 0) return [];
+  const result = await db.insert(dataRoomChecklistItems).values(items);
+  return result;
+}
+
+// Get checklist with all items and linked documents
+export async function getChecklistWithItems(checklistId: number) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const checklist = await getDataRoomChecklistById(checklistId);
+  if (!checklist) return null;
+
+  const items = await getChecklistItems(checklistId);
+
+  // Group items by category
+  const categories: Record<string, typeof items> = {};
+  items.forEach(item => {
+    if (!categories[item.categoryName]) {
+      categories[item.categoryName] = [];
+    }
+    categories[item.categoryName].push(item);
+  });
+
+  // Get linked documents for each item
+  const documentsMap: Record<number, any[]> = {};
+  for (const item of items) {
+    if (item.linkedDocumentIds) {
+      try {
+        const docIds = JSON.parse(item.linkedDocumentIds) as number[];
+        if (docIds.length > 0) {
+          const docs = await db.select().from(dataRoomDocuments).where(inArray(dataRoomDocuments.id, docIds));
+          documentsMap[item.id] = docs;
+        }
+      } catch (e) {
+        documentsMap[item.id] = [];
+      }
+    }
+  }
+
+  return {
+    ...checklist,
+    categories: Object.entries(categories).map(([name, catItems]) => ({
+      name,
+      items: catItems.map(item => ({
+        ...item,
+        linkedDocuments: documentsMap[item.id] || [],
+      })),
+    })),
+  };
+}
+
+// Auto-match documents against checklist items
+export async function autoMatchChecklistDocuments(checklistId: number) {
+  const db = await getDb();
+  if (!db) return { matched: 0, items: [] };
+
+  const checklist = await getDataRoomChecklistById(checklistId);
+  if (!checklist) return { matched: 0, items: [] };
+
+  const items = await getChecklistItems(checklistId);
+  const documents = await getDataRoomDocuments(checklist.dataRoomId);
+
+  let matchedCount = 0;
+  const matchedItems: any[] = [];
+
+  for (const item of items) {
+    let keywords: string[] = [];
+    try {
+      keywords = item.matchKeywords ? JSON.parse(item.matchKeywords) : [];
+    } catch (e) {
+      keywords = [];
+    }
+
+    if (keywords.length === 0) continue;
+
+    // Find matching documents
+    const matchingDocs = documents.filter(doc => {
+      const docName = doc.name.toLowerCase();
+      return keywords.some(kw => docName.includes(kw.toLowerCase()));
+    });
+
+    if (matchingDocs.length > 0) {
+      const linkedDocIds = matchingDocs.map(d => d.id);
+      const newStatus = matchingDocs.length >= 1 ? 'complete' : 'partial';
+
+      await updateChecklistItem(item.id, {
+        status: newStatus,
+        linkedDocumentIds: JSON.stringify(linkedDocIds),
+        linkedDocumentCount: linkedDocIds.length,
+      });
+
+      matchedCount++;
+      matchedItems.push({
+        itemId: item.id,
+        itemName: item.itemName,
+        matchedDocuments: matchingDocs.map(d => ({ id: d.id, name: d.name })),
+        status: newStatus,
+      });
+    }
+  }
+
+  // Update checklist progress
+  await recalculateChecklistProgress(checklistId);
+
+  return { matched: matchedCount, items: matchedItems };
+}
+
+// Recalculate checklist progress
+export async function recalculateChecklistProgress(checklistId: number) {
+  const db = await getDb();
+  if (!db) return;
+
+  const items = await getChecklistItems(checklistId);
+
+  const total = items.length;
+  const completed = items.filter(i => i.status === 'complete').length;
+  const partial = items.filter(i => i.status === 'partial').length;
+  const missing = items.filter(i => i.status === 'missing').length;
+
+  await updateDataRoomChecklist(checklistId, {
+    totalItems: total,
+    completedItems: completed,
+    partialItems: partial,
+    missingItems: missing,
+  });
+}
+
+// Create a checklist from a template
+export async function createChecklistFromTemplate(
+  dataRoomId: number,
+  templateId: number,
+  userId: number,
+  customName?: string
+) {
+  const template = await getTemplateWithItems(templateId);
+  if (!template) throw new Error("Template not found");
+
+  // Create the checklist
+  const checklist = await createDataRoomChecklist({
+    dataRoomId,
+    templateId,
+    name: customName || template.name,
+    description: template.description,
+    createdBy: userId,
+    totalItems: template.categories.reduce((sum, cat) => sum + cat.items.length, 0),
+    missingItems: template.categories.reduce((sum, cat) => sum + cat.items.length, 0),
+  });
+
+  // Create checklist items from template
+  let sortOrder = 0;
+  for (const category of template.categories) {
+    for (const item of category.items) {
+      await createDataRoomChecklistItem({
+        checklistId: checklist.id,
+        dataRoomId,
+        categoryName: category.name,
+        itemName: item.name,
+        itemDescription: item.description,
+        requirement: item.requirement,
+        matchKeywords: item.matchKeywords,
+        matchFileTypes: item.matchFileTypes,
+        sortOrder: sortOrder++,
+        status: 'missing',
+      });
+    }
+  }
+
+  return checklist;
+}
+
+// Create a standard due diligence checklist
+export async function createStandardChecklist(
+  dataRoomId: number,
+  userId: number,
+  checklistType: 'fundraising' | 'ma' | 'full' = 'full',
+  customName?: string
+) {
+  const categories = STANDARD_DD_CATEGORIES;
+
+  // Create the checklist
+  const totalItems = Object.values(categories).reduce((sum, cat) => sum + cat.items.length, 0);
+  const checklist = await createDataRoomChecklist({
+    dataRoomId,
+    name: customName || `${checklistType === 'full' ? 'Standard' : checklistType.toUpperCase()} Due Diligence Checklist`,
+    description: `Standard due diligence checklist with ${totalItems} items across ${Object.keys(categories).length} categories`,
+    createdBy: userId,
+    totalItems,
+    missingItems: totalItems,
+  });
+
+  // Create checklist items
+  let sortOrder = 0;
+  for (const [key, category] of Object.entries(categories)) {
+    for (const item of category.items) {
+      await createDataRoomChecklistItem({
+        checklistId: checklist.id,
+        dataRoomId,
+        categoryName: category.name,
+        itemName: item.name,
+        itemDescription: undefined,
+        requirement: 'required',
+        matchKeywords: JSON.stringify(item.keywords),
+        sortOrder: sortOrder++,
+        status: 'missing',
+      });
+    }
+  }
+
+  return checklist;
+}
+
+// Get checklist summary for a data room
+export async function getChecklistSummary(dataRoomId: number) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const checklists = await getDataRoomChecklists(dataRoomId);
+  if (checklists.length === 0) return null;
+
+  // Get the most recent active checklist
+  const activeChecklist = checklists.find(c => c.status === 'active') || checklists[0];
+  const items = await getChecklistItems(activeChecklist.id);
+
+  // Group by category and status
+  const byCategory: Record<string, { total: number; complete: number; partial: number; missing: number }> = {};
+  items.forEach(item => {
+    if (!byCategory[item.categoryName]) {
+      byCategory[item.categoryName] = { total: 0, complete: 0, partial: 0, missing: 0 };
+    }
+    byCategory[item.categoryName].total++;
+    if (item.status === 'complete') byCategory[item.categoryName].complete++;
+    else if (item.status === 'partial') byCategory[item.categoryName].partial++;
+    else if (item.status === 'missing') byCategory[item.categoryName].missing++;
+  });
+
+  return {
+    checklist: activeChecklist,
+    totalItems: items.length,
+    completedItems: items.filter(i => i.status === 'complete').length,
+    partialItems: items.filter(i => i.status === 'partial').length,
+    missingItems: items.filter(i => i.status === 'missing').length,
+    completionPercent: items.length > 0
+      ? Math.round((items.filter(i => i.status === 'complete').length / items.length) * 100)
+      : 0,
+    byCategory,
+    requiredMissing: items.filter(i => i.status === 'missing' && i.requirement === 'required'),
   };
 }

@@ -3360,3 +3360,215 @@ export const dataRoomVisitorSessions = mysqlTable("data_room_visitor_sessions", 
 
 export type DataRoomVisitorSession = typeof dataRoomVisitorSessions.$inferSelect;
 export type InsertDataRoomVisitorSession = typeof dataRoomVisitorSessions.$inferInsert;
+
+
+// ============================================
+// DATA ROOM - DUE DILIGENCE CHECKLISTS
+// ============================================
+
+// Due Diligence Checklist Templates (reusable across data rooms)
+export const dueDiligenceTemplates = mysqlTable("due_diligence_templates", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(), // e.g., "Series A Due Diligence", "M&A Standard Checklist"
+  description: text("description"),
+  category: mysqlEnum("category", ["fundraising", "ma", "audit", "compliance", "custom"]).default("custom").notNull(),
+
+  // Template can be public (shared) or private (company-specific)
+  isPublic: boolean("isPublic").default(false).notNull(),
+  createdBy: int("createdBy").notNull(),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type DueDiligenceTemplate = typeof dueDiligenceTemplates.$inferSelect;
+export type InsertDueDiligenceTemplate = typeof dueDiligenceTemplates.$inferInsert;
+
+// Due Diligence Checklist Categories (groups within a template)
+export const dueDiligenceCategories = mysqlTable("due_diligence_categories", {
+  id: int("id").autoincrement().primaryKey(),
+  templateId: int("templateId").notNull(),
+  name: varchar("name", { length: 255 }).notNull(), // e.g., "Corporate Documents", "Financial", "IP"
+  description: text("description"),
+  sortOrder: int("sortOrder").default(0).notNull(),
+  icon: varchar("icon", { length: 50 }), // Icon name for UI
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type DueDiligenceCategory = typeof dueDiligenceCategories.$inferSelect;
+export type InsertDueDiligenceCategory = typeof dueDiligenceCategories.$inferInsert;
+
+// Due Diligence Checklist Items (individual line items)
+export const dueDiligenceItems = mysqlTable("due_diligence_items", {
+  id: int("id").autoincrement().primaryKey(),
+  templateId: int("templateId").notNull(),
+  categoryId: int("categoryId").notNull(),
+
+  name: varchar("name", { length: 255 }).notNull(), // e.g., "Certificate of Incorporation"
+  description: text("description"), // Detailed description of what's needed
+  requirement: mysqlEnum("requirement", ["required", "recommended", "optional"]).default("required").notNull(),
+
+  // Keywords for auto-matching documents
+  matchKeywords: text("matchKeywords"), // JSON array of keywords to match against document names
+  matchFileTypes: text("matchFileTypes"), // JSON array of expected file types (pdf, xlsx, etc.)
+
+  sortOrder: int("sortOrder").default(0).notNull(),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type DueDiligenceItem = typeof dueDiligenceItems.$inferSelect;
+export type InsertDueDiligenceItem = typeof dueDiligenceItems.$inferInsert;
+
+// Data Room Checklist Instance (a checklist applied to a specific data room)
+export const dataRoomChecklists = mysqlTable("data_room_checklists", {
+  id: int("id").autoincrement().primaryKey(),
+  dataRoomId: int("dataRoomId").notNull(),
+  templateId: int("templateId"), // Optional - can be based on a template or custom
+
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+
+  // Progress tracking
+  totalItems: int("totalItems").default(0).notNull(),
+  completedItems: int("completedItems").default(0).notNull(),
+  partialItems: int("partialItems").default(0).notNull(),
+  missingItems: int("missingItems").default(0).notNull(),
+
+  // Status
+  status: mysqlEnum("status", ["draft", "active", "completed", "archived"]).default("active").notNull(),
+  completedAt: timestamp("completedAt"),
+
+  createdBy: int("createdBy").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type DataRoomChecklist = typeof dataRoomChecklists.$inferSelect;
+export type InsertDataRoomChecklist = typeof dataRoomChecklists.$inferInsert;
+
+// Data Room Checklist Item Status (tracks status of each item in a data room)
+export const dataRoomChecklistItems = mysqlTable("data_room_checklist_items", {
+  id: int("id").autoincrement().primaryKey(),
+  checklistId: int("checklistId").notNull(),
+  dataRoomId: int("dataRoomId").notNull(),
+
+  // Item details (copied from template or custom)
+  categoryName: varchar("categoryName", { length: 255 }).notNull(),
+  itemName: varchar("itemName", { length: 255 }).notNull(),
+  itemDescription: text("itemDescription"),
+  requirement: mysqlEnum("requirement", ["required", "recommended", "optional"]).default("required").notNull(),
+
+  // Keywords for matching
+  matchKeywords: text("matchKeywords"),
+  matchFileTypes: text("matchFileTypes"),
+
+  // Status tracking
+  status: mysqlEnum("status", ["missing", "partial", "complete", "not_applicable", "waived"]).default("missing").notNull(),
+
+  // Linked documents (when status is complete or partial)
+  linkedDocumentIds: text("linkedDocumentIds"), // JSON array of document IDs
+  linkedDocumentCount: int("linkedDocumentCount").default(0).notNull(),
+
+  // Notes and comments
+  notes: text("notes"),
+  internalNotes: text("internalNotes"), // Internal notes not visible to visitors
+
+  // Review tracking
+  reviewedBy: int("reviewedBy"),
+  reviewedAt: timestamp("reviewedAt"),
+  reviewStatus: mysqlEnum("reviewStatus", ["pending", "approved", "needs_attention", "rejected"]),
+  reviewNotes: text("reviewNotes"),
+
+  // Waiver info (if status is waived)
+  waivedBy: int("waivedBy"),
+  waivedAt: timestamp("waivedAt"),
+  waiverReason: text("waiverReason"),
+
+  sortOrder: int("sortOrder").default(0).notNull(),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type DataRoomChecklistItem = typeof dataRoomChecklistItems.$inferSelect;
+export type InsertDataRoomChecklistItem = typeof dataRoomChecklistItems.$inferInsert;
+
+// Standard Due Diligence Categories (for seeding templates)
+export const STANDARD_DD_CATEGORIES = {
+  CORPORATE: {
+    name: "Corporate Documents",
+    items: [
+      { name: "Certificate of Incorporation", keywords: ["certificate", "incorporation", "articles"] },
+      { name: "Bylaws", keywords: ["bylaws", "by-laws"] },
+      { name: "Board Resolutions", keywords: ["board", "resolution", "minutes"] },
+      { name: "Stockholder Agreements", keywords: ["stockholder", "shareholder", "agreement"] },
+      { name: "Cap Table", keywords: ["cap table", "capitalization", "equity"] },
+      { name: "Option Pool Summary", keywords: ["option", "pool", "esop", "stock options"] },
+      { name: "Voting Agreements", keywords: ["voting", "agreement"] },
+    ]
+  },
+  FINANCIAL: {
+    name: "Financial Documents",
+    items: [
+      { name: "Audited Financial Statements", keywords: ["audited", "financial", "statements", "audit"] },
+      { name: "Monthly/Quarterly Financials", keywords: ["monthly", "quarterly", "financials", "p&l", "income statement"] },
+      { name: "Balance Sheet", keywords: ["balance sheet", "assets", "liabilities"] },
+      { name: "Cash Flow Statement", keywords: ["cash flow", "statement"] },
+      { name: "Budget/Forecast", keywords: ["budget", "forecast", "projections"] },
+      { name: "Tax Returns", keywords: ["tax", "return", "irs", "filing"] },
+      { name: "Bank Statements", keywords: ["bank", "statement", "account"] },
+    ]
+  },
+  LEGAL: {
+    name: "Legal & Compliance",
+    items: [
+      { name: "Material Contracts", keywords: ["contract", "agreement", "material"] },
+      { name: "Customer Agreements", keywords: ["customer", "agreement", "contract", "msa"] },
+      { name: "Vendor Agreements", keywords: ["vendor", "supplier", "agreement"] },
+      { name: "Litigation Summary", keywords: ["litigation", "lawsuit", "legal", "dispute"] },
+      { name: "Regulatory Filings", keywords: ["regulatory", "filing", "compliance", "license"] },
+      { name: "Insurance Policies", keywords: ["insurance", "policy", "coverage"] },
+    ]
+  },
+  IP: {
+    name: "Intellectual Property",
+    items: [
+      { name: "Patent Portfolio", keywords: ["patent", "portfolio", "invention"] },
+      { name: "Trademark Registrations", keywords: ["trademark", "registration", "brand"] },
+      { name: "Copyright Registrations", keywords: ["copyright", "registration"] },
+      { name: "IP Assignment Agreements", keywords: ["ip", "assignment", "intellectual property"] },
+      { name: "Open Source Licenses", keywords: ["open source", "license", "oss"] },
+    ]
+  },
+  HR: {
+    name: "Human Resources",
+    items: [
+      { name: "Org Chart", keywords: ["org chart", "organization", "structure"] },
+      { name: "Employee Roster", keywords: ["employee", "roster", "headcount", "team"] },
+      { name: "Employment Agreements", keywords: ["employment", "agreement", "offer letter"] },
+      { name: "Benefit Plans", keywords: ["benefit", "plan", "401k", "health"] },
+      { name: "Contractor Agreements", keywords: ["contractor", "consultant", "agreement"] },
+    ]
+  },
+  PRODUCT: {
+    name: "Product & Technology",
+    items: [
+      { name: "Product Roadmap", keywords: ["product", "roadmap", "plan"] },
+      { name: "Technical Architecture", keywords: ["technical", "architecture", "system", "diagram"] },
+      { name: "Security Documentation", keywords: ["security", "soc2", "compliance", "pentest"] },
+      { name: "Data Privacy Policies", keywords: ["privacy", "policy", "gdpr", "ccpa", "data"] },
+    ]
+  },
+  COMMERCIAL: {
+    name: "Commercial",
+    items: [
+      { name: "Customer List", keywords: ["customer", "list", "clients"] },
+      { name: "Revenue by Customer", keywords: ["revenue", "customer", "arr", "mrr"] },
+      { name: "Sales Pipeline", keywords: ["sales", "pipeline", "forecast"] },
+      { name: "Pricing Information", keywords: ["pricing", "price", "rate card"] },
+      { name: "Marketing Materials", keywords: ["marketing", "materials", "deck", "brochure"] },
+    ]
+  },
+} as const;

@@ -9531,6 +9531,239 @@ Ask if they received the original request and if they can provide a quote.`;
           return { csv, filename };
         }),
     }),
+
+    // ============================================
+    // DUE DILIGENCE CHECKLISTS
+    // ============================================
+    dueDiligence: router({
+      // Get checklist summary for a data room
+      getSummary: protectedProcedure
+        .input(z.object({ dataRoomId: z.number() }))
+        .query(async ({ input }) => {
+          return db.getChecklistSummary(input.dataRoomId);
+        }),
+
+      // List all checklists for a data room
+      list: protectedProcedure
+        .input(z.object({ dataRoomId: z.number() }))
+        .query(async ({ input }) => {
+          return db.getDataRoomChecklists(input.dataRoomId);
+        }),
+
+      // Get a checklist with all its items
+      getById: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(async ({ input }) => {
+          return db.getChecklistWithItems(input.id);
+        }),
+
+      // Create a standard due diligence checklist
+      createStandard: protectedProcedure
+        .input(z.object({
+          dataRoomId: z.number(),
+          checklistType: z.enum(['fundraising', 'ma', 'full']).default('full'),
+          customName: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const checklist = await db.createStandardChecklist(
+            input.dataRoomId,
+            ctx.user.id,
+            input.checklistType,
+            input.customName
+          );
+          return checklist;
+        }),
+
+      // Create from a template
+      createFromTemplate: protectedProcedure
+        .input(z.object({
+          dataRoomId: z.number(),
+          templateId: z.number(),
+          customName: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          return db.createChecklistFromTemplate(
+            input.dataRoomId,
+            input.templateId,
+            ctx.user.id,
+            input.customName
+          );
+        }),
+
+      // Auto-match documents against checklist items
+      autoMatch: protectedProcedure
+        .input(z.object({ checklistId: z.number() }))
+        .mutation(async ({ input }) => {
+          return db.autoMatchChecklistDocuments(input.checklistId);
+        }),
+
+      // Update checklist item status
+      updateItem: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          status: z.enum(['missing', 'partial', 'complete', 'not_applicable', 'waived']).optional(),
+          notes: z.string().optional(),
+          internalNotes: z.string().optional(),
+          waiverReason: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, waiverReason, ...data } = input;
+
+          const updateData: any = { ...data };
+
+          // If waiving the item, set the waiver info
+          if (input.status === 'waived' && waiverReason) {
+            updateData.waivedBy = ctx.user.id;
+            updateData.waivedAt = new Date();
+            updateData.waiverReason = waiverReason;
+          }
+
+          await db.updateChecklistItem(id, updateData);
+
+          // Get the item to recalculate parent checklist
+          const item = await db.getChecklistItemById(id);
+          if (item) {
+            await db.recalculateChecklistProgress(item.checklistId);
+          }
+
+          return { success: true };
+        }),
+
+      // Link a document to a checklist item
+      linkDocument: protectedProcedure
+        .input(z.object({
+          itemId: z.number(),
+          documentId: z.number(),
+        }))
+        .mutation(async ({ input }) => {
+          const item = await db.getChecklistItemById(input.itemId);
+          if (!item) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'Checklist item not found' });
+          }
+
+          let linkedIds: number[] = [];
+          try {
+            linkedIds = item.linkedDocumentIds ? JSON.parse(item.linkedDocumentIds) : [];
+          } catch (e) {
+            linkedIds = [];
+          }
+
+          if (!linkedIds.includes(input.documentId)) {
+            linkedIds.push(input.documentId);
+          }
+
+          await db.updateChecklistItem(input.itemId, {
+            linkedDocumentIds: JSON.stringify(linkedIds),
+            linkedDocumentCount: linkedIds.length,
+            status: linkedIds.length > 0 ? 'complete' : 'missing',
+          });
+
+          await db.recalculateChecklistProgress(item.checklistId);
+
+          return { success: true };
+        }),
+
+      // Unlink a document from a checklist item
+      unlinkDocument: protectedProcedure
+        .input(z.object({
+          itemId: z.number(),
+          documentId: z.number(),
+        }))
+        .mutation(async ({ input }) => {
+          const item = await db.getChecklistItemById(input.itemId);
+          if (!item) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'Checklist item not found' });
+          }
+
+          let linkedIds: number[] = [];
+          try {
+            linkedIds = item.linkedDocumentIds ? JSON.parse(item.linkedDocumentIds) : [];
+          } catch (e) {
+            linkedIds = [];
+          }
+
+          linkedIds = linkedIds.filter(id => id !== input.documentId);
+
+          await db.updateChecklistItem(input.itemId, {
+            linkedDocumentIds: JSON.stringify(linkedIds),
+            linkedDocumentCount: linkedIds.length,
+            status: linkedIds.length > 0 ? 'complete' : 'missing',
+          });
+
+          await db.recalculateChecklistProgress(item.checklistId);
+
+          return { success: true };
+        }),
+
+      // Add a custom item to a checklist
+      addItem: protectedProcedure
+        .input(z.object({
+          checklistId: z.number(),
+          categoryName: z.string(),
+          itemName: z.string(),
+          itemDescription: z.string().optional(),
+          requirement: z.enum(['required', 'recommended', 'optional']).default('required'),
+          matchKeywords: z.array(z.string()).optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const checklist = await db.getDataRoomChecklistById(input.checklistId);
+          if (!checklist) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'Checklist not found' });
+          }
+
+          const result = await db.createDataRoomChecklistItem({
+            checklistId: input.checklistId,
+            dataRoomId: checklist.dataRoomId,
+            categoryName: input.categoryName,
+            itemName: input.itemName,
+            itemDescription: input.itemDescription,
+            requirement: input.requirement,
+            matchKeywords: input.matchKeywords ? JSON.stringify(input.matchKeywords) : undefined,
+            status: 'missing',
+          });
+
+          await db.recalculateChecklistProgress(input.checklistId);
+
+          return result;
+        }),
+
+      // Delete a checklist item
+      deleteItem: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input }) => {
+          const item = await db.getChecklistItemById(input.id);
+          if (item) {
+            await db.deleteChecklistItem(input.id);
+            await db.recalculateChecklistProgress(item.checklistId);
+          }
+          return { success: true };
+        }),
+
+      // Delete entire checklist
+      delete: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input }) => {
+          await db.deleteDataRoomChecklist(input.id);
+          return { success: true };
+        }),
+
+      // Review an item
+      reviewItem: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          reviewStatus: z.enum(['pending', 'approved', 'needs_attention', 'rejected']),
+          reviewNotes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          await db.updateChecklistItem(input.id, {
+            reviewStatus: input.reviewStatus,
+            reviewNotes: input.reviewNotes,
+            reviewedBy: ctx.user.id,
+            reviewedAt: new Date(),
+          });
+          return { success: true };
+        }),
+    }),
   }),
 
   // ============================================
