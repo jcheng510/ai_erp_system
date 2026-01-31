@@ -249,6 +249,13 @@ export async function getCustomerByHubspotId(hubspotId: string) {
   return result[0];
 }
 
+export async function getCustomerByEmail(email: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(customers).where(eq(customers.email, email)).limit(1);
+  return result[0];
+}
+
 export async function createCustomer(data: InsertCustomer) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -324,6 +331,13 @@ export async function getProductById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
   const result = await db.select().from(products).where(eq(products.id, id)).limit(1);
+  return result[0];
+}
+
+export async function getProductBySku(sku: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(products).where(eq(products.sku, sku)).limit(1);
   return result[0];
 }
 
@@ -1732,8 +1746,15 @@ export async function getConsolidatedInventory() {
 export async function getInventoryByProduct(productId: number) {
   const db = await getDb();
   if (!db) return [];
-  
+
   return db.select().from(inventory).where(eq(inventory.productId, productId));
+}
+
+export async function getInventoryByProductId(productId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(inventory).where(eq(inventory.productId, productId)).limit(1);
+  return result[0];
 }
 
 export async function updateInventoryQuantity(productId: number, warehouseId: number, quantityChange: number) {

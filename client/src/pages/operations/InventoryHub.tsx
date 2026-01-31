@@ -36,7 +36,20 @@ import {
   Loader2,
   Ship,
   Plane,
+  ShoppingBag,
+  Plug,
+  CloudUpload,
+  FileSpreadsheet,
+  Mail,
 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { QuickCreateDialog } from "@/components/QuickCreateDialog";
 import { Link } from "wouter";
@@ -86,6 +99,7 @@ interface Exception {
 export default function InventoryHub() {
   const [activeView, setActiveView] = useState<"exceptions" | "by_item" | "by_location">("exceptions");
   const [searchTerm, setSearchTerm] = useState("");
+  const [isSyncing, setIsSyncing] = useState(false);
   const [expandedItems, setExpandedItems] = useState<Set<number>>(new Set());
   const [selectedLocation, setSelectedLocation] = useState<number | null>(null);
   const [showShipmentDialog, setShowShipmentDialog] = useState(false);
@@ -115,6 +129,38 @@ export default function InventoryHub() {
   // Lots and balances will be fetched from inventory data
 
   const utils = trpc.useUtils();
+
+  // Integration status
+  const { data: integrationStatus } = trpc.integrations.getStatus.useQuery();
+
+  // Shopify sync mutations for inventory
+  const syncShopifyInventory = trpc.shopify.sync.inventory.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Synced ${data.updated} inventory records from Shopify`);
+      utils.inventory.invalidate();
+      setIsSyncing(false);
+    },
+    onError: (err: any) => { toast.error(err.message); setIsSyncing(false); },
+  });
+
+  const syncShopifyProducts = trpc.shopify.sync.products.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Synced ${data.imported} new products, updated ${data.updated}`);
+      utils.inventory.invalidate();
+      setIsSyncing(false);
+    },
+    onError: (err: any) => { toast.error(err.message); setIsSyncing(false); },
+  });
+
+  const handleSyncInventory = () => {
+    setIsSyncing(true);
+    syncShopifyInventory.mutate({});
+  };
+
+  const handleSyncProducts = () => {
+    setIsSyncing(true);
+    syncShopifyProducts.mutate({});
+  };
 
   // Mutations
   const receiveTransfer = trpc.transfers.receive.useMutation({
@@ -474,6 +520,84 @@ export default function InventoryHub() {
               className="pl-9 w-[280px]"
             />
           </div>
+
+          {/* Shopify Inventory Sync */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" disabled={isSyncing}>
+                {isSyncing ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <ShoppingBag className="h-4 w-4 mr-2" />
+                )}
+                Sync
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuLabel className="flex items-center gap-2">
+                <ShoppingBag className="h-4 w-4 text-green-600" />
+                Shopify Sync
+                {integrationStatus?.shopify?.configured ? (
+                  <Badge variant="outline" className="ml-auto text-xs bg-green-50 text-green-700">Connected</Badge>
+                ) : (
+                  <Badge variant="outline" className="ml-auto text-xs">Not Set Up</Badge>
+                )}
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              {integrationStatus?.shopify?.configured ? (
+                <>
+                  <DropdownMenuItem onClick={handleSyncInventory}>
+                    <Package className="h-4 w-4 mr-2" />
+                    Sync Inventory Levels
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleSyncProducts}>
+                    <Layers className="h-4 w-4 mr-2" />
+                    Sync Products
+                  </DropdownMenuItem>
+                </>
+              ) : (
+                <DropdownMenuItem asChild>
+                  <Link href="/settings/integrations">
+                    <Plug className="h-4 w-4 mr-2" />
+                    Configure Shopify
+                  </Link>
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          {/* More Integrations */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="icon">
+                <Plug className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuLabel>Integrations</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem asChild>
+                <Link href="/import">
+                  <CloudUpload className="h-4 w-4 mr-2" />
+                  Import from Google Sheets
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem asChild>
+                <Link href="/settings/integrations">
+                  <FileSpreadsheet className="h-4 w-4 mr-2" />
+                  Export to Sheets
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem asChild>
+                <Link href="/settings/integrations">
+                  <Plug className="h-4 w-4 mr-2" />
+                  All Integrations
+                </Link>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
           <Button variant="outline" onClick={() => utils.inventory.invalidate()}>
             <RefreshCw className="h-4 w-4 mr-2" />
             Refresh
