@@ -5,6 +5,7 @@ import { join } from "path";
 import { tmpdir } from "os";
 import { execSync } from "child_process";
 import { fromBuffer } from "pdf2pic";
+import { randomBytes } from "crypto";
 
 // PDF.js will be imported dynamically in the function to avoid worker issues
 
@@ -214,7 +215,6 @@ If document type is unknown, return both as null.`;
         }
         const arrayBuffer = await response.arrayBuffer();
         const uint8Array = new Uint8Array(arrayBuffer);
-        const buffer = Buffer.from(arrayBuffer);
         console.log("[DocumentImport] Downloaded PDF, size:", uint8Array.byteLength);
         
         // Use pdfjs-dist to extract text (pure JavaScript, no native dependencies)
@@ -242,8 +242,13 @@ If document type is unknown, return both as null.`;
             console.warn(`[DocumentImport] PDF has ${pdf.numPages} pages, but only processing first page for OCR. Additional pages will be ignored.`);
           }
           
+          // Create buffer for pdf2pic (only needed for scanned PDFs)
+          const buffer = Buffer.from(arrayBuffer);
+          
           // Convert PDF to images using pdf2pic for OCR
-          const tempDir = join(tmpdir(), `pdf_ocr_${Date.now()}`);
+          // Use crypto.randomBytes for unique directory name to avoid collisions
+          const uniqueId = randomBytes(8).toString('hex');
+          const tempDir = join(tmpdir(), `pdf_ocr_${uniqueId}`);
           if (!existsSync(tempDir)) {
             mkdirSync(tempDir, { recursive: true });
           }
@@ -251,7 +256,7 @@ If document type is unknown, return both as null.`;
           try {
             const options = {
               density: 200, // DPI for image conversion
-              saveFilename: "pdf_page",
+              saveFilename: `pdf_page_${uniqueId}`, // Unique filename to avoid collisions
               savePath: tempDir,
               format: "png" as const,
               width: 2000,
