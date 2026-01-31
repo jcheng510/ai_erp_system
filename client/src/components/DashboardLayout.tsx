@@ -63,6 +63,8 @@ import {
   Brain,
   Plug,
   FolderLock,
+  Target,
+  MessageSquare,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -92,6 +94,14 @@ const menuGroups = [
       { icon: ShoppingCart, label: "Sales Hub", path: "/sales/hub" },
       { icon: DollarSign, label: "Accounts", path: "/finance/accounts" },
       { icon: TrendingUp, label: "Transactions", path: "/finance/transactions" },
+    ],
+  },
+  {
+    label: "CRM",
+    items: [
+      { icon: Target, label: "CRM Hub", path: "/crm" },
+      { icon: Users, label: "Contacts", path: "/crm" },
+      { icon: MessageSquare, label: "Messaging", path: "/crm" },
     ],
   },
   {
@@ -221,7 +231,7 @@ function DashboardLayoutContent({
   const [isResizing, setIsResizing] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
   const isMobile = useIsMobile();
-  const [openGroups, setOpenGroups] = useState<string[]>(["Overview", "Finance", "Sales", "Operations"]);
+  const [openGroups, setOpenGroups] = useState<string[]>(["Overview", "Finance", "Sales", "CRM", "Operations"]);
   const [aiCommandOpen, setAiCommandOpen] = useState(false);
 
   // Global keyboard shortcuts
@@ -249,6 +259,7 @@ function DashboardLayoutContent({
             case 'd': setLocation('/'); break; // Go to Dashboard
             case 'a': setLocation('/ai'); break; // Go to AI Assistant
             case 's': setLocation('/sales/hub'); break; // Go to Sales
+            case 'c': setLocation('/crm'); break; // Go to CRM
             case 'm': setLocation('/operations/manufacturing-hub'); break; // Go to Manufacturing
             case 'p': setLocation('/operations/procurement-hub'); break; // Go to Procurement
             case 'l': setLocation('/operations/logistics-hub'); break; // Go to Logistics
@@ -268,6 +279,7 @@ function DashboardLayoutContent({
           'g d - Dashboard\n' +
           'g a - AI Assistant\n' +
           'g s - Sales Hub\n' +
+          'g c - CRM Hub\n' +
           'g m - Manufacturing\n' +
           'g p - Procurement\n' +
           'g l - Logistics\n' +
