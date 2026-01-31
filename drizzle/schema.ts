@@ -3502,3 +3502,586 @@ export const crmCampaignRecipients = mysqlTable("crm_campaign_recipients", {
 
 export type CrmCampaignRecipient = typeof crmCampaignRecipients.$inferSelect;
 export type InsertCrmCampaignRecipient = typeof crmCampaignRecipients.$inferInsert;
+
+// ============================================
+// CAP TABLE & EQUITY MANAGEMENT
+// ============================================
+
+// Share classes (Common, Preferred Series A, B, C, etc.)
+export const shareClasses = mysqlTable("share_classes", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 100 }).notNull(), // e.g., "Common Stock", "Series A Preferred"
+  type: mysqlEnum("type", ["common", "preferred", "convertible"]).default("common").notNull(),
+
+  // Authorized shares
+  authorizedShares: bigint("authorizedShares", { mode: "number" }).default(0).notNull(),
+  issuedShares: bigint("issuedShares", { mode: "number" }).default(0).notNull(),
+
+  // Pricing
+  pricePerShare: decimal("pricePerShare", { precision: 18, scale: 6 }),
+  parValue: decimal("parValue", { precision: 18, scale: 6 }).default("0.0001"),
+
+  // Preferences (for preferred stock)
+  liquidationPreference: decimal("liquidationPreference", { precision: 5, scale: 2 }), // e.g., 1.00 = 1x
+  participatingPreferred: boolean("participatingPreferred").default(false),
+  dividendRate: decimal("dividendRate", { precision: 5, scale: 4 }), // e.g., 0.08 = 8%
+  cumulativeDividends: boolean("cumulativeDividends").default(false),
+
+  // Conversion
+  conversionRatio: decimal("conversionRatio", { precision: 10, scale: 6 }).default("1.000000"),
+  antidilutionType: mysqlEnum("antidilutionType", ["none", "broad_based_weighted_average", "narrow_based_weighted_average", "full_ratchet"]).default("none"),
+
+  // Voting
+  votingRights: boolean("votingRights").default(true),
+  votesPerShare: int("votesPerShare").default(1),
+
+  // Order for waterfall calculations
+  seniorityOrder: int("seniorityOrder").default(0),
+
+  notes: text("notes"),
+  isActive: boolean("isActive").default(true).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ShareClass = typeof shareClasses.$inferSelect;
+export type InsertShareClass = typeof shareClasses.$inferInsert;
+
+// Shareholders (investors, employees, founders, entities)
+export const shareholders = mysqlTable("shareholders", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+
+  // Basic info
+  name: varchar("name", { length: 255 }).notNull(),
+  type: mysqlEnum("type", ["individual", "entity", "trust", "employee", "founder", "advisor"]).default("individual").notNull(),
+  email: varchar("email", { length: 320 }),
+  phone: varchar("phone", { length: 32 }),
+
+  // Address
+  address: text("address"),
+  city: varchar("city", { length: 100 }),
+  state: varchar("state", { length: 100 }),
+  country: varchar("country", { length: 100 }),
+  postalCode: varchar("postalCode", { length: 20 }),
+
+  // Entity details (if applicable)
+  entityType: varchar("entityType", { length: 100 }), // LLC, Corporation, LP, etc.
+  signatoryName: varchar("signatoryName", { length: 255 }),
+  signatoryTitle: varchar("signatoryTitle", { length: 100 }),
+
+  // Tax info
+  taxId: varchar("taxId", { length: 50 }), // SSN or EIN (encrypted)
+  taxIdType: mysqlEnum("taxIdType", ["ssn", "ein", "itin", "foreign"]),
+  taxResidenceCountry: varchar("taxResidenceCountry", { length: 100 }),
+  isUSPerson: boolean("isUSPerson").default(true),
+
+  // Accreditation (for securities compliance)
+  accreditationStatus: mysqlEnum("accreditationStatus", ["accredited", "non_accredited", "qualified_purchaser", "pending_verification", "unknown"]).default("unknown"),
+  accreditationVerifiedAt: timestamp("accreditationVerifiedAt"),
+  accreditationMethod: varchar("accreditationMethod", { length: 100 }),
+
+  // Link to user account for portal access
+  userId: int("userId"),
+  portalAccessEnabled: boolean("portalAccessEnabled").default(false),
+  portalLastAccessedAt: timestamp("portalLastAccessedAt"),
+
+  // Board member / voting
+  isBoardMember: boolean("isBoardMember").default(false),
+  boardSeatType: mysqlEnum("boardSeatType", ["founder", "investor", "independent", "observer"]),
+
+  notes: text("notes"),
+  isActive: boolean("isActive").default(true).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type Shareholder = typeof shareholders.$inferSelect;
+export type InsertShareholder = typeof shareholders.$inferInsert;
+
+// Equity holdings (actual shares owned)
+export const equityHoldings = mysqlTable("equity_holdings", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  shareholderId: int("shareholderId").notNull(),
+  shareClassId: int("shareClassId").notNull(),
+
+  // Share counts
+  shares: bigint("shares", { mode: "number" }).notNull(),
+
+  // Cost basis
+  purchasePrice: decimal("purchasePrice", { precision: 18, scale: 6 }),
+  totalCostBasis: decimal("totalCostBasis", { precision: 18, scale: 2 }),
+
+  // Acquisition details
+  acquisitionDate: timestamp("acquisitionDate").notNull(),
+  acquisitionType: mysqlEnum("acquisitionType", ["purchase", "grant", "exercise", "transfer", "conversion", "gift", "inheritance"]).default("purchase").notNull(),
+
+  // Related grant (if from option exercise)
+  equityGrantId: int("equityGrantId"),
+
+  // Certificate tracking
+  certificateNumber: varchar("certificateNumber", { length: 50 }),
+  certificateIssuedAt: timestamp("certificateIssuedAt"),
+
+  // Restrictions
+  restricted: boolean("restricted").default(false),
+  restrictionType: varchar("restrictionType", { length: 100 }), // e.g., "ROFR", "Lock-up"
+  restrictionExpiresAt: timestamp("restrictionExpiresAt"),
+
+  // 83(b) election (for restricted stock)
+  election83bFiled: boolean("election83bFiled").default(false),
+  election83bFiledAt: timestamp("election83bFiledAt"),
+
+  notes: text("notes"),
+  isActive: boolean("isActive").default(true).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EquityHolding = typeof equityHoldings.$inferSelect;
+export type InsertEquityHolding = typeof equityHoldings.$inferInsert;
+
+// Vesting schedules
+export const vestingSchedules = mysqlTable("vesting_schedules", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 100 }).notNull(),
+
+  // Schedule type
+  scheduleType: mysqlEnum("scheduleType", ["time_based", "milestone_based", "hybrid"]).default("time_based").notNull(),
+
+  // Time-based vesting parameters
+  totalMonths: int("totalMonths").default(48), // Total vesting period
+  cliffMonths: int("cliffMonths").default(12), // Cliff period
+  vestingFrequency: mysqlEnum("vestingFrequency", ["monthly", "quarterly", "annually", "at_cliff"]).default("monthly"),
+
+  // Cliff details
+  cliffPercentage: decimal("cliffPercentage", { precision: 5, scale: 2 }).default("25.00"), // Percentage vesting at cliff
+
+  // Acceleration
+  singleTriggerAcceleration: boolean("singleTriggerAcceleration").default(false),
+  doubleTriggerAcceleration: boolean("doubleTriggerAcceleration").default(false),
+  accelerationPercentage: decimal("accelerationPercentage", { precision: 5, scale: 2 }).default("100.00"),
+
+  // For milestone-based
+  milestones: text("milestones"), // JSON array of milestone definitions
+
+  notes: text("notes"),
+  isActive: boolean("isActive").default(true).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type VestingSchedule = typeof vestingSchedules.$inferSelect;
+export type InsertVestingSchedule = typeof vestingSchedules.$inferInsert;
+
+// Equity grants (options, RSUs, RSAs, warrants)
+export const equityGrants = mysqlTable("equity_grants", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  shareholderId: int("shareholderId").notNull(),
+  shareClassId: int("shareClassId").notNull(),
+  vestingScheduleId: int("vestingScheduleId"),
+
+  // Grant details
+  grantType: mysqlEnum("grantType", ["iso", "nso", "rsu", "rsa", "warrant", "phantom"]).notNull(),
+  grantDate: timestamp("grantDate").notNull(),
+  grantNumber: varchar("grantNumber", { length: 50 }), // e.g., "ISO-2024-001"
+
+  // Shares
+  sharesGranted: bigint("sharesGranted", { mode: "number" }).notNull(),
+  sharesVested: bigint("sharesVested", { mode: "number" }).default(0).notNull(),
+  sharesExercised: bigint("sharesExercised", { mode: "number" }).default(0).notNull(),
+  sharesCancelled: bigint("sharesCancelled", { mode: "number" }).default(0).notNull(),
+
+  // Pricing
+  exercisePrice: decimal("exercisePrice", { precision: 18, scale: 6 }).notNull(),
+  fairMarketValue: decimal("fairMarketValue", { precision: 18, scale: 6 }), // FMV at grant
+
+  // Vesting dates
+  vestingStartDate: timestamp("vestingStartDate").notNull(),
+  cliffDate: timestamp("cliffDate"),
+  fullyVestedDate: timestamp("fullyVestedDate"),
+
+  // Expiration
+  expirationDate: timestamp("expirationDate"),
+  postTerminationExercisePeriod: int("postTerminationExercisePeriod").default(90), // days
+
+  // Status
+  status: mysqlEnum("status", ["active", "fully_vested", "partially_exercised", "fully_exercised", "cancelled", "expired", "forfeited"]).default("active").notNull(),
+  terminationDate: timestamp("terminationDate"),
+  terminationReason: varchar("terminationReason", { length: 255 }),
+
+  // Board approval
+  boardApprovalDate: timestamp("boardApprovalDate"),
+  boardApprovalResolution: varchar("boardApprovalResolution", { length: 100 }),
+
+  // Early exercise
+  earlyExerciseAllowed: boolean("earlyExerciseAllowed").default(false),
+
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EquityGrant = typeof equityGrants.$inferSelect;
+export type InsertEquityGrant = typeof equityGrants.$inferInsert;
+
+// Stock option exercises
+export const optionExercises = mysqlTable("option_exercises", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  equityGrantId: int("equityGrantId").notNull(),
+  shareholderId: int("shareholderId").notNull(),
+
+  // Exercise details
+  exerciseDate: timestamp("exerciseDate").notNull(),
+  sharesExercised: bigint("sharesExercised", { mode: "number" }).notNull(),
+  exercisePrice: decimal("exercisePrice", { precision: 18, scale: 6 }).notNull(),
+  totalExerciseCost: decimal("totalExerciseCost", { precision: 18, scale: 2 }).notNull(),
+
+  // FMV at exercise (for tax purposes)
+  fairMarketValueAtExercise: decimal("fairMarketValueAtExercise", { precision: 18, scale: 6 }),
+  bargainElement: decimal("bargainElement", { precision: 18, scale: 2 }), // FMV - Exercise Price * Shares
+
+  // Payment method
+  paymentMethod: mysqlEnum("paymentMethod", ["cash", "cashless", "net_exercise", "promissory_note"]).default("cash"),
+  paymentReceivedAt: timestamp("paymentReceivedAt"),
+
+  // Resulting holding
+  equityHoldingId: int("equityHoldingId"),
+
+  // Withholding
+  taxWithholdingAmount: decimal("taxWithholdingAmount", { precision: 18, scale: 2 }),
+
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type OptionExercise = typeof optionExercises.$inferSelect;
+export type InsertOptionExercise = typeof optionExercises.$inferInsert;
+
+// Stock transactions (transfers, repurchases, etc.)
+export const stockTransactions = mysqlTable("stock_transactions", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+
+  transactionType: mysqlEnum("transactionType", [
+    "issuance", "transfer", "repurchase", "conversion", "split", "reverse_split",
+    "cancellation", "forfeiture", "gift", "inheritance", "secondary_sale"
+  ]).notNull(),
+
+  transactionDate: timestamp("transactionDate").notNull(),
+
+  // Source (for transfers)
+  fromShareholderId: int("fromShareholderId"),
+  fromHoldingId: int("fromHoldingId"),
+
+  // Destination
+  toShareholderId: int("toShareholderId"),
+  toHoldingId: int("toHoldingId"),
+
+  // Details
+  shareClassId: int("shareClassId").notNull(),
+  shares: bigint("shares", { mode: "number" }).notNull(),
+  pricePerShare: decimal("pricePerShare", { precision: 18, scale: 6 }),
+  totalValue: decimal("totalValue", { precision: 18, scale: 2 }),
+
+  // For splits
+  splitRatio: varchar("splitRatio", { length: 20 }), // e.g., "2:1" or "1:10"
+
+  // Board/legal
+  boardApprovalDate: timestamp("boardApprovalDate"),
+  boardApprovalResolution: varchar("boardApprovalResolution", { length: 100 }),
+  rofrWaived: boolean("rofrWaived").default(false),
+  rofrWaivedAt: timestamp("rofrWaivedAt"),
+
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type StockTransaction = typeof stockTransactions.$inferSelect;
+export type InsertStockTransaction = typeof stockTransactions.$inferInsert;
+
+// Funding rounds
+export const fundingRounds = mysqlTable("funding_rounds", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+
+  name: varchar("name", { length: 100 }).notNull(), // e.g., "Series A", "Seed", "Bridge"
+  roundType: mysqlEnum("roundType", [
+    "pre_seed", "seed", "series_a", "series_b", "series_c", "series_d",
+    "bridge", "convertible_note", "safe", "secondary", "other"
+  ]).notNull(),
+
+  status: mysqlEnum("status", ["planned", "in_progress", "closed", "cancelled"]).default("planned").notNull(),
+
+  // Timing
+  openDate: timestamp("openDate"),
+  closeDate: timestamp("closeDate"),
+
+  // Targets
+  targetAmount: decimal("targetAmount", { precision: 18, scale: 2 }),
+  minimumAmount: decimal("minimumAmount", { precision: 18, scale: 2 }),
+  maximumAmount: decimal("maximumAmount", { precision: 18, scale: 2 }),
+
+  // Actuals
+  amountRaised: decimal("amountRaised", { precision: 18, scale: 2 }).default("0"),
+
+  // Valuation
+  preMoneyValuation: decimal("preMoneyValuation", { precision: 18, scale: 2 }),
+  postMoneyValuation: decimal("postMoneyValuation", { precision: 18, scale: 2 }),
+
+  // Share class for this round
+  shareClassId: int("shareClassId"),
+  pricePerShare: decimal("pricePerShare", { precision: 18, scale: 6 }),
+
+  // Lead investor
+  leadInvestorId: int("leadInvestorId"),
+
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type FundingRound = typeof fundingRounds.$inferSelect;
+export type InsertFundingRound = typeof fundingRounds.$inferInsert;
+
+// Investments in funding rounds
+export const fundingInvestments = mysqlTable("funding_investments", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  fundingRoundId: int("fundingRoundId").notNull(),
+  shareholderId: int("shareholderId").notNull(),
+
+  // Investment details
+  investmentAmount: decimal("investmentAmount", { precision: 18, scale: 2 }).notNull(),
+  sharesIssued: bigint("sharesIssued", { mode: "number" }),
+  pricePerShare: decimal("pricePerShare", { precision: 18, scale: 6 }),
+
+  // For convertible instruments
+  conversionDiscount: decimal("conversionDiscount", { precision: 5, scale: 4 }), // e.g., 0.20 = 20%
+  valuationCap: decimal("valuationCap", { precision: 18, scale: 2 }),
+  interestRate: decimal("interestRate", { precision: 5, scale: 4 }),
+  conversionDate: timestamp("conversionDate"),
+
+  // Status
+  status: mysqlEnum("status", ["committed", "received", "converted", "refunded"]).default("committed").notNull(),
+  fundsReceivedAt: timestamp("fundsReceivedAt"),
+
+  // Side letter / special terms
+  hasSpecialTerms: boolean("hasSpecialTerms").default(false),
+  specialTerms: text("specialTerms"),
+
+  // Pro-rata rights
+  proRataRights: boolean("proRataRights").default(false),
+  informationRights: boolean("informationRights").default(false),
+
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type FundingInvestment = typeof fundingInvestments.$inferSelect;
+export type InsertFundingInvestment = typeof fundingInvestments.$inferInsert;
+
+// Valuations (409A valuations, etc.)
+export const valuations = mysqlTable("valuations", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+
+  valuationType: mysqlEnum("valuationType", ["409a", "fair_market_value", "book_value", "external_appraisal", "funding_round"]).notNull(),
+  valuationDate: timestamp("valuationDate").notNull(),
+  effectiveDate: timestamp("effectiveDate").notNull(),
+  expirationDate: timestamp("expirationDate"),
+
+  // Values
+  enterpriseValue: decimal("enterpriseValue", { precision: 18, scale: 2 }),
+  equityValue: decimal("equityValue", { precision: 18, scale: 2 }),
+  commonStockValue: decimal("commonStockValue", { precision: 18, scale: 6 }),
+  preferredStockValue: decimal("preferredStockValue", { precision: 18, scale: 6 }),
+
+  // Per-share values
+  commonSharePrice: decimal("commonSharePrice", { precision: 18, scale: 6 }),
+  fullyDilutedShares: bigint("fullyDilutedShares", { mode: "number" }),
+
+  // Provider
+  valuationProvider: varchar("valuationProvider", { length: 255 }), // e.g., "Carta", "Internal"
+  valuationMethodology: varchar("valuationMethodology", { length: 255 }),
+
+  // Document
+  reportDocumentId: int("reportDocumentId"),
+
+  notes: text("notes"),
+  isActive: boolean("isActive").default(true).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type Valuation = typeof valuations.$inferSelect;
+export type InsertValuation = typeof valuations.$inferInsert;
+
+// Equity scenarios (for modeling)
+export const equityScenarios = mysqlTable("equity_scenarios", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+
+  name: varchar("name", { length: 100 }).notNull(),
+  description: text("description"),
+
+  scenarioType: mysqlEnum("scenarioType", ["funding_round", "exit", "option_pool_expansion", "custom"]).notNull(),
+
+  // Exit scenario parameters
+  exitType: mysqlEnum("exitType", ["acquisition", "ipo", "liquidation"]),
+  exitValue: decimal("exitValue", { precision: 18, scale: 2 }),
+
+  // Funding scenario parameters
+  fundingAmount: decimal("fundingAmount", { precision: 18, scale: 2 }),
+  preMoneyValuation: decimal("preMoneyValuation", { precision: 18, scale: 2 }),
+  newSharesIssued: bigint("newSharesIssued", { mode: "number" }),
+
+  // Option pool changes
+  newOptionPoolShares: bigint("newOptionPoolShares", { mode: "number" }),
+  optionPoolPercentage: decimal("optionPoolPercentage", { precision: 5, scale: 4 }),
+
+  // Results (stored as JSON for flexibility)
+  scenarioResults: text("scenarioResults"), // JSON with waterfall analysis results
+
+  createdBy: int("createdBy"),
+  isActive: boolean("isActive").default(true).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EquityScenario = typeof equityScenarios.$inferSelect;
+export type InsertEquityScenario = typeof equityScenarios.$inferInsert;
+
+// Equity documents (grant letters, agreements, certificates)
+export const equityDocuments = mysqlTable("equity_documents", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+
+  // Document info
+  name: varchar("name", { length: 255 }).notNull(),
+  documentType: mysqlEnum("documentType", [
+    "grant_letter", "stock_option_agreement", "exercise_agreement", "stock_certificate",
+    "rsu_agreement", "restricted_stock_agreement", "warrant", "convertible_note",
+    "safe", "subscription_agreement", "stockholders_agreement", "voting_agreement",
+    "rofr_agreement", "investor_rights_agreement", "cap_table_import", "409a_valuation",
+    "board_consent", "other"
+  ]).notNull(),
+
+  // File storage
+  fileUrl: text("fileUrl").notNull(),
+  fileName: varchar("fileName", { length: 255 }).notNull(),
+  fileSize: int("fileSize"),
+  mimeType: varchar("mimeType", { length: 100 }),
+
+  // Related entities
+  shareholderId: int("shareholderId"),
+  equityGrantId: int("equityGrantId"),
+  equityHoldingId: int("equityHoldingId"),
+  fundingRoundId: int("fundingRoundId"),
+  valuationId: int("valuationId"),
+
+  // Signature tracking
+  requiresSignature: boolean("requiresSignature").default(false),
+  signatureStatus: mysqlEnum("signatureStatus", ["not_required", "pending", "partially_signed", "fully_signed", "declined"]).default("not_required"),
+  signedAt: timestamp("signedAt"),
+
+  // For imported cap table data
+  importStatus: mysqlEnum("importStatus", ["pending", "processing", "completed", "failed"]),
+  importResults: text("importResults"), // JSON with import results/errors
+
+  // Visibility
+  visibleToShareholder: boolean("visibleToShareholder").default(false),
+
+  uploadedBy: int("uploadedBy"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EquityDocument = typeof equityDocuments.$inferSelect;
+export type InsertEquityDocument = typeof equityDocuments.$inferInsert;
+
+// Shareholder portal access tokens
+export const shareholderPortalTokens = mysqlTable("shareholder_portal_tokens", {
+  id: int("id").autoincrement().primaryKey(),
+  shareholderId: int("shareholderId").notNull(),
+
+  token: varchar("token", { length: 128 }).notNull().unique(),
+  tokenType: mysqlEnum("tokenType", ["magic_link", "password_reset", "document_access"]).default("magic_link").notNull(),
+
+  expiresAt: timestamp("expiresAt").notNull(),
+  usedAt: timestamp("usedAt"),
+
+  // For document-specific tokens
+  equityDocumentId: int("equityDocumentId"),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type ShareholderPortalToken = typeof shareholderPortalTokens.$inferSelect;
+export type InsertShareholderPortalToken = typeof shareholderPortalTokens.$inferInsert;
+
+// Shareholder notifications
+export const shareholderNotifications = mysqlTable("shareholder_notifications", {
+  id: int("id").autoincrement().primaryKey(),
+  shareholderId: int("shareholderId").notNull(),
+
+  notificationType: mysqlEnum("notificationType", [
+    "grant_issued", "vesting_event", "exercise_reminder", "document_ready",
+    "expiration_warning", "tax_document", "funding_round", "general"
+  ]).notNull(),
+
+  title: varchar("title", { length: 255 }).notNull(),
+  message: text("message").notNull(),
+
+  // Related entities
+  equityGrantId: int("equityGrantId"),
+  equityDocumentId: int("equityDocumentId"),
+
+  // Delivery
+  sentAt: timestamp("sentAt"),
+  sentVia: mysqlEnum("sentVia", ["email", "portal", "both"]).default("both"),
+  readAt: timestamp("readAt"),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type ShareholderNotification = typeof shareholderNotifications.$inferSelect;
+export type InsertShareholderNotification = typeof shareholderNotifications.$inferInsert;
+
+// Option pool tracking
+export const optionPools = mysqlTable("option_pools", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+
+  name: varchar("name", { length: 100 }).notNull().default("Employee Stock Option Pool"),
+  shareClassId: int("shareClassId").notNull(),
+
+  // Pool size
+  authorizedShares: bigint("authorizedShares", { mode: "number" }).notNull(),
+  allocatedShares: bigint("allocatedShares", { mode: "number" }).default(0).notNull(), // Granted but not exercised
+  exercisedShares: bigint("exercisedShares", { mode: "number" }).default(0).notNull(),
+  cancelledShares: bigint("cancelledShares", { mode: "number" }).default(0).notNull(), // Returned to pool
+
+  // Computed: availableShares = authorizedShares - allocatedShares - exercisedShares + cancelledShares
+
+  // Board approval
+  boardApprovalDate: timestamp("boardApprovalDate"),
+  boardApprovalResolution: varchar("boardApprovalResolution", { length: 100 }),
+
+  notes: text("notes"),
+  isActive: boolean("isActive").default(true).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type OptionPool = typeof optionPools.$inferSelect;
+export type InsertOptionPool = typeof optionPools.$inferInsert;

@@ -97,6 +97,14 @@ import DataRoomPublic from "./pages/DataRoomPublic";
 // AI Agent
 import ApprovalQueue from "./pages/ai/ApprovalQueue";
 
+// Equity
+import CapTable from "./pages/equity/CapTable";
+import Shareholders from "./pages/equity/Shareholders";
+import EquityGrants from "./pages/equity/EquityGrants";
+import EquityModeling from "./pages/equity/EquityModeling";
+import ShareholderPortal from "./pages/equity/ShareholderPortal";
+import ImportCapTable from "./pages/equity/ImportCapTable";
+
 function Router() {
   return (
     <DashboardLayout>
@@ -186,6 +194,15 @@ function Router() {
         {/* Data Room */}
         <Route path="/datarooms" component={DataRooms} />
         <Route path="/dataroom/:id" component={DataRoomDetail} />
+
+        {/* Equity */}
+        <Route path="/equity" component={CapTable} />
+        <Route path="/equity/cap-table" component={CapTable} />
+        <Route path="/equity/shareholders" component={Shareholders} />
+        <Route path="/equity/grants" component={EquityGrants} />
+        <Route path="/equity/modeling" component={EquityModeling} />
+        <Route path="/equity/portal" component={ShareholderPortal} />
+        <Route path="/equity/import" component={ImportCapTable} />
 
         {/* Fallback */}
         <Route path="/404" component={NotFound} />

@@ -10550,6 +10550,1187 @@ Ask if they received the original request and if they can provide a quote.`;
         }),
     }),
   }),
+
+  // ============================================
+  // CAP TABLE & EQUITY MANAGEMENT
+  // ============================================
+  capTable: router({
+    // --- SHARE CLASSES ---
+    shareClasses: router({
+      list: financeProcedure
+        .input(z.object({ companyId: z.number().optional() }).optional())
+        .query(({ input }) => db.getShareClasses(input?.companyId)),
+
+      get: financeProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getShareClassById(input.id)),
+
+      create: financeProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          name: z.string().min(1),
+          type: z.enum(["common", "preferred", "convertible"]),
+          authorizedShares: z.number(),
+          issuedShares: z.number().optional(),
+          pricePerShare: z.string().optional(),
+          parValue: z.string().optional(),
+          liquidationPreference: z.string().optional(),
+          participatingPreferred: z.boolean().optional(),
+          dividendRate: z.string().optional(),
+          cumulativeDividends: z.boolean().optional(),
+          conversionRatio: z.string().optional(),
+          antidilutionType: z.enum(["none", "broad_based_weighted_average", "narrow_based_weighted_average", "full_ratchet"]).optional(),
+          votingRights: z.boolean().optional(),
+          votesPerShare: z.number().optional(),
+          seniorityOrder: z.number().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createShareClass(input);
+          await createAuditLog(ctx.user.id, 'create', 'share_class', result.id, input.name);
+          return result;
+        }),
+
+      update: financeProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          type: z.enum(["common", "preferred", "convertible"]).optional(),
+          authorizedShares: z.number().optional(),
+          issuedShares: z.number().optional(),
+          pricePerShare: z.string().optional(),
+          parValue: z.string().optional(),
+          liquidationPreference: z.string().optional(),
+          participatingPreferred: z.boolean().optional(),
+          dividendRate: z.string().optional(),
+          cumulativeDividends: z.boolean().optional(),
+          conversionRatio: z.string().optional(),
+          antidilutionType: z.enum(["none", "broad_based_weighted_average", "narrow_based_weighted_average", "full_ratchet"]).optional(),
+          votingRights: z.boolean().optional(),
+          votesPerShare: z.number().optional(),
+          seniorityOrder: z.number().optional(),
+          notes: z.string().optional(),
+          isActive: z.boolean().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateShareClass(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'share_class', id);
+          return { success: true };
+        }),
+
+      delete: financeProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteShareClass(input.id);
+          await createAuditLog(ctx.user.id, 'delete', 'share_class', input.id);
+          return { success: true };
+        }),
+    }),
+
+    // --- SHAREHOLDERS ---
+    shareholders: router({
+      list: financeProcedure
+        .input(z.object({ companyId: z.number().optional() }).optional())
+        .query(({ input }) => db.getShareholders(input?.companyId)),
+
+      get: financeProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getShareholderById(input.id)),
+
+      create: financeProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          name: z.string().min(1),
+          type: z.enum(["individual", "entity", "trust", "employee", "founder", "advisor"]),
+          email: z.string().email().optional(),
+          phone: z.string().optional(),
+          address: z.string().optional(),
+          city: z.string().optional(),
+          state: z.string().optional(),
+          country: z.string().optional(),
+          postalCode: z.string().optional(),
+          entityType: z.string().optional(),
+          signatoryName: z.string().optional(),
+          signatoryTitle: z.string().optional(),
+          taxIdType: z.enum(["ssn", "ein", "itin", "foreign"]).optional(),
+          taxResidenceCountry: z.string().optional(),
+          isUSPerson: z.boolean().optional(),
+          accreditationStatus: z.enum(["accredited", "non_accredited", "qualified_purchaser", "pending_verification", "unknown"]).optional(),
+          isBoardMember: z.boolean().optional(),
+          boardSeatType: z.enum(["founder", "investor", "independent", "observer"]).optional(),
+          portalAccessEnabled: z.boolean().optional(),
+          userId: z.number().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createShareholder(input);
+          await createAuditLog(ctx.user.id, 'create', 'shareholder', result.id, input.name);
+          return result;
+        }),
+
+      update: financeProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          type: z.enum(["individual", "entity", "trust", "employee", "founder", "advisor"]).optional(),
+          email: z.string().email().optional().nullable(),
+          phone: z.string().optional().nullable(),
+          address: z.string().optional().nullable(),
+          city: z.string().optional().nullable(),
+          state: z.string().optional().nullable(),
+          country: z.string().optional().nullable(),
+          postalCode: z.string().optional().nullable(),
+          entityType: z.string().optional().nullable(),
+          signatoryName: z.string().optional().nullable(),
+          signatoryTitle: z.string().optional().nullable(),
+          taxIdType: z.enum(["ssn", "ein", "itin", "foreign"]).optional().nullable(),
+          taxResidenceCountry: z.string().optional().nullable(),
+          isUSPerson: z.boolean().optional(),
+          accreditationStatus: z.enum(["accredited", "non_accredited", "qualified_purchaser", "pending_verification", "unknown"]).optional(),
+          accreditationVerifiedAt: z.date().optional().nullable(),
+          accreditationMethod: z.string().optional().nullable(),
+          isBoardMember: z.boolean().optional(),
+          boardSeatType: z.enum(["founder", "investor", "independent", "observer"]).optional().nullable(),
+          portalAccessEnabled: z.boolean().optional(),
+          userId: z.number().optional().nullable(),
+          notes: z.string().optional().nullable(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateShareholder(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'shareholder', id);
+          return { success: true };
+        }),
+
+      delete: financeProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteShareholder(input.id);
+          await createAuditLog(ctx.user.id, 'delete', 'shareholder', input.id);
+          return { success: true };
+        }),
+
+      enablePortalAccess: financeProcedure
+        .input(z.object({
+          id: z.number(),
+          userId: z.number().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          await db.updateShareholder(input.id, {
+            portalAccessEnabled: true,
+            userId: input.userId,
+          });
+          await createAuditLog(ctx.user.id, 'update', 'shareholder', input.id, 'Portal access enabled');
+          return { success: true };
+        }),
+    }),
+
+    // --- EQUITY HOLDINGS ---
+    holdings: router({
+      list: financeProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          shareholderId: z.number().optional(),
+          shareClassId: z.number().optional(),
+        }).optional())
+        .query(({ input }) => db.getEquityHoldings(input)),
+
+      get: financeProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getEquityHoldingById(input.id)),
+
+      create: financeProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          shareholderId: z.number(),
+          shareClassId: z.number(),
+          shares: z.number(),
+          purchasePrice: z.string().optional(),
+          totalCostBasis: z.string().optional(),
+          acquisitionDate: z.date(),
+          acquisitionType: z.enum(["purchase", "grant", "exercise", "transfer", "conversion", "gift", "inheritance"]),
+          equityGrantId: z.number().optional(),
+          certificateNumber: z.string().optional(),
+          restricted: z.boolean().optional(),
+          restrictionType: z.string().optional(),
+          restrictionExpiresAt: z.date().optional(),
+          election83bFiled: z.boolean().optional(),
+          election83bFiledAt: z.date().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createEquityHolding(input);
+          await createAuditLog(ctx.user.id, 'create', 'equity_holding', result.id);
+          return result;
+        }),
+
+      update: financeProcedure
+        .input(z.object({
+          id: z.number(),
+          shares: z.number().optional(),
+          purchasePrice: z.string().optional().nullable(),
+          totalCostBasis: z.string().optional().nullable(),
+          certificateNumber: z.string().optional().nullable(),
+          certificateIssuedAt: z.date().optional().nullable(),
+          restricted: z.boolean().optional(),
+          restrictionType: z.string().optional().nullable(),
+          restrictionExpiresAt: z.date().optional().nullable(),
+          election83bFiled: z.boolean().optional(),
+          election83bFiledAt: z.date().optional().nullable(),
+          notes: z.string().optional().nullable(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateEquityHolding(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'equity_holding', id);
+          return { success: true };
+        }),
+
+      delete: financeProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteEquityHolding(input.id);
+          await createAuditLog(ctx.user.id, 'delete', 'equity_holding', input.id);
+          return { success: true };
+        }),
+    }),
+
+    // --- VESTING SCHEDULES ---
+    vestingSchedules: router({
+      list: financeProcedure
+        .input(z.object({ companyId: z.number().optional() }).optional())
+        .query(({ input }) => db.getVestingSchedules(input?.companyId)),
+
+      get: financeProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getVestingScheduleById(input.id)),
+
+      create: financeProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          name: z.string().min(1),
+          scheduleType: z.enum(["time_based", "milestone_based", "hybrid"]),
+          totalMonths: z.number().optional(),
+          cliffMonths: z.number().optional(),
+          vestingFrequency: z.enum(["monthly", "quarterly", "annually", "at_cliff"]).optional(),
+          cliffPercentage: z.string().optional(),
+          singleTriggerAcceleration: z.boolean().optional(),
+          doubleTriggerAcceleration: z.boolean().optional(),
+          accelerationPercentage: z.string().optional(),
+          milestones: z.string().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createVestingSchedule(input);
+          await createAuditLog(ctx.user.id, 'create', 'vesting_schedule', result.id, input.name);
+          return result;
+        }),
+
+      update: financeProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          scheduleType: z.enum(["time_based", "milestone_based", "hybrid"]).optional(),
+          totalMonths: z.number().optional(),
+          cliffMonths: z.number().optional(),
+          vestingFrequency: z.enum(["monthly", "quarterly", "annually", "at_cliff"]).optional(),
+          cliffPercentage: z.string().optional(),
+          singleTriggerAcceleration: z.boolean().optional(),
+          doubleTriggerAcceleration: z.boolean().optional(),
+          accelerationPercentage: z.string().optional(),
+          milestones: z.string().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateVestingSchedule(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'vesting_schedule', id);
+          return { success: true };
+        }),
+
+      delete: financeProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteVestingSchedule(input.id);
+          await createAuditLog(ctx.user.id, 'delete', 'vesting_schedule', input.id);
+          return { success: true };
+        }),
+    }),
+
+    // --- EQUITY GRANTS ---
+    grants: router({
+      list: financeProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          shareholderId: z.number().optional(),
+          status: z.string().optional(),
+        }).optional())
+        .query(({ input }) => db.getEquityGrants(input)),
+
+      get: financeProcedure
+        .input(z.object({ id: z.number() }))
+        .query(async ({ input }) => {
+          const grant = await db.getEquityGrantById(input.id);
+          if (!grant) return null;
+
+          // Get vesting schedule if exists
+          let vestingSchedule = null;
+          if (grant.vestingScheduleId) {
+            vestingSchedule = await db.getVestingScheduleById(grant.vestingScheduleId);
+          }
+
+          // Calculate vested shares
+          const vestingInfo = db.calculateVestedShares(
+            {
+              sharesGranted: Number(grant.sharesGranted),
+              vestingStartDate: grant.vestingStartDate,
+              cliffDate: grant.cliffDate,
+              fullyVestedDate: grant.fullyVestedDate,
+              sharesCancelled: Number(grant.sharesCancelled),
+            },
+            vestingSchedule
+          );
+
+          return {
+            ...grant,
+            vestingSchedule,
+            vestingInfo,
+          };
+        }),
+
+      create: financeProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          shareholderId: z.number(),
+          shareClassId: z.number(),
+          vestingScheduleId: z.number().optional(),
+          grantType: z.enum(["iso", "nso", "rsu", "rsa", "warrant", "phantom"]),
+          grantDate: z.date(),
+          grantNumber: z.string().optional(),
+          sharesGranted: z.number(),
+          exercisePrice: z.string(),
+          fairMarketValue: z.string().optional(),
+          vestingStartDate: z.date(),
+          cliffDate: z.date().optional(),
+          fullyVestedDate: z.date().optional(),
+          expirationDate: z.date().optional(),
+          postTerminationExercisePeriod: z.number().optional(),
+          boardApprovalDate: z.date().optional(),
+          boardApprovalResolution: z.string().optional(),
+          earlyExerciseAllowed: z.boolean().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          // Generate grant number if not provided
+          if (!input.grantNumber) {
+            input.grantNumber = generateNumber(input.grantType.toUpperCase());
+          }
+          const result = await db.createEquityGrant(input);
+          await createAuditLog(ctx.user.id, 'create', 'equity_grant', result.id, input.grantNumber);
+          return result;
+        }),
+
+      update: financeProcedure
+        .input(z.object({
+          id: z.number(),
+          vestingScheduleId: z.number().optional().nullable(),
+          sharesVested: z.number().optional(),
+          sharesExercised: z.number().optional(),
+          sharesCancelled: z.number().optional(),
+          status: z.enum(["active", "fully_vested", "partially_exercised", "fully_exercised", "cancelled", "expired", "forfeited"]).optional(),
+          terminationDate: z.date().optional().nullable(),
+          terminationReason: z.string().optional().nullable(),
+          boardApprovalDate: z.date().optional().nullable(),
+          boardApprovalResolution: z.string().optional().nullable(),
+          earlyExerciseAllowed: z.boolean().optional(),
+          notes: z.string().optional().nullable(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateEquityGrant(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'equity_grant', id);
+          return { success: true };
+        }),
+
+      cancel: financeProcedure
+        .input(z.object({
+          id: z.number(),
+          reason: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          await db.updateEquityGrant(input.id, {
+            status: 'cancelled',
+            terminationDate: new Date(),
+            terminationReason: input.reason,
+          });
+          await createAuditLog(ctx.user.id, 'update', 'equity_grant', input.id, 'Grant cancelled');
+          return { success: true };
+        }),
+    }),
+
+    // --- OPTION EXERCISES ---
+    exercises: router({
+      list: financeProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          equityGrantId: z.number().optional(),
+          shareholderId: z.number().optional(),
+        }).optional())
+        .query(({ input }) => db.getOptionExercises(input)),
+
+      get: financeProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getOptionExerciseById(input.id)),
+
+      create: financeProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          equityGrantId: z.number(),
+          shareholderId: z.number(),
+          exerciseDate: z.date(),
+          sharesExercised: z.number(),
+          exercisePrice: z.string(),
+          totalExerciseCost: z.string(),
+          fairMarketValueAtExercise: z.string().optional(),
+          bargainElement: z.string().optional(),
+          paymentMethod: z.enum(["cash", "cashless", "net_exercise", "promissory_note"]).optional(),
+          paymentReceivedAt: z.date().optional(),
+          taxWithholdingAmount: z.string().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          // Create exercise record
+          const result = await db.createOptionExercise(input);
+
+          // Update grant's exercised shares
+          const grant = await db.getEquityGrantById(input.equityGrantId);
+          if (grant) {
+            const newExercisedShares = Number(grant.sharesExercised) + input.sharesExercised;
+            const remainingShares = Number(grant.sharesGranted) - newExercisedShares - Number(grant.sharesCancelled);
+
+            await db.updateEquityGrant(input.equityGrantId, {
+              sharesExercised: newExercisedShares,
+              status: remainingShares <= 0 ? 'fully_exercised' : 'partially_exercised',
+            });
+          }
+
+          await createAuditLog(ctx.user.id, 'create', 'option_exercise', result.id);
+          return result;
+        }),
+    }),
+
+    // --- FUNDING ROUNDS ---
+    fundingRounds: router({
+      list: financeProcedure
+        .input(z.object({ companyId: z.number().optional() }).optional())
+        .query(({ input }) => db.getFundingRounds(input?.companyId)),
+
+      get: financeProcedure
+        .input(z.object({ id: z.number() }))
+        .query(async ({ input }) => {
+          const round = await db.getFundingRoundById(input.id);
+          if (!round) return null;
+
+          const investments = await db.getFundingInvestments({ fundingRoundId: input.id });
+          return { ...round, investments };
+        }),
+
+      create: financeProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          name: z.string().min(1),
+          roundType: z.enum(["pre_seed", "seed", "series_a", "series_b", "series_c", "series_d", "bridge", "convertible_note", "safe", "secondary", "other"]),
+          status: z.enum(["planned", "in_progress", "closed", "cancelled"]).optional(),
+          openDate: z.date().optional(),
+          closeDate: z.date().optional(),
+          targetAmount: z.string().optional(),
+          minimumAmount: z.string().optional(),
+          maximumAmount: z.string().optional(),
+          preMoneyValuation: z.string().optional(),
+          postMoneyValuation: z.string().optional(),
+          shareClassId: z.number().optional(),
+          pricePerShare: z.string().optional(),
+          leadInvestorId: z.number().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createFundingRound(input);
+          await createAuditLog(ctx.user.id, 'create', 'funding_round', result.id, input.name);
+          return result;
+        }),
+
+      update: financeProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          roundType: z.enum(["pre_seed", "seed", "series_a", "series_b", "series_c", "series_d", "bridge", "convertible_note", "safe", "secondary", "other"]).optional(),
+          status: z.enum(["planned", "in_progress", "closed", "cancelled"]).optional(),
+          openDate: z.date().optional().nullable(),
+          closeDate: z.date().optional().nullable(),
+          targetAmount: z.string().optional().nullable(),
+          minimumAmount: z.string().optional().nullable(),
+          maximumAmount: z.string().optional().nullable(),
+          amountRaised: z.string().optional(),
+          preMoneyValuation: z.string().optional().nullable(),
+          postMoneyValuation: z.string().optional().nullable(),
+          shareClassId: z.number().optional().nullable(),
+          pricePerShare: z.string().optional().nullable(),
+          leadInvestorId: z.number().optional().nullable(),
+          notes: z.string().optional().nullable(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateFundingRound(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'funding_round', id);
+          return { success: true };
+        }),
+
+      close: financeProcedure
+        .input(z.object({
+          id: z.number(),
+          closeDate: z.date().optional(),
+          postMoneyValuation: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          await db.updateFundingRound(input.id, {
+            status: 'closed',
+            closeDate: input.closeDate || new Date(),
+            postMoneyValuation: input.postMoneyValuation,
+          });
+          await createAuditLog(ctx.user.id, 'update', 'funding_round', input.id, 'Round closed');
+          return { success: true };
+        }),
+    }),
+
+    // --- FUNDING INVESTMENTS ---
+    investments: router({
+      list: financeProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          fundingRoundId: z.number().optional(),
+          shareholderId: z.number().optional(),
+        }).optional())
+        .query(({ input }) => db.getFundingInvestments(input)),
+
+      get: financeProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getFundingInvestmentById(input.id)),
+
+      create: financeProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          fundingRoundId: z.number(),
+          shareholderId: z.number(),
+          investmentAmount: z.string(),
+          sharesIssued: z.number().optional(),
+          pricePerShare: z.string().optional(),
+          conversionDiscount: z.string().optional(),
+          valuationCap: z.string().optional(),
+          interestRate: z.string().optional(),
+          status: z.enum(["committed", "received", "converted", "refunded"]).optional(),
+          fundsReceivedAt: z.date().optional(),
+          hasSpecialTerms: z.boolean().optional(),
+          specialTerms: z.string().optional(),
+          proRataRights: z.boolean().optional(),
+          informationRights: z.boolean().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createFundingInvestment(input);
+
+          // Update funding round's amount raised
+          const round = await db.getFundingRoundById(input.fundingRoundId);
+          if (round) {
+            const newAmount = Number(round.amountRaised || 0) + Number(input.investmentAmount);
+            await db.updateFundingRound(input.fundingRoundId, {
+              amountRaised: newAmount.toString(),
+            });
+          }
+
+          await createAuditLog(ctx.user.id, 'create', 'funding_investment', result.id);
+          return result;
+        }),
+
+      update: financeProcedure
+        .input(z.object({
+          id: z.number(),
+          investmentAmount: z.string().optional(),
+          sharesIssued: z.number().optional().nullable(),
+          pricePerShare: z.string().optional().nullable(),
+          status: z.enum(["committed", "received", "converted", "refunded"]).optional(),
+          fundsReceivedAt: z.date().optional().nullable(),
+          conversionDate: z.date().optional().nullable(),
+          hasSpecialTerms: z.boolean().optional(),
+          specialTerms: z.string().optional().nullable(),
+          proRataRights: z.boolean().optional(),
+          informationRights: z.boolean().optional(),
+          notes: z.string().optional().nullable(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateFundingInvestment(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'funding_investment', id);
+          return { success: true };
+        }),
+    }),
+
+    // --- VALUATIONS ---
+    valuations: router({
+      list: financeProcedure
+        .input(z.object({ companyId: z.number().optional() }).optional())
+        .query(({ input }) => db.getValuations(input?.companyId)),
+
+      get: financeProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getValuationById(input.id)),
+
+      current: financeProcedure
+        .input(z.object({ companyId: z.number().optional() }).optional())
+        .query(({ input }) => db.getCurrentValuation(input?.companyId)),
+
+      create: financeProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          valuationType: z.enum(["409a", "fair_market_value", "book_value", "external_appraisal", "funding_round"]),
+          valuationDate: z.date(),
+          effectiveDate: z.date(),
+          expirationDate: z.date().optional(),
+          enterpriseValue: z.string().optional(),
+          equityValue: z.string().optional(),
+          commonStockValue: z.string().optional(),
+          preferredStockValue: z.string().optional(),
+          commonSharePrice: z.string().optional(),
+          fullyDilutedShares: z.number().optional(),
+          valuationProvider: z.string().optional(),
+          valuationMethodology: z.string().optional(),
+          reportDocumentId: z.number().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createValuation(input);
+          await createAuditLog(ctx.user.id, 'create', 'valuation', result.id);
+          return result;
+        }),
+
+      update: financeProcedure
+        .input(z.object({
+          id: z.number(),
+          valuationType: z.enum(["409a", "fair_market_value", "book_value", "external_appraisal", "funding_round"]).optional(),
+          valuationDate: z.date().optional(),
+          effectiveDate: z.date().optional(),
+          expirationDate: z.date().optional().nullable(),
+          enterpriseValue: z.string().optional().nullable(),
+          equityValue: z.string().optional().nullable(),
+          commonStockValue: z.string().optional().nullable(),
+          preferredStockValue: z.string().optional().nullable(),
+          commonSharePrice: z.string().optional().nullable(),
+          fullyDilutedShares: z.number().optional().nullable(),
+          valuationProvider: z.string().optional().nullable(),
+          valuationMethodology: z.string().optional().nullable(),
+          reportDocumentId: z.number().optional().nullable(),
+          notes: z.string().optional().nullable(),
+          isActive: z.boolean().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateValuation(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'valuation', id);
+          return { success: true };
+        }),
+    }),
+
+    // --- EQUITY SCENARIOS (MODELING) ---
+    scenarios: router({
+      list: financeProcedure
+        .input(z.object({ companyId: z.number().optional() }).optional())
+        .query(({ input }) => db.getEquityScenarios(input?.companyId)),
+
+      get: financeProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getEquityScenarioById(input.id)),
+
+      create: financeProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          name: z.string().min(1),
+          description: z.string().optional(),
+          scenarioType: z.enum(["funding_round", "exit", "option_pool_expansion", "custom"]),
+          exitType: z.enum(["acquisition", "ipo", "liquidation"]).optional(),
+          exitValue: z.string().optional(),
+          fundingAmount: z.string().optional(),
+          preMoneyValuation: z.string().optional(),
+          newSharesIssued: z.number().optional(),
+          newOptionPoolShares: z.number().optional(),
+          optionPoolPercentage: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createEquityScenario({
+            ...input,
+            createdBy: ctx.user.id,
+          });
+          await createAuditLog(ctx.user.id, 'create', 'equity_scenario', result.id, input.name);
+          return result;
+        }),
+
+      update: financeProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          description: z.string().optional().nullable(),
+          scenarioType: z.enum(["funding_round", "exit", "option_pool_expansion", "custom"]).optional(),
+          exitType: z.enum(["acquisition", "ipo", "liquidation"]).optional().nullable(),
+          exitValue: z.string().optional().nullable(),
+          fundingAmount: z.string().optional().nullable(),
+          preMoneyValuation: z.string().optional().nullable(),
+          newSharesIssued: z.number().optional().nullable(),
+          newOptionPoolShares: z.number().optional().nullable(),
+          optionPoolPercentage: z.string().optional().nullable(),
+          scenarioResults: z.string().optional().nullable(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateEquityScenario(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'equity_scenario', id);
+          return { success: true };
+        }),
+
+      delete: financeProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteEquityScenario(input.id);
+          await createAuditLog(ctx.user.id, 'delete', 'equity_scenario', input.id);
+          return { success: true };
+        }),
+
+      // Run scenario analysis
+      analyze: financeProcedure
+        .input(z.object({
+          scenarioId: z.number().optional(),
+          scenarioType: z.enum(["funding_round", "exit", "option_pool_expansion", "custom"]),
+          exitValue: z.number().optional(),
+          fundingAmount: z.number().optional(),
+          preMoneyValuation: z.number().optional(),
+          newOptionPoolPercentage: z.number().optional(),
+          companyId: z.number().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          // Get current cap table
+          const summary = await db.getCapTableSummary(input.companyId);
+          if (!summary) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'Cap table not found' });
+          }
+
+          const results: any = {
+            currentState: {
+              totalOutstandingShares: summary.totalOutstandingShares,
+              totalFullyDilutedShares: summary.totalFullyDilutedShares,
+              pricePerShare: summary.pricePerShare,
+            },
+            projectedState: {},
+            shareholderImpact: [],
+          };
+
+          if (input.scenarioType === 'exit') {
+            const exitValue = input.exitValue || 0;
+
+            // Waterfall analysis
+            let remainingProceeds = exitValue;
+            const distributions: any[] = [];
+
+            // Sort share classes by seniority
+            const sortedClasses = [...summary.shareClasses].sort((a, b) =>
+              (b.seniorityOrder || 0) - (a.seniorityOrder || 0)
+            );
+
+            // Calculate liquidation preferences first
+            for (const shareClass of sortedClasses) {
+              if (shareClass.type === 'preferred' && shareClass.liquidationPreference) {
+                const classHoldings = summary.shareholderHoldings.filter(h =>
+                  h.holdings.some(holding => holding.shareClassId === shareClass.id)
+                );
+
+                const totalClassShares = classHoldings.reduce((sum, h) => {
+                  return sum + h.holdings
+                    .filter(holding => holding.shareClassId === shareClass.id)
+                    .reduce((s, holding) => s + Number(holding.shares), 0);
+                }, 0);
+
+                const liquidationAmount = totalClassShares * Number(shareClass.pricePerShare || 0) * Number(shareClass.liquidationPreference);
+                const actualDistribution = Math.min(liquidationAmount, remainingProceeds);
+                remainingProceeds -= actualDistribution;
+
+                distributions.push({
+                  shareClass: shareClass.name,
+                  type: 'liquidation_preference',
+                  amount: actualDistribution,
+                });
+              }
+            }
+
+            // Distribute remaining to common (pro-rata)
+            if (remainingProceeds > 0 && summary.totalOutstandingShares > 0) {
+              const perShareValue = remainingProceeds / summary.totalOutstandingShares;
+
+              for (const holder of summary.shareholderHoldings) {
+                const holderDistribution = holder.totalShares * perShareValue;
+                results.shareholderImpact.push({
+                  shareholderId: holder.shareholder.id,
+                  shareholderName: holder.shareholder.name,
+                  shares: holder.totalShares,
+                  ownershipPercent: (holder.totalShares / summary.totalOutstandingShares) * 100,
+                  proceedsAmount: holderDistribution,
+                });
+              }
+            }
+
+            results.projectedState = {
+              exitValue,
+              distributions,
+              remainingProceeds,
+            };
+
+          } else if (input.scenarioType === 'funding_round') {
+            const fundingAmount = input.fundingAmount || 0;
+            const preMoneyValuation = input.preMoneyValuation || 0;
+            const postMoneyValuation = preMoneyValuation + fundingAmount;
+            const pricePerShare = preMoneyValuation / summary.totalFullyDilutedShares;
+            const newShares = fundingAmount / pricePerShare;
+            const newTotalShares = summary.totalFullyDilutedShares + newShares;
+
+            // Calculate dilution for each shareholder
+            for (const holder of summary.shareholderHoldings) {
+              const currentOwnership = (holder.totalShares / summary.totalFullyDilutedShares) * 100;
+              const newOwnership = (holder.totalShares / newTotalShares) * 100;
+              const dilution = currentOwnership - newOwnership;
+
+              results.shareholderImpact.push({
+                shareholderId: holder.shareholder.id,
+                shareholderName: holder.shareholder.name,
+                shares: holder.totalShares,
+                currentOwnership,
+                newOwnership,
+                dilutionPercent: dilution,
+                valueAtPreMoney: holder.totalShares * pricePerShare,
+                valueAtPostMoney: holder.totalShares * (postMoneyValuation / newTotalShares),
+              });
+            }
+
+            results.projectedState = {
+              fundingAmount,
+              preMoneyValuation,
+              postMoneyValuation,
+              pricePerShare,
+              newSharesIssued: Math.round(newShares),
+              newTotalShares: Math.round(newTotalShares),
+              investorOwnership: (newShares / newTotalShares) * 100,
+            };
+          }
+
+          // Save results if scenarioId provided
+          if (input.scenarioId) {
+            await db.updateEquityScenario(input.scenarioId, {
+              scenarioResults: JSON.stringify(results),
+            });
+          }
+
+          return results;
+        }),
+    }),
+
+    // --- OPTION POOLS ---
+    optionPools: router({
+      list: financeProcedure
+        .input(z.object({ companyId: z.number().optional() }).optional())
+        .query(({ input }) => db.getOptionPools(input?.companyId)),
+
+      get: financeProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getOptionPoolById(input.id)),
+
+      create: financeProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          name: z.string().min(1),
+          shareClassId: z.number(),
+          authorizedShares: z.number(),
+          boardApprovalDate: z.date().optional(),
+          boardApprovalResolution: z.string().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createOptionPool(input);
+          await createAuditLog(ctx.user.id, 'create', 'option_pool', result.id, input.name);
+          return result;
+        }),
+
+      update: financeProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          authorizedShares: z.number().optional(),
+          allocatedShares: z.number().optional(),
+          exercisedShares: z.number().optional(),
+          cancelledShares: z.number().optional(),
+          boardApprovalDate: z.date().optional().nullable(),
+          boardApprovalResolution: z.string().optional().nullable(),
+          notes: z.string().optional().nullable(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateOptionPool(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'option_pool', id);
+          return { success: true };
+        }),
+    }),
+
+    // --- DOCUMENTS ---
+    documents: router({
+      list: financeProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          shareholderId: z.number().optional(),
+          documentType: z.string().optional(),
+          equityGrantId: z.number().optional(),
+        }).optional())
+        .query(({ input }) => db.getEquityDocuments(input)),
+
+      get: financeProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getEquityDocumentById(input.id)),
+
+      create: financeProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          name: z.string().min(1),
+          documentType: z.enum([
+            "grant_letter", "stock_option_agreement", "exercise_agreement", "stock_certificate",
+            "rsu_agreement", "restricted_stock_agreement", "warrant", "convertible_note",
+            "safe", "subscription_agreement", "stockholders_agreement", "voting_agreement",
+            "rofr_agreement", "investor_rights_agreement", "cap_table_import", "409a_valuation",
+            "board_consent", "other"
+          ]),
+          fileUrl: z.string(),
+          fileName: z.string(),
+          fileSize: z.number().optional(),
+          mimeType: z.string().optional(),
+          shareholderId: z.number().optional(),
+          equityGrantId: z.number().optional(),
+          equityHoldingId: z.number().optional(),
+          fundingRoundId: z.number().optional(),
+          valuationId: z.number().optional(),
+          requiresSignature: z.boolean().optional(),
+          visibleToShareholder: z.boolean().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createEquityDocument({
+            ...input,
+            uploadedBy: ctx.user.id,
+          });
+          await createAuditLog(ctx.user.id, 'create', 'equity_document', result.id, input.name);
+          return result;
+        }),
+
+      update: financeProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          signatureStatus: z.enum(["not_required", "pending", "partially_signed", "fully_signed", "declined"]).optional(),
+          signedAt: z.date().optional().nullable(),
+          visibleToShareholder: z.boolean().optional(),
+          notes: z.string().optional().nullable(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateEquityDocument(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'equity_document', id);
+          return { success: true };
+        }),
+
+      delete: financeProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteEquityDocument(input.id);
+          await createAuditLog(ctx.user.id, 'delete', 'equity_document', input.id);
+          return { success: true };
+        }),
+    }),
+
+    // --- CAP TABLE SUMMARY ---
+    summary: financeProcedure
+      .input(z.object({ companyId: z.number().optional() }).optional())
+      .query(({ input }) => db.getCapTableSummary(input?.companyId)),
+
+    // --- IMPORT CAP TABLE ---
+    import: financeProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        shareClasses: z.array(z.object({
+          name: z.string(),
+          type: z.string(),
+          authorizedShares: z.number(),
+          pricePerShare: z.number().optional(),
+        })),
+        shareholders: z.array(z.object({
+          name: z.string(),
+          type: z.string(),
+          email: z.string().optional(),
+          shares: z.number(),
+          shareClass: z.string(),
+          acquisitionDate: z.date(),
+          pricePerShare: z.number().optional(),
+        })),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const results = await db.importCapTableData(input);
+        await createAuditLog(ctx.user.id, 'create', 'cap_table_import', 0, 'Cap table imported');
+        return results;
+      }),
+
+    // --- SHAREHOLDER PORTAL ---
+    portal: router({
+      // Get shareholder data for portal (accessible by shareholder)
+      myShareholder: protectedProcedure.query(async ({ ctx }) => {
+        const shareholder = await db.getShareholderByUserId(ctx.user.id);
+        if (!shareholder) {
+          return null;
+        }
+        return shareholder;
+      }),
+
+      myHoldings: protectedProcedure.query(async ({ ctx }) => {
+        const shareholder = await db.getShareholderByUserId(ctx.user.id);
+        if (!shareholder) {
+          return [];
+        }
+        return db.getEquityHoldings({ shareholderId: shareholder.id });
+      }),
+
+      myGrants: protectedProcedure.query(async ({ ctx }) => {
+        const shareholder = await db.getShareholderByUserId(ctx.user.id);
+        if (!shareholder) {
+          return [];
+        }
+
+        const grants = await db.getEquityGrants({ shareholderId: shareholder.id });
+
+        // Calculate vesting for each grant
+        const grantsWithVesting = await Promise.all(grants.map(async (grant) => {
+          let vestingSchedule = null;
+          if (grant.vestingScheduleId) {
+            vestingSchedule = await db.getVestingScheduleById(grant.vestingScheduleId);
+          }
+
+          const vestingInfo = db.calculateVestedShares(
+            {
+              sharesGranted: Number(grant.sharesGranted),
+              vestingStartDate: grant.vestingStartDate,
+              cliffDate: grant.cliffDate,
+              fullyVestedDate: grant.fullyVestedDate,
+              sharesCancelled: Number(grant.sharesCancelled),
+            },
+            vestingSchedule
+          );
+
+          return {
+            ...grant,
+            vestingInfo,
+          };
+        }));
+
+        return grantsWithVesting;
+      }),
+
+      myDocuments: protectedProcedure.query(async ({ ctx }) => {
+        const shareholder = await db.getShareholderByUserId(ctx.user.id);
+        if (!shareholder) {
+          return [];
+        }
+        return db.getShareholderDocuments(shareholder.id);
+      }),
+
+      myNotifications: protectedProcedure
+        .input(z.object({ unreadOnly: z.boolean().optional() }).optional())
+        .query(async ({ ctx, input }) => {
+          const shareholder = await db.getShareholderByUserId(ctx.user.id);
+          if (!shareholder) {
+            return [];
+          }
+          return db.getShareholderNotifications(shareholder.id, input?.unreadOnly);
+        }),
+
+      markNotificationRead: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input }) => {
+          await db.markShareholderNotificationRead(input.id);
+          return { success: true };
+        }),
+
+      // Get equity summary for shareholder portal
+      mySummary: protectedProcedure.query(async ({ ctx }) => {
+        const shareholder = await db.getShareholderByUserId(ctx.user.id);
+        if (!shareholder) {
+          return null;
+        }
+
+        const holdings = await db.getEquityHoldings({ shareholderId: shareholder.id });
+        const grants = await db.getEquityGrants({ shareholderId: shareholder.id });
+        const currentValuation = await db.getCurrentValuation();
+
+        let totalShares = 0;
+        let totalVestedOptions = 0;
+        let totalUnvestedOptions = 0;
+        let totalExercisableOptions = 0;
+
+        // Sum up holdings
+        for (const holding of holdings) {
+          totalShares += Number(holding.shares);
+        }
+
+        // Calculate grant totals
+        for (const grant of grants) {
+          if (grant.status === 'cancelled' || grant.status === 'expired' || grant.status === 'forfeited') {
+            continue;
+          }
+
+          let vestingSchedule = null;
+          if (grant.vestingScheduleId) {
+            vestingSchedule = await db.getVestingScheduleById(grant.vestingScheduleId);
+          }
+
+          const vestingInfo = db.calculateVestedShares(
+            {
+              sharesGranted: Number(grant.sharesGranted),
+              vestingStartDate: grant.vestingStartDate,
+              cliffDate: grant.cliffDate,
+              fullyVestedDate: grant.fullyVestedDate,
+              sharesCancelled: Number(grant.sharesCancelled),
+            },
+            vestingSchedule
+          );
+
+          totalVestedOptions += vestingInfo.vestedShares - Number(grant.sharesExercised);
+          totalUnvestedOptions += vestingInfo.unvestedShares;
+          totalExercisableOptions += vestingInfo.vestedShares - Number(grant.sharesExercised);
+        }
+
+        const pricePerShare = currentValuation?.commonSharePrice ? Number(currentValuation.commonSharePrice) : 0;
+
+        return {
+          shareholder,
+          totalShares,
+          totalVestedOptions,
+          totalUnvestedOptions,
+          totalExercisableOptions,
+          pricePerShare,
+          estimatedValue: (totalShares + totalVestedOptions) * pricePerShare,
+          holdingsCount: holdings.length,
+          grantsCount: grants.filter(g => g.status !== 'cancelled' && g.status !== 'expired').length,
+        };
+      }),
+    }),
+  }),
 });
 
 // Helper function to calculate next generation date for recurring invoices

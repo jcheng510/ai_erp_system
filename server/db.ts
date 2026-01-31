@@ -86,7 +86,16 @@ import {
   crmContacts, crmTags, crmContactTags, whatsappMessages, crmInteractions,
   crmPipelines, crmDeals, contactCaptures, crmEmailCampaigns, crmCampaignRecipients,
   InsertCrmContact, InsertCrmTag, InsertWhatsappMessage, InsertCrmInteraction,
-  InsertCrmPipeline, InsertCrmDeal, InsertContactCapture, InsertCrmEmailCampaign, InsertCrmCampaignRecipient
+  InsertCrmPipeline, InsertCrmDeal, InsertContactCapture, InsertCrmEmailCampaign, InsertCrmCampaignRecipient,
+  // Cap Table types
+  shareClasses, shareholders, equityHoldings, vestingSchedules, equityGrants,
+  optionExercises, stockTransactions, fundingRounds, fundingInvestments,
+  valuations, equityScenarios, equityDocuments, shareholderPortalTokens,
+  shareholderNotifications, optionPools,
+  InsertShareClass, InsertShareholder, InsertEquityHolding, InsertVestingSchedule,
+  InsertEquityGrant, InsertOptionExercise, InsertStockTransaction, InsertFundingRound,
+  InsertFundingInvestment, InsertValuation, InsertEquityScenario, InsertEquityDocument,
+  InsertShareholderPortalToken, InsertShareholderNotification, InsertOptionPool
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -7474,4 +7483,833 @@ export async function getUnifiedMessagingHistory(contactId: number, limit: numbe
   });
 
   return combined.slice(0, limit);
+}
+
+// ============================================
+// CAP TABLE & EQUITY MANAGEMENT
+// ============================================
+
+// Share Classes
+export async function getShareClasses(companyId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  if (companyId) {
+    return db.select().from(shareClasses).where(eq(shareClasses.companyId, companyId)).orderBy(shareClasses.seniorityOrder);
+  }
+  return db.select().from(shareClasses).orderBy(shareClasses.seniorityOrder);
+}
+
+export async function getShareClassById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(shareClasses).where(eq(shareClasses.id, id));
+  return result[0] || null;
+}
+
+export async function createShareClass(data: InsertShareClass) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(shareClasses).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateShareClass(id: number, data: Partial<InsertShareClass>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(shareClasses).set(data).where(eq(shareClasses.id, id));
+}
+
+export async function deleteShareClass(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(shareClasses).where(eq(shareClasses.id, id));
+}
+
+// Shareholders
+export async function getShareholders(companyId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  if (companyId) {
+    return db.select().from(shareholders).where(and(eq(shareholders.companyId, companyId), eq(shareholders.isActive, true))).orderBy(shareholders.name);
+  }
+  return db.select().from(shareholders).where(eq(shareholders.isActive, true)).orderBy(shareholders.name);
+}
+
+export async function getShareholderById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(shareholders).where(eq(shareholders.id, id));
+  return result[0] || null;
+}
+
+export async function getShareholderByUserId(userId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(shareholders).where(eq(shareholders.userId, userId));
+  return result[0] || null;
+}
+
+export async function createShareholder(data: InsertShareholder) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(shareholders).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateShareholder(id: number, data: Partial<InsertShareholder>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(shareholders).set(data).where(eq(shareholders.id, id));
+}
+
+export async function deleteShareholder(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(shareholders).set({ isActive: false }).where(eq(shareholders.id, id));
+}
+
+// Equity Holdings
+export async function getEquityHoldings(filters?: { companyId?: number; shareholderId?: number; shareClassId?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+
+  let conditions = [eq(equityHoldings.isActive, true)];
+  if (filters?.companyId) conditions.push(eq(equityHoldings.companyId, filters.companyId));
+  if (filters?.shareholderId) conditions.push(eq(equityHoldings.shareholderId, filters.shareholderId));
+  if (filters?.shareClassId) conditions.push(eq(equityHoldings.shareClassId, filters.shareClassId));
+
+  return db.select().from(equityHoldings).where(and(...conditions)).orderBy(desc(equityHoldings.acquisitionDate));
+}
+
+export async function getEquityHoldingById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(equityHoldings).where(eq(equityHoldings.id, id));
+  return result[0] || null;
+}
+
+export async function createEquityHolding(data: InsertEquityHolding) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(equityHoldings).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateEquityHolding(id: number, data: Partial<InsertEquityHolding>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(equityHoldings).set(data).where(eq(equityHoldings.id, id));
+}
+
+export async function deleteEquityHolding(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(equityHoldings).set({ isActive: false }).where(eq(equityHoldings.id, id));
+}
+
+// Vesting Schedules
+export async function getVestingSchedules(companyId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  if (companyId) {
+    return db.select().from(vestingSchedules).where(and(eq(vestingSchedules.companyId, companyId), eq(vestingSchedules.isActive, true))).orderBy(vestingSchedules.name);
+  }
+  return db.select().from(vestingSchedules).where(eq(vestingSchedules.isActive, true)).orderBy(vestingSchedules.name);
+}
+
+export async function getVestingScheduleById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(vestingSchedules).where(eq(vestingSchedules.id, id));
+  return result[0] || null;
+}
+
+export async function createVestingSchedule(data: InsertVestingSchedule) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(vestingSchedules).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateVestingSchedule(id: number, data: Partial<InsertVestingSchedule>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(vestingSchedules).set(data).where(eq(vestingSchedules.id, id));
+}
+
+export async function deleteVestingSchedule(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(vestingSchedules).set({ isActive: false }).where(eq(vestingSchedules.id, id));
+}
+
+// Equity Grants
+export async function getEquityGrants(filters?: { companyId?: number; shareholderId?: number; status?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+
+  let conditions: any[] = [];
+  if (filters?.companyId) conditions.push(eq(equityGrants.companyId, filters.companyId));
+  if (filters?.shareholderId) conditions.push(eq(equityGrants.shareholderId, filters.shareholderId));
+  if (filters?.status) conditions.push(eq(equityGrants.status, filters.status as any));
+
+  if (conditions.length > 0) {
+    return db.select().from(equityGrants).where(and(...conditions)).orderBy(desc(equityGrants.grantDate));
+  }
+  return db.select().from(equityGrants).orderBy(desc(equityGrants.grantDate));
+}
+
+export async function getEquityGrantById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(equityGrants).where(eq(equityGrants.id, id));
+  return result[0] || null;
+}
+
+export async function createEquityGrant(data: InsertEquityGrant) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(equityGrants).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateEquityGrant(id: number, data: Partial<InsertEquityGrant>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(equityGrants).set(data).where(eq(equityGrants.id, id));
+}
+
+export async function deleteEquityGrant(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(equityGrants).set({ status: "cancelled" }).where(eq(equityGrants.id, id));
+}
+
+// Option Exercises
+export async function getOptionExercises(filters?: { companyId?: number; equityGrantId?: number; shareholderId?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+
+  let conditions: any[] = [];
+  if (filters?.companyId) conditions.push(eq(optionExercises.companyId, filters.companyId));
+  if (filters?.equityGrantId) conditions.push(eq(optionExercises.equityGrantId, filters.equityGrantId));
+  if (filters?.shareholderId) conditions.push(eq(optionExercises.shareholderId, filters.shareholderId));
+
+  if (conditions.length > 0) {
+    return db.select().from(optionExercises).where(and(...conditions)).orderBy(desc(optionExercises.exerciseDate));
+  }
+  return db.select().from(optionExercises).orderBy(desc(optionExercises.exerciseDate));
+}
+
+export async function getOptionExerciseById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(optionExercises).where(eq(optionExercises.id, id));
+  return result[0] || null;
+}
+
+export async function createOptionExercise(data: InsertOptionExercise) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(optionExercises).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateOptionExercise(id: number, data: Partial<InsertOptionExercise>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(optionExercises).set(data).where(eq(optionExercises.id, id));
+}
+
+// Stock Transactions
+export async function getStockTransactions(filters?: { companyId?: number; shareholderId?: number; transactionType?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+
+  let conditions: any[] = [];
+  if (filters?.companyId) conditions.push(eq(stockTransactions.companyId, filters.companyId));
+  if (filters?.shareholderId) {
+    conditions.push(or(
+      eq(stockTransactions.fromShareholderId, filters.shareholderId),
+      eq(stockTransactions.toShareholderId, filters.shareholderId)
+    ));
+  }
+  if (filters?.transactionType) conditions.push(eq(stockTransactions.transactionType, filters.transactionType as any));
+
+  if (conditions.length > 0) {
+    return db.select().from(stockTransactions).where(and(...conditions)).orderBy(desc(stockTransactions.transactionDate));
+  }
+  return db.select().from(stockTransactions).orderBy(desc(stockTransactions.transactionDate));
+}
+
+export async function getStockTransactionById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(stockTransactions).where(eq(stockTransactions.id, id));
+  return result[0] || null;
+}
+
+export async function createStockTransaction(data: InsertStockTransaction) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(stockTransactions).values(data);
+  return { id: result[0].insertId };
+}
+
+// Funding Rounds
+export async function getFundingRounds(companyId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  if (companyId) {
+    return db.select().from(fundingRounds).where(eq(fundingRounds.companyId, companyId)).orderBy(desc(fundingRounds.closeDate));
+  }
+  return db.select().from(fundingRounds).orderBy(desc(fundingRounds.closeDate));
+}
+
+export async function getFundingRoundById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(fundingRounds).where(eq(fundingRounds.id, id));
+  return result[0] || null;
+}
+
+export async function createFundingRound(data: InsertFundingRound) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(fundingRounds).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateFundingRound(id: number, data: Partial<InsertFundingRound>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(fundingRounds).set(data).where(eq(fundingRounds.id, id));
+}
+
+export async function deleteFundingRound(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(fundingRounds).set({ status: "cancelled" }).where(eq(fundingRounds.id, id));
+}
+
+// Funding Investments
+export async function getFundingInvestments(filters?: { companyId?: number; fundingRoundId?: number; shareholderId?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+
+  let conditions: any[] = [];
+  if (filters?.companyId) conditions.push(eq(fundingInvestments.companyId, filters.companyId));
+  if (filters?.fundingRoundId) conditions.push(eq(fundingInvestments.fundingRoundId, filters.fundingRoundId));
+  if (filters?.shareholderId) conditions.push(eq(fundingInvestments.shareholderId, filters.shareholderId));
+
+  if (conditions.length > 0) {
+    return db.select().from(fundingInvestments).where(and(...conditions)).orderBy(desc(fundingInvestments.createdAt));
+  }
+  return db.select().from(fundingInvestments).orderBy(desc(fundingInvestments.createdAt));
+}
+
+export async function getFundingInvestmentById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(fundingInvestments).where(eq(fundingInvestments.id, id));
+  return result[0] || null;
+}
+
+export async function createFundingInvestment(data: InsertFundingInvestment) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(fundingInvestments).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateFundingInvestment(id: number, data: Partial<InsertFundingInvestment>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(fundingInvestments).set(data).where(eq(fundingInvestments.id, id));
+}
+
+// Valuations
+export async function getValuations(companyId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  if (companyId) {
+    return db.select().from(valuations).where(and(eq(valuations.companyId, companyId), eq(valuations.isActive, true))).orderBy(desc(valuations.valuationDate));
+  }
+  return db.select().from(valuations).where(eq(valuations.isActive, true)).orderBy(desc(valuations.valuationDate));
+}
+
+export async function getValuationById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(valuations).where(eq(valuations.id, id));
+  return result[0] || null;
+}
+
+export async function getCurrentValuation(companyId?: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const now = new Date();
+
+  let conditions = [
+    eq(valuations.isActive, true),
+    lte(valuations.effectiveDate, now),
+    or(isNull(valuations.expirationDate), gte(valuations.expirationDate, now))
+  ];
+  if (companyId) conditions.push(eq(valuations.companyId, companyId));
+
+  const result = await db.select().from(valuations)
+    .where(and(...conditions))
+    .orderBy(desc(valuations.effectiveDate))
+    .limit(1);
+  return result[0] || null;
+}
+
+export async function createValuation(data: InsertValuation) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(valuations).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateValuation(id: number, data: Partial<InsertValuation>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(valuations).set(data).where(eq(valuations.id, id));
+}
+
+// Equity Scenarios
+export async function getEquityScenarios(companyId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  if (companyId) {
+    return db.select().from(equityScenarios).where(and(eq(equityScenarios.companyId, companyId), eq(equityScenarios.isActive, true))).orderBy(desc(equityScenarios.createdAt));
+  }
+  return db.select().from(equityScenarios).where(eq(equityScenarios.isActive, true)).orderBy(desc(equityScenarios.createdAt));
+}
+
+export async function getEquityScenarioById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(equityScenarios).where(eq(equityScenarios.id, id));
+  return result[0] || null;
+}
+
+export async function createEquityScenario(data: InsertEquityScenario) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(equityScenarios).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateEquityScenario(id: number, data: Partial<InsertEquityScenario>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(equityScenarios).set(data).where(eq(equityScenarios.id, id));
+}
+
+export async function deleteEquityScenario(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(equityScenarios).set({ isActive: false }).where(eq(equityScenarios.id, id));
+}
+
+// Equity Documents
+export async function getEquityDocuments(filters?: { companyId?: number; shareholderId?: number; documentType?: string; equityGrantId?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+
+  let conditions: any[] = [];
+  if (filters?.companyId) conditions.push(eq(equityDocuments.companyId, filters.companyId));
+  if (filters?.shareholderId) conditions.push(eq(equityDocuments.shareholderId, filters.shareholderId));
+  if (filters?.documentType) conditions.push(eq(equityDocuments.documentType, filters.documentType as any));
+  if (filters?.equityGrantId) conditions.push(eq(equityDocuments.equityGrantId, filters.equityGrantId));
+
+  if (conditions.length > 0) {
+    return db.select().from(equityDocuments).where(and(...conditions)).orderBy(desc(equityDocuments.createdAt));
+  }
+  return db.select().from(equityDocuments).orderBy(desc(equityDocuments.createdAt));
+}
+
+export async function getEquityDocumentById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(equityDocuments).where(eq(equityDocuments.id, id));
+  return result[0] || null;
+}
+
+export async function getShareholderDocuments(shareholderId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(equityDocuments)
+    .where(and(
+      eq(equityDocuments.shareholderId, shareholderId),
+      eq(equityDocuments.visibleToShareholder, true)
+    ))
+    .orderBy(desc(equityDocuments.createdAt));
+}
+
+export async function createEquityDocument(data: InsertEquityDocument) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(equityDocuments).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateEquityDocument(id: number, data: Partial<InsertEquityDocument>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(equityDocuments).set(data).where(eq(equityDocuments.id, id));
+}
+
+export async function deleteEquityDocument(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(equityDocuments).where(eq(equityDocuments.id, id));
+}
+
+// Shareholder Portal Tokens
+export async function createShareholderPortalToken(data: InsertShareholderPortalToken) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(shareholderPortalTokens).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getShareholderPortalTokenByToken(token: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(shareholderPortalTokens)
+    .where(and(
+      eq(shareholderPortalTokens.token, token),
+      isNull(shareholderPortalTokens.usedAt),
+      gte(shareholderPortalTokens.expiresAt, new Date())
+    ));
+  return result[0] || null;
+}
+
+export async function markShareholderPortalTokenUsed(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(shareholderPortalTokens).set({ usedAt: new Date() }).where(eq(shareholderPortalTokens.id, id));
+}
+
+// Shareholder Notifications
+export async function getShareholderNotifications(shareholderId: number, unreadOnly: boolean = false) {
+  const db = await getDb();
+  if (!db) return [];
+
+  let conditions = [eq(shareholderNotifications.shareholderId, shareholderId)];
+  if (unreadOnly) {
+    conditions.push(isNull(shareholderNotifications.readAt));
+  }
+
+  return db.select().from(shareholderNotifications)
+    .where(and(...conditions))
+    .orderBy(desc(shareholderNotifications.createdAt));
+}
+
+export async function createShareholderNotification(data: InsertShareholderNotification) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(shareholderNotifications).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function markShareholderNotificationRead(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(shareholderNotifications).set({ readAt: new Date() }).where(eq(shareholderNotifications.id, id));
+}
+
+// Option Pools
+export async function getOptionPools(companyId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  if (companyId) {
+    return db.select().from(optionPools).where(and(eq(optionPools.companyId, companyId), eq(optionPools.isActive, true))).orderBy(optionPools.name);
+  }
+  return db.select().from(optionPools).where(eq(optionPools.isActive, true)).orderBy(optionPools.name);
+}
+
+export async function getOptionPoolById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(optionPools).where(eq(optionPools.id, id));
+  return result[0] || null;
+}
+
+export async function createOptionPool(data: InsertOptionPool) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(optionPools).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateOptionPool(id: number, data: Partial<InsertOptionPool>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(optionPools).set(data).where(eq(optionPools.id, id));
+}
+
+// Cap Table Summary
+export async function getCapTableSummary(companyId?: number) {
+  const db = await getDb();
+  if (!db) return null;
+
+  // Get all share classes
+  const classes = await getShareClasses(companyId);
+
+  // Get all holdings with shareholder info
+  const holdingsData = await getEquityHoldings({ companyId });
+  const shareholdersList = await getShareholders(companyId);
+  const shareholdersMap = new Map(shareholdersList.map(s => [s.id, s]));
+
+  // Get all grants
+  const grants = await getEquityGrants({ companyId });
+
+  // Get option pools
+  const pools = await getOptionPools(companyId);
+
+  // Get current valuation
+  const currentValuation = await getCurrentValuation(companyId);
+
+  // Calculate totals
+  let totalOutstandingShares = 0;
+  let totalFullyDilutedShares = 0;
+
+  // Group holdings by shareholder and class
+  const holdingsByShareholder: Record<number, { shareholder: typeof shareholdersList[0]; holdings: typeof holdingsData; totalShares: number }> = {};
+
+  for (const holding of holdingsData) {
+    if (!holdingsByShareholder[holding.shareholderId]) {
+      holdingsByShareholder[holding.shareholderId] = {
+        shareholder: shareholdersMap.get(holding.shareholderId)!,
+        holdings: [],
+        totalShares: 0
+      };
+    }
+    holdingsByShareholder[holding.shareholderId].holdings.push(holding);
+    holdingsByShareholder[holding.shareholderId].totalShares += Number(holding.shares);
+    totalOutstandingShares += Number(holding.shares);
+  }
+
+  // Add unexercised options to fully diluted count
+  for (const grant of grants) {
+    if (grant.status === 'active' || grant.status === 'fully_vested' || grant.status === 'partially_exercised') {
+      const unexercised = Number(grant.sharesGranted) - Number(grant.sharesExercised) - Number(grant.sharesCancelled);
+      totalFullyDilutedShares += unexercised;
+    }
+  }
+
+  totalFullyDilutedShares += totalOutstandingShares;
+
+  // Calculate available option pool
+  let totalOptionPoolAvailable = 0;
+  for (const pool of pools) {
+    const available = Number(pool.authorizedShares) - Number(pool.allocatedShares) - Number(pool.exercisedShares) + Number(pool.cancelledShares);
+    totalOptionPoolAvailable += available;
+  }
+
+  return {
+    shareClasses: classes,
+    shareholderHoldings: Object.values(holdingsByShareholder),
+    totalOutstandingShares,
+    totalFullyDilutedShares,
+    optionPools: pools,
+    totalOptionPoolAvailable,
+    currentValuation,
+    pricePerShare: currentValuation?.commonSharePrice ? Number(currentValuation.commonSharePrice) : null,
+  };
+}
+
+// Vesting calculation helper
+export function calculateVestedShares(grant: {
+  sharesGranted: number;
+  vestingStartDate: Date;
+  cliffDate?: Date | null;
+  fullyVestedDate?: Date | null;
+  sharesCancelled?: number;
+}, vestingSchedule: {
+  totalMonths: number | null;
+  cliffMonths: number | null;
+  cliffPercentage: string | null;
+  vestingFrequency: string | null;
+} | null, asOfDate: Date = new Date()): { vestedShares: number; unvestedShares: number; percentVested: number } {
+  const totalShares = Number(grant.sharesGranted) - (grant.sharesCancelled || 0);
+
+  if (!vestingSchedule) {
+    // No vesting schedule = fully vested
+    return { vestedShares: totalShares, unvestedShares: 0, percentVested: 100 };
+  }
+
+  const startDate = new Date(grant.vestingStartDate);
+  const cliffDate = grant.cliffDate ? new Date(grant.cliffDate) : null;
+  const fullyVestedDate = grant.fullyVestedDate ? new Date(grant.fullyVestedDate) : null;
+
+  // Before vesting start
+  if (asOfDate < startDate) {
+    return { vestedShares: 0, unvestedShares: totalShares, percentVested: 0 };
+  }
+
+  // After fully vested date
+  if (fullyVestedDate && asOfDate >= fullyVestedDate) {
+    return { vestedShares: totalShares, unvestedShares: 0, percentVested: 100 };
+  }
+
+  // Before cliff
+  if (cliffDate && asOfDate < cliffDate) {
+    return { vestedShares: 0, unvestedShares: totalShares, percentVested: 0 };
+  }
+
+  const totalMonths = vestingSchedule.totalMonths || 48;
+  const cliffMonths = vestingSchedule.cliffMonths || 12;
+  const cliffPercentage = parseFloat(vestingSchedule.cliffPercentage || "25.00") / 100;
+
+  // Calculate months elapsed
+  const monthsElapsed = Math.floor((asOfDate.getTime() - startDate.getTime()) / (30.44 * 24 * 60 * 60 * 1000));
+
+  if (monthsElapsed >= totalMonths) {
+    return { vestedShares: totalShares, unvestedShares: 0, percentVested: 100 };
+  }
+
+  let vestedPercent = 0;
+
+  // Cliff vesting
+  if (monthsElapsed >= cliffMonths) {
+    vestedPercent = cliffPercentage;
+
+    // Post-cliff monthly vesting
+    const postCliffMonths = monthsElapsed - cliffMonths;
+    const remainingPercent = 1 - cliffPercentage;
+    const remainingMonths = totalMonths - cliffMonths;
+
+    if (vestingSchedule.vestingFrequency === 'monthly') {
+      vestedPercent += (postCliffMonths / remainingMonths) * remainingPercent;
+    } else if (vestingSchedule.vestingFrequency === 'quarterly') {
+      const quartersVested = Math.floor(postCliffMonths / 3);
+      const totalQuarters = Math.floor(remainingMonths / 3);
+      vestedPercent += (quartersVested / totalQuarters) * remainingPercent;
+    } else if (vestingSchedule.vestingFrequency === 'annually') {
+      const yearsVested = Math.floor(postCliffMonths / 12);
+      const totalYears = Math.floor(remainingMonths / 12);
+      vestedPercent += (yearsVested / totalYears) * remainingPercent;
+    }
+  }
+
+  vestedPercent = Math.min(vestedPercent, 1);
+  const vestedShares = Math.floor(totalShares * vestedPercent);
+
+  return {
+    vestedShares,
+    unvestedShares: totalShares - vestedShares,
+    percentVested: Math.round(vestedPercent * 10000) / 100
+  };
+}
+
+// Import cap table from parsed CSV/Excel data
+export async function importCapTableData(data: {
+  shareholders: Array<{
+    name: string;
+    type: string;
+    email?: string;
+    shares: number;
+    shareClass: string;
+    acquisitionDate: Date;
+    pricePerShare?: number;
+  }>;
+  shareClasses: Array<{
+    name: string;
+    type: string;
+    authorizedShares: number;
+    pricePerShare?: number;
+  }>;
+  companyId?: number;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const results = {
+    shareClassesCreated: 0,
+    shareholdersCreated: 0,
+    holdingsCreated: 0,
+    errors: [] as string[]
+  };
+
+  // Create share classes first
+  const shareClassMap = new Map<string, number>();
+  for (const sc of data.shareClasses) {
+    try {
+      const existing = await db.select().from(shareClasses)
+        .where(and(
+          eq(shareClasses.name, sc.name),
+          data.companyId ? eq(shareClasses.companyId, data.companyId) : sql`1=1`
+        ));
+
+      if (existing.length > 0) {
+        shareClassMap.set(sc.name, existing[0].id);
+      } else {
+        const result = await createShareClass({
+          companyId: data.companyId,
+          name: sc.name,
+          type: sc.type as any,
+          authorizedShares: sc.authorizedShares,
+          pricePerShare: sc.pricePerShare?.toString(),
+        });
+        shareClassMap.set(sc.name, result.id);
+        results.shareClassesCreated++;
+      }
+    } catch (e: any) {
+      results.errors.push(`Failed to create share class ${sc.name}: ${e.message}`);
+    }
+  }
+
+  // Create shareholders and holdings
+  for (const sh of data.shareholders) {
+    try {
+      // Check if shareholder exists
+      let shareholderId: number;
+      const existing = await db.select().from(shareholders)
+        .where(and(
+          eq(shareholders.name, sh.name),
+          data.companyId ? eq(shareholders.companyId, data.companyId) : sql`1=1`
+        ));
+
+      if (existing.length > 0) {
+        shareholderId = existing[0].id;
+      } else {
+        const result = await createShareholder({
+          companyId: data.companyId,
+          name: sh.name,
+          type: sh.type as any,
+          email: sh.email,
+        });
+        shareholderId = result.id;
+        results.shareholdersCreated++;
+      }
+
+      // Create holding
+      const shareClassId = shareClassMap.get(sh.shareClass);
+      if (!shareClassId) {
+        results.errors.push(`Share class ${sh.shareClass} not found for shareholder ${sh.name}`);
+        continue;
+      }
+
+      await createEquityHolding({
+        companyId: data.companyId,
+        shareholderId,
+        shareClassId,
+        shares: sh.shares,
+        acquisitionDate: sh.acquisitionDate,
+        acquisitionType: 'purchase',
+        purchasePrice: sh.pricePerShare?.toString(),
+        totalCostBasis: sh.pricePerShare ? (sh.shares * sh.pricePerShare).toString() : undefined,
+      });
+      results.holdingsCreated++;
+
+    } catch (e: any) {
+      results.errors.push(`Failed to create shareholder ${sh.name}: ${e.message}`);
+    }
+  }
+
+  return results;
 }

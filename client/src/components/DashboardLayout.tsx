@@ -65,6 +65,11 @@ import {
   FolderLock,
   Target,
   MessageSquare,
+  PieChart,
+  Award,
+  LineChart,
+  User,
+  Upload,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -118,6 +123,17 @@ const menuGroups = [
     items: [
       { icon: UserCog, label: "Team & Payroll", path: "/hr/employees" },
       { icon: FileSignature, label: "Contracts & Legal", path: "/legal/contracts" },
+    ],
+  },
+  {
+    label: "Equity",
+    items: [
+      { icon: PieChart, label: "Cap Table", path: "/equity/cap-table" },
+      { icon: Users, label: "Shareholders", path: "/equity/shareholders" },
+      { icon: Award, label: "Equity Grants", path: "/equity/grants" },
+      { icon: LineChart, label: "Modeling", path: "/equity/modeling" },
+      { icon: User, label: "My Equity", path: "/equity/portal" },
+      { icon: Upload, label: "Import Cap Table", path: "/equity/import" },
     ],
   },
   {
@@ -231,7 +247,7 @@ function DashboardLayoutContent({
   const [isResizing, setIsResizing] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
   const isMobile = useIsMobile();
-  const [openGroups, setOpenGroups] = useState<string[]>(["Overview", "Finance", "Sales", "CRM", "Operations"]);
+  const [openGroups, setOpenGroups] = useState<string[]>(["Overview", "Finance", "Sales", "CRM", "Operations", "Equity"]);
   const [aiCommandOpen, setAiCommandOpen] = useState(false);
 
   // Global keyboard shortcuts
