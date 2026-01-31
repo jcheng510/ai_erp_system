@@ -10501,6 +10501,106 @@ Ask if they received the original request and if they can provide a quote.`;
         }),
     }),
 
+    // --- DATA ROOM SYNC ---
+    dataRoom: router({
+      // Get data room activity for a contact
+      getContactActivity: protectedProcedure
+        .input(z.object({ contactId: z.number(), limit: z.number().optional() }))
+        .query(({ input }) => db.getContactDataRoomActivity(input.contactId, input.limit)),
+
+      // Get visitors with CRM contacts for a data room
+      getVisitorsWithContacts: protectedProcedure
+        .input(z.object({ dataRoomId: z.number() }))
+        .query(({ input }) => db.getDataRoomVisitorsWithCrmContacts(input.dataRoomId)),
+
+      // Sync a single visitor to CRM
+      syncVisitor: protectedProcedure
+        .input(z.object({ visitorId: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const contactId = await db.syncDataRoomVisitorToCrm(input.visitorId, ctx.user.id);
+          return { contactId, synced: !!contactId };
+        }),
+
+      // Sync all unlinked visitors
+      syncAllVisitors: protectedProcedure
+        .input(z.object({ dataRoomId: z.number().optional() }).optional())
+        .mutation(async ({ input }) => {
+          return db.syncAllDataRoomVisitorsToCrm(input?.dataRoomId);
+        }),
+
+      // Log data room access (called when visitor enters data room)
+      logAccess: protectedProcedure
+        .input(z.object({
+          visitorId: z.number(),
+          dataRoomId: z.number(),
+          dataRoomName: z.string(),
+        }))
+        .mutation(async ({ input }) => {
+          const interactionId = await db.logDataRoomAccessToCrm(
+            input.visitorId,
+            input.dataRoomId,
+            input.dataRoomName
+          );
+          return { interactionId };
+        }),
+
+      // Log document view
+      logDocumentView: protectedProcedure
+        .input(z.object({
+          visitorId: z.number(),
+          dataRoomId: z.number(),
+          documentId: z.number(),
+          documentName: z.string(),
+          viewDuration: z.number().optional(),
+          pagesViewed: z.number().optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const interactionId = await db.logDocumentViewToCrm(
+            input.visitorId,
+            input.dataRoomId,
+            input.documentId,
+            input.documentName,
+            input.viewDuration,
+            input.pagesViewed
+          );
+          return { interactionId };
+        }),
+
+      // Log document download
+      logDownload: protectedProcedure
+        .input(z.object({
+          visitorId: z.number(),
+          dataRoomId: z.number(),
+          documentId: z.number(),
+          documentName: z.string(),
+        }))
+        .mutation(async ({ input }) => {
+          const interactionId = await db.logDocumentDownloadToCrm(
+            input.visitorId,
+            input.dataRoomId,
+            input.documentId,
+            input.documentName
+          );
+          return { interactionId };
+        }),
+
+      // Log NDA signing
+      logNdaSigning: protectedProcedure
+        .input(z.object({
+          visitorId: z.number(),
+          dataRoomId: z.number(),
+          ndaDocumentName: z.string(),
+        }))
+        .mutation(async ({ input }) => {
+          const interactionId = await db.logNdaSigningToCrm(
+            input.visitorId,
+            input.dataRoomId,
+            input.ndaDocumentName
+          );
+          return { interactionId };
+        }),
+    }),
+
     // --- EMAIL CAMPAIGNS ---
     campaigns: router({
       list: protectedProcedure

@@ -2356,7 +2356,11 @@ export const dataRoomVisitors = mysqlTable("data_room_visitors", {
   totalViews: int("totalViews").default(0).notNull(),
   totalTimeSpent: int("totalTimeSpent").default(0).notNull(), // seconds
   lastViewedAt: timestamp("lastViewedAt"),
-  
+
+  // CRM Integration
+  crmContactId: int("crmContactId"), // Link to CRM contact
+  crmSyncedAt: timestamp("crmSyncedAt"), // Last sync to CRM
+
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -3304,8 +3308,8 @@ export const crmInteractions = mysqlTable("crm_interactions", {
   contactId: int("contactId").notNull(),
 
   // Interaction type
-  channel: mysqlEnum("channel", ["email", "whatsapp", "sms", "phone", "meeting", "linkedin", "note", "task"]).notNull(),
-  interactionType: mysqlEnum("interactionType", ["sent", "received", "call_made", "call_received", "meeting_scheduled", "meeting_completed", "note_added", "task_completed"]).notNull(),
+  channel: mysqlEnum("channel", ["email", "whatsapp", "sms", "phone", "meeting", "linkedin", "note", "task", "data_room"]).notNull(),
+  interactionType: mysqlEnum("interactionType", ["sent", "received", "call_made", "call_received", "meeting_scheduled", "meeting_completed", "note_added", "task_completed", "data_room_access", "data_room_view", "data_room_download", "nda_signed"]).notNull(),
 
   // Content
   subject: varchar("subject", { length: 500 }),
@@ -3338,6 +3342,15 @@ export const crmInteractions = mysqlTable("crm_interactions", {
   // Context
   relatedDealId: int("relatedDealId"),
   performedBy: int("performedBy"),
+
+  // Data Room tracking
+  dataRoomId: int("dataRoomId"),
+  dataRoomVisitorId: int("dataRoomVisitorId"),
+  documentId: int("documentId"),
+  documentName: varchar("documentName", { length: 255 }),
+  viewDuration: int("viewDuration"), // seconds
+  pagesViewed: int("pagesViewed"),
+  downloaded: boolean("downloaded").default(false),
 
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),

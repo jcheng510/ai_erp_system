@@ -35,7 +35,8 @@ import {
   Users, Plus, Search, Loader2, Phone, Mail, MessageSquare,
   Linkedin, Building2, DollarSign, TrendingUp, UserPlus,
   Smartphone, QrCode, CreditCard, Filter, MoreHorizontal,
-  Calendar, Clock, MessageCircle, Target, Handshake
+  Calendar, Clock, MessageCircle, Target, Handshake,
+  FileText, Eye, Download, FileSignature, FolderOpen
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -100,6 +101,12 @@ export default function CRMHub() {
   const { data: pipelines } = trpc.crm.pipelines.list.useQuery();
   const { data: deals } = trpc.crm.deals.list.useQuery({ status: "open" });
   const { data: tags } = trpc.crm.tags.list.useQuery();
+
+  // Data room activity query for selected contact
+  const { data: dataRoomActivity, isLoading: activityLoading } = trpc.crm.dataRoom.getContactActivity.useQuery(
+    { contactId: selectedContact?.id || 0, limit: 20 },
+    { enabled: !!selectedContact?.id }
+  );
 
   // Mutations
   const createContact = trpc.crm.contacts.create.useMutation({
@@ -955,7 +962,7 @@ export default function CRMHub() {
 
       {/* Contact Detail Dialog */}
       <Dialog open={isDetailOpen} onOpenChange={setIsDetailOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{selectedContact?.fullName}</DialogTitle>
             <DialogDescription>
@@ -964,7 +971,7 @@ export default function CRMHub() {
             </DialogDescription>
           </DialogHeader>
           {selectedContact && (
-            <div className="space-y-4">
+            <div className="space-y-6">
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label className="text-muted-foreground">Email</Label>
@@ -1003,7 +1010,87 @@ export default function CRMHub() {
                   <div className="text-sm">{selectedContact.notes}</div>
                 </div>
               )}
-              <div className="flex justify-end gap-2 pt-4">
+
+              {/* Data Room Activity Section */}
+              <div className="space-y-3 border-t pt-4">
+                <div className="flex items-center gap-2">
+                  <FolderOpen className="h-5 w-5 text-purple-600" />
+                  <h3 className="font-semibold">Data Room Activity</h3>
+                </div>
+                {activityLoading ? (
+                  <div className="flex justify-center py-4">
+                    <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                  </div>
+                ) : !dataRoomActivity || dataRoomActivity.length === 0 ? (
+                  <div className="text-sm text-muted-foreground py-4 text-center">
+                    <FolderOpen className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                    No data room activity for this contact
+                  </div>
+                ) : (
+                  <div className="space-y-2 max-h-[300px] overflow-y-auto">
+                    {dataRoomActivity.map((activity: any) => {
+                      const getActivityIcon = () => {
+                        switch (activity.interactionType) {
+                          case "data_room_access":
+                            return <Eye className="h-4 w-4 text-blue-500" />;
+                          case "document_view":
+                            return <FileText className="h-4 w-4 text-gray-500" />;
+                          case "document_download":
+                            return <Download className="h-4 w-4 text-green-500" />;
+                          case "nda_signed":
+                            return <FileSignature className="h-4 w-4 text-purple-500" />;
+                          default:
+                            return <Eye className="h-4 w-4 text-gray-400" />;
+                        }
+                      };
+
+                      const getActivityLabel = () => {
+                        switch (activity.interactionType) {
+                          case "data_room_access":
+                            return "Accessed data room";
+                          case "document_view":
+                            return `Viewed ${activity.documentName || "document"}`;
+                          case "document_download":
+                            return `Downloaded ${activity.documentName || "document"}`;
+                          case "nda_signed":
+                            return `Signed NDA: ${activity.documentName || ""}`;
+                          default:
+                            return activity.interactionType.replace(/_/g, " ");
+                        }
+                      };
+
+                      return (
+                        <div
+                          key={activity.id}
+                          className="flex items-start gap-3 p-2 rounded-lg bg-muted/50 hover:bg-muted transition-colors"
+                        >
+                          <div className="mt-0.5">{getActivityIcon()}</div>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm font-medium">{getActivityLabel()}</div>
+                            <div className="text-xs text-muted-foreground flex items-center gap-2 flex-wrap">
+                              <span>{format(new Date(activity.createdAt), "MMM d, yyyy h:mm a")}</span>
+                              {activity.viewDuration && activity.viewDuration > 0 && (
+                                <span className="flex items-center gap-1">
+                                  <Clock className="h-3 w-3" />
+                                  {Math.round(activity.viewDuration / 60)}m
+                                </span>
+                              )}
+                              {activity.pagesViewed && activity.pagesViewed > 0 && (
+                                <span>{activity.pagesViewed} pages</span>
+                              )}
+                            </div>
+                            {activity.notes && (
+                              <div className="text-xs text-muted-foreground mt-1">{activity.notes}</div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex justify-end gap-2 pt-4 border-t">
                 <Button variant="outline" onClick={() => setIsDetailOpen(false)}>Close</Button>
                 <Button>Edit Contact</Button>
               </div>

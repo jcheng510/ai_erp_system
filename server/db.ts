@@ -7475,3 +7475,336 @@ export async function getUnifiedMessagingHistory(contactId: number, limit: numbe
 
   return combined.slice(0, limit);
 }
+
+// ============================================
+// CRM + DATA ROOM SYNC
+// ============================================
+
+// Link a data room visitor to a CRM contact (by email match)
+export async function linkDataRoomVisitorToCrmContact(visitorId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Get the visitor
+  const [visitor] = await db.select().from(dataRoomVisitors).where(eq(dataRoomVisitors.id, visitorId)).limit(1);
+  if (!visitor || !visitor.email) return null;
+
+  // Find matching CRM contact by email
+  const contact = await getCrmContactByEmail(visitor.email);
+  if (!contact) return null;
+
+  // Link them
+  await db.update(dataRoomVisitors).set({
+    crmContactId: contact.id,
+    crmSyncedAt: new Date(),
+  }).where(eq(dataRoomVisitors.id, visitorId));
+
+  return contact.id;
+}
+
+// Create or find CRM contact from data room visitor
+export async function syncDataRoomVisitorToCrm(visitorId: number, capturedBy?: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Get the visitor with data room info
+  const [visitor] = await db.select().from(dataRoomVisitors).where(eq(dataRoomVisitors.id, visitorId)).limit(1);
+  if (!visitor) return null;
+
+  // If already linked, return the contact
+  if (visitor.crmContactId) {
+    return visitor.crmContactId;
+  }
+
+  // If no email, can't create contact
+  if (!visitor.email) return null;
+
+  // Check for existing contact
+  let contact = await getCrmContactByEmail(visitor.email);
+
+  if (contact) {
+    // Update existing contact with any new info
+    const updates: any = {};
+    if (visitor.name && !contact.fullName) updates.fullName = visitor.name;
+    if (visitor.company && !contact.organization) updates.organization = visitor.company;
+    if (visitor.phone && !contact.phone) updates.phone = visitor.phone;
+
+    if (Object.keys(updates).length > 0) {
+      await updateCrmContact(contact.id, updates);
+    }
+  } else {
+    // Create new contact
+    const nameParts = (visitor.name || "Data Room Visitor").split(" ");
+    const firstName = nameParts[0] || "Unknown";
+    const lastName = nameParts.slice(1).join(" ") || "";
+
+    const contactId = await createCrmContact({
+      firstName,
+      lastName,
+      fullName: visitor.name || `${firstName} ${lastName}`.trim(),
+      email: visitor.email,
+      phone: visitor.phone || undefined,
+      organization: visitor.company || undefined,
+      contactType: "prospect",
+      source: "website",
+      capturedBy,
+      notes: `Created from Data Room visitor`,
+    });
+
+    contact = await getCrmContactById(contactId);
+  }
+
+  if (contact) {
+    // Link visitor to contact
+    await db.update(dataRoomVisitors).set({
+      crmContactId: contact.id,
+      crmSyncedAt: new Date(),
+    }).where(eq(dataRoomVisitors.id, visitorId));
+
+    return contact.id;
+  }
+
+  return null;
+}
+
+// Log data room access to CRM interactions
+export async function logDataRoomAccessToCrm(
+  visitorId: number,
+  dataRoomId: number,
+  dataRoomName: string
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Get visitor and ensure linked to CRM
+  const [visitor] = await db.select().from(dataRoomVisitors).where(eq(dataRoomVisitors.id, visitorId)).limit(1);
+  if (!visitor) return null;
+
+  let contactId = visitor.crmContactId;
+  if (!contactId) {
+    contactId = await syncDataRoomVisitorToCrm(visitorId);
+  }
+
+  if (!contactId) return null;
+
+  // Create interaction
+  const interactionId = await createCrmInteraction({
+    contactId,
+    channel: "data_room",
+    interactionType: "data_room_access",
+    subject: `Accessed Data Room: ${dataRoomName}`,
+    content: `Visitor accessed the data room "${dataRoomName}"`,
+    dataRoomId,
+    dataRoomVisitorId: visitorId,
+  });
+
+  return interactionId;
+}
+
+// Log document view to CRM interactions
+export async function logDocumentViewToCrm(
+  visitorId: number,
+  dataRoomId: number,
+  documentId: number,
+  documentName: string,
+  viewDuration?: number,
+  pagesViewed?: number
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Get visitor
+  const [visitor] = await db.select().from(dataRoomVisitors).where(eq(dataRoomVisitors.id, visitorId)).limit(1);
+  if (!visitor) return null;
+
+  let contactId = visitor.crmContactId;
+  if (!contactId) {
+    contactId = await syncDataRoomVisitorToCrm(visitorId);
+  }
+
+  if (!contactId) return null;
+
+  // Create interaction
+  const durationText = viewDuration ? ` for ${Math.round(viewDuration / 60)} minutes` : "";
+  const pagesText = pagesViewed ? ` (${pagesViewed} pages)` : "";
+
+  const interactionId = await createCrmInteraction({
+    contactId,
+    channel: "data_room",
+    interactionType: "data_room_view",
+    subject: `Viewed: ${documentName}`,
+    content: `Viewed document "${documentName}"${durationText}${pagesText}`,
+    dataRoomId,
+    dataRoomVisitorId: visitorId,
+    documentId,
+    documentName,
+    viewDuration,
+    pagesViewed,
+  });
+
+  // Update contact's last activity
+  await updateCrmContact(contactId, {
+    lastContactedAt: new Date(),
+  });
+
+  return interactionId;
+}
+
+// Log document download to CRM interactions
+export async function logDocumentDownloadToCrm(
+  visitorId: number,
+  dataRoomId: number,
+  documentId: number,
+  documentName: string
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Get visitor
+  const [visitor] = await db.select().from(dataRoomVisitors).where(eq(dataRoomVisitors.id, visitorId)).limit(1);
+  if (!visitor) return null;
+
+  let contactId = visitor.crmContactId;
+  if (!contactId) {
+    contactId = await syncDataRoomVisitorToCrm(visitorId);
+  }
+
+  if (!contactId) return null;
+
+  // Create interaction
+  const interactionId = await createCrmInteraction({
+    contactId,
+    channel: "data_room",
+    interactionType: "data_room_download",
+    subject: `Downloaded: ${documentName}`,
+    content: `Downloaded document "${documentName}"`,
+    dataRoomId,
+    dataRoomVisitorId: visitorId,
+    documentId,
+    documentName,
+    downloaded: true,
+  });
+
+  // Update lead score for download (more engaged)
+  const contact = await getCrmContactById(contactId);
+  if (contact) {
+    await updateCrmContact(contactId, {
+      leadScore: (contact.leadScore || 0) + 5,
+      lastContactedAt: new Date(),
+    });
+  }
+
+  return interactionId;
+}
+
+// Log NDA signing to CRM interactions
+export async function logNdaSigningToCrm(
+  visitorId: number,
+  dataRoomId: number,
+  ndaDocumentName: string
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Get visitor
+  const [visitor] = await db.select().from(dataRoomVisitors).where(eq(dataRoomVisitors.id, visitorId)).limit(1);
+  if (!visitor) return null;
+
+  let contactId = visitor.crmContactId;
+  if (!contactId) {
+    contactId = await syncDataRoomVisitorToCrm(visitorId);
+  }
+
+  if (!contactId) return null;
+
+  // Create interaction
+  const interactionId = await createCrmInteraction({
+    contactId,
+    channel: "data_room",
+    interactionType: "nda_signed",
+    subject: `Signed NDA`,
+    content: `Signed NDA document: "${ndaDocumentName}"`,
+    dataRoomId,
+    dataRoomVisitorId: visitorId,
+  });
+
+  // Update contact to prospect status if still a lead
+  const contact = await getCrmContactById(contactId);
+  if (contact && contact.contactType === "lead") {
+    await updateCrmContact(contactId, {
+      contactType: "prospect",
+      leadScore: (contact.leadScore || 0) + 10,
+      pipelineStage: "qualified",
+    });
+  }
+
+  return interactionId;
+}
+
+// Get data room activity for a CRM contact
+export async function getContactDataRoomActivity(contactId: number, limit: number = 50) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const interactions = await db.select().from(crmInteractions)
+    .where(
+      and(
+        eq(crmInteractions.contactId, contactId),
+        eq(crmInteractions.channel, "data_room")
+      )
+    )
+    .orderBy(desc(crmInteractions.createdAt))
+    .limit(limit);
+
+  return interactions;
+}
+
+// Get data room visitors linked to CRM contacts
+export async function getDataRoomVisitorsWithCrmContacts(dataRoomId: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const visitors = await db.select({
+    visitor: dataRoomVisitors,
+    contact: crmContacts,
+  })
+    .from(dataRoomVisitors)
+    .leftJoin(crmContacts, eq(dataRoomVisitors.crmContactId, crmContacts.id))
+    .where(eq(dataRoomVisitors.dataRoomId, dataRoomId))
+    .orderBy(desc(dataRoomVisitors.lastViewedAt));
+
+  return visitors;
+}
+
+// Sync all unlinked data room visitors to CRM
+export async function syncAllDataRoomVisitorsToCrm(dataRoomId?: number) {
+  const db = await getDb();
+  if (!db) return { synced: 0, failed: 0 };
+
+  const conditions = [isNull(dataRoomVisitors.crmContactId)];
+  if (dataRoomId) {
+    conditions.push(eq(dataRoomVisitors.dataRoomId, dataRoomId));
+  }
+
+  const unlinkedVisitors = await db.select().from(dataRoomVisitors)
+    .where(and(...conditions))
+    .limit(500);
+
+  let synced = 0;
+  let failed = 0;
+
+  for (const visitor of unlinkedVisitors) {
+    try {
+      const contactId = await syncDataRoomVisitorToCrm(visitor.id);
+      if (contactId) {
+        synced++;
+      } else {
+        failed++;
+      }
+    } catch {
+      failed++;
+    }
+  }
+
+  return { synced, failed };
+}
