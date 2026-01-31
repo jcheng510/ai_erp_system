@@ -9561,7 +9561,7 @@ Ask if they received the original request and if they can provide a quote.`;
       createStandard: protectedProcedure
         .input(z.object({
           dataRoomId: z.number(),
-          checklistType: z.enum(['fundraising', 'ma', 'full']).default('full'),
+          checklistType: z.enum(['fundraising', 'ma', 'full', 'series_b']).default('full'),
           customName: z.string().optional(),
         }))
         .mutation(async ({ input, ctx }) => {

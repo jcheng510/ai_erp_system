@@ -3572,3 +3572,144 @@ export const STANDARD_DD_CATEGORIES = {
     ]
   },
 } as const;
+
+// Series B Due Diligence Categories - focused on growth-stage requirements
+export const SERIES_B_DD_CATEGORIES = {
+  CORPORATE_LEGAL: {
+    name: "Corporate & Legal Foundation",
+    items: [
+      { name: "Certificate of Incorporation (current)", keywords: ["certificate", "incorporation", "articles", "delaware"] },
+      { name: "Amended & Restated Bylaws", keywords: ["bylaws", "by-laws", "amended", "restated"] },
+      { name: "Board Meeting Minutes (last 2 years)", keywords: ["board", "minutes", "meeting"] },
+      { name: "Stockholder/Investor Consents", keywords: ["stockholder", "consent", "investor", "written consent"] },
+      { name: "Investor Rights Agreement", keywords: ["investor rights", "ira", "registration rights"] },
+      { name: "Right of First Refusal Agreement", keywords: ["rofr", "first refusal", "co-sale"] },
+      { name: "Voting Agreement", keywords: ["voting", "agreement", "drag along"] },
+      { name: "Good Standing Certificates", keywords: ["good standing", "certificate", "status"] },
+      { name: "Qualified Small Business Stock (QSBS) Documentation", keywords: ["qsbs", "qualified small business", "1202"] },
+    ]
+  },
+  CAP_TABLE_EQUITY: {
+    name: "Cap Table & Equity",
+    items: [
+      { name: "Fully Diluted Cap Table", keywords: ["cap table", "capitalization", "fully diluted"] },
+      { name: "Pro Forma Cap Table (post-financing)", keywords: ["pro forma", "post money", "post-financing"] },
+      { name: "409A Valuation (current)", keywords: ["409a", "valuation", "fair market value"] },
+      { name: "Stock Option Plan & Grants", keywords: ["option", "plan", "esop", "stock option", "grant"] },
+      { name: "Option Pool Analysis", keywords: ["option pool", "pool", "available options"] },
+      { name: "Previous Financing Documents", keywords: ["series a", "seed", "safe", "convertible", "financing"] },
+      { name: "Warrant Register", keywords: ["warrant", "register", "outstanding"] },
+      { name: "Convertible Note/SAFE Summary", keywords: ["convertible", "note", "safe", "outstanding"] },
+    ]
+  },
+  FINANCIAL_METRICS: {
+    name: "Financial Performance & Metrics",
+    items: [
+      { name: "Audited Financial Statements", keywords: ["audited", "financial", "statements", "audit"] },
+      { name: "Monthly Financial Statements (24 months)", keywords: ["monthly", "financials", "p&l", "income statement"] },
+      { name: "Balance Sheet (current)", keywords: ["balance sheet", "assets", "liabilities"] },
+      { name: "Cash Flow Statement", keywords: ["cash flow", "statement"] },
+      { name: "Financial Model & Projections (3-5 year)", keywords: ["model", "projections", "forecast", "financial model"] },
+      { name: "Use of Funds / Budget", keywords: ["use of funds", "budget", "allocation"] },
+      { name: "Burn Rate Analysis", keywords: ["burn", "rate", "runway", "cash burn"] },
+      { name: "Bank Statements (12 months)", keywords: ["bank", "statement", "account"] },
+      { name: "Accounts Receivable Aging", keywords: ["receivable", "aging", "ar", "collections"] },
+      { name: "Accounts Payable Summary", keywords: ["payable", "ap", "outstanding"] },
+      { name: "Tax Returns (last 3 years)", keywords: ["tax", "return", "irs", "filing"] },
+    ]
+  },
+  REVENUE_GROWTH: {
+    name: "Revenue & Growth Metrics",
+    items: [
+      { name: "ARR/MRR Summary & Trends", keywords: ["arr", "mrr", "recurring revenue", "monthly recurring"] },
+      { name: "Revenue by Customer Cohort", keywords: ["cohort", "revenue", "customer", "analysis"] },
+      { name: "Net Revenue Retention (NRR)", keywords: ["nrr", "net revenue retention", "retention"] },
+      { name: "Gross Revenue Retention", keywords: ["grr", "gross retention", "churn"] },
+      { name: "Customer Acquisition Cost (CAC)", keywords: ["cac", "acquisition cost", "customer acquisition"] },
+      { name: "Lifetime Value (LTV) Analysis", keywords: ["ltv", "lifetime value", "customer value"] },
+      { name: "LTV/CAC Ratio", keywords: ["ltv cac", "ratio", "unit economics"] },
+      { name: "Churn Analysis", keywords: ["churn", "attrition", "cancellation"] },
+      { name: "Sales Efficiency Metrics", keywords: ["sales efficiency", "magic number", "payback"] },
+      { name: "Growth Rate (YoY, MoM)", keywords: ["growth rate", "yoy", "mom", "year over year"] },
+    ]
+  },
+  PRODUCT_TECHNOLOGY: {
+    name: "Product & Technology",
+    items: [
+      { name: "Product Roadmap", keywords: ["product", "roadmap", "plan", "feature"] },
+      { name: "Technical Architecture Overview", keywords: ["technical", "architecture", "system", "diagram", "infrastructure"] },
+      { name: "Technology Stack Documentation", keywords: ["tech stack", "technology", "stack", "tools"] },
+      { name: "Product Demo / Walkthrough", keywords: ["demo", "walkthrough", "product tour"] },
+      { name: "Key Product Metrics (DAU/MAU, engagement)", keywords: ["dau", "mau", "engagement", "product metrics", "usage"] },
+      { name: "Engineering Team & Processes", keywords: ["engineering", "development", "process", "agile", "sprint"] },
+      { name: "Technical Debt Assessment", keywords: ["technical debt", "code quality", "refactoring"] },
+      { name: "Scalability Analysis", keywords: ["scalability", "scale", "performance", "load"] },
+    ]
+  },
+  SECURITY_COMPLIANCE: {
+    name: "Security & Compliance",
+    items: [
+      { name: "SOC 2 Report (Type I or II)", keywords: ["soc2", "soc 2", "type ii", "type 2"] },
+      { name: "Security Policies & Procedures", keywords: ["security", "policy", "procedures", "infosec"] },
+      { name: "Penetration Test Results", keywords: ["pentest", "penetration", "security assessment"] },
+      { name: "GDPR Compliance Documentation", keywords: ["gdpr", "data protection", "privacy"] },
+      { name: "CCPA Compliance Documentation", keywords: ["ccpa", "california", "privacy"] },
+      { name: "HIPAA Compliance (if applicable)", keywords: ["hipaa", "health", "phi", "baa"] },
+      { name: "Data Processing Agreements", keywords: ["dpa", "data processing", "subprocessor"] },
+      { name: "Incident Response Plan", keywords: ["incident", "response", "breach", "security incident"] },
+      { name: "Business Continuity Plan", keywords: ["business continuity", "disaster recovery", "bcp"] },
+    ]
+  },
+  TEAM_HR: {
+    name: "Team & Organization",
+    items: [
+      { name: "Org Chart (current)", keywords: ["org chart", "organization", "structure"] },
+      { name: "Executive Team Bios", keywords: ["executive", "team", "bio", "leadership", "management"] },
+      { name: "Employee Census / Headcount", keywords: ["employee", "census", "headcount", "roster"] },
+      { name: "Key Employee Agreements", keywords: ["employment", "agreement", "offer letter", "executive"] },
+      { name: "CIIA/Invention Assignment Agreements", keywords: ["ciia", "invention", "assignment", "confidentiality"] },
+      { name: "Compensation Summary / Salary Bands", keywords: ["compensation", "salary", "bands", "pay"] },
+      { name: "Equity Vesting Schedules", keywords: ["vesting", "schedule", "equity", "cliff"] },
+      { name: "Benefits Summary", keywords: ["benefits", "401k", "health", "insurance"] },
+      { name: "Contractor Agreements", keywords: ["contractor", "consultant", "1099"] },
+      { name: "Hiring Plan", keywords: ["hiring", "plan", "headcount", "recruitment"] },
+    ]
+  },
+  CUSTOMERS_COMMERCIAL: {
+    name: "Customers & Commercial",
+    items: [
+      { name: "Top 20 Customer List with Revenue", keywords: ["customer", "list", "top", "revenue"] },
+      { name: "Customer Concentration Analysis", keywords: ["concentration", "customer", "top customers"] },
+      { name: "Master Service Agreement (template)", keywords: ["msa", "master service", "agreement", "template"] },
+      { name: "Customer Contract Summary", keywords: ["customer", "contract", "summary", "terms"] },
+      { name: "Sales Pipeline & Forecast", keywords: ["pipeline", "forecast", "sales", "opportunity"] },
+      { name: "Win/Loss Analysis", keywords: ["win", "loss", "analysis", "competitive"] },
+      { name: "Customer References", keywords: ["reference", "customer", "testimonial"] },
+      { name: "Case Studies", keywords: ["case study", "success story", "customer story"] },
+      { name: "Pricing Model & Rate Card", keywords: ["pricing", "rate card", "price", "model"] },
+      { name: "Partner/Channel Agreements", keywords: ["partner", "channel", "reseller", "distribution"] },
+    ]
+  },
+  IP_ASSETS: {
+    name: "Intellectual Property",
+    items: [
+      { name: "Patent Portfolio Summary", keywords: ["patent", "portfolio", "invention", "ip"] },
+      { name: "Trademark Registrations", keywords: ["trademark", "registration", "brand", "tm"] },
+      { name: "Domain Name Portfolio", keywords: ["domain", "dns", "url", "website"] },
+      { name: "IP Assignment Agreements", keywords: ["ip assignment", "intellectual property", "assignment"] },
+      { name: "Open Source License Audit", keywords: ["open source", "license", "oss", "audit"] },
+      { name: "Third-Party IP Licenses", keywords: ["license", "third party", "software license"] },
+    ]
+  },
+  LEGAL_RISK: {
+    name: "Legal & Risk",
+    items: [
+      { name: "Material Contracts Summary", keywords: ["material", "contract", "significant"] },
+      { name: "Vendor/Supplier Agreements", keywords: ["vendor", "supplier", "agreement"] },
+      { name: "Litigation Summary / Pending Claims", keywords: ["litigation", "lawsuit", "claim", "dispute"] },
+      { name: "Insurance Policies (D&O, E&O, Cyber)", keywords: ["insurance", "d&o", "e&o", "cyber", "policy"] },
+      { name: "Regulatory Filings & Licenses", keywords: ["regulatory", "license", "permit", "filing"] },
+      { name: "Related Party Transactions", keywords: ["related party", "transaction", "conflict"] },
+    ]
+  },
+} as const;

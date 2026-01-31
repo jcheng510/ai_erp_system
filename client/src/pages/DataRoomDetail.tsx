@@ -2145,13 +2145,26 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
               <Button
                 variant="outline"
                 className="h-auto p-4 justify-start"
+                onClick={() => createStandardMutation.mutate({ dataRoomId, checklistType: 'series_b' })}
+                disabled={createStandardMutation.isPending}
+              >
+                <div className="text-left">
+                  <div className="font-medium">Series B Fundraising</div>
+                  <div className="text-sm text-muted-foreground">
+                    90+ items tailored for growth-stage funding including metrics, compliance & governance
+                  </div>
+                </div>
+              </Button>
+              <Button
+                variant="outline"
+                className="h-auto p-4 justify-start"
                 onClick={() => createStandardMutation.mutate({ dataRoomId, checklistType: 'fundraising' })}
                 disabled={createStandardMutation.isPending}
               >
                 <div className="text-left">
-                  <div className="font-medium">Fundraising Focus</div>
+                  <div className="font-medium">General Fundraising</div>
                   <div className="text-sm text-muted-foreground">
-                    Optimized for Series A/B fundraising
+                    Optimized for seed and Series A fundraising
                   </div>
                 </div>
               </Button>

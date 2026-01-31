@@ -89,7 +89,8 @@ import {
   // Due diligence checklist
   dueDiligenceTemplates, dueDiligenceCategories, dueDiligenceItems, dataRoomChecklists, dataRoomChecklistItems,
   InsertDueDiligenceTemplate, InsertDueDiligenceCategory, InsertDueDiligenceItem, InsertDataRoomChecklist, InsertDataRoomChecklistItem,
-  STANDARD_DD_CATEGORIES
+  STANDARD_DD_CATEGORIES,
+  SERIES_B_DD_CATEGORIES
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -7520,17 +7521,28 @@ export async function createChecklistFromTemplate(
 export async function createStandardChecklist(
   dataRoomId: number,
   userId: number,
-  checklistType: 'fundraising' | 'ma' | 'full' = 'full',
+  checklistType: 'fundraising' | 'ma' | 'full' | 'series_b' = 'full',
   customName?: string
 ) {
-  const categories = STANDARD_DD_CATEGORIES;
+  // Select the appropriate category template
+  const categories = checklistType === 'series_b'
+    ? SERIES_B_DD_CATEGORIES
+    : STANDARD_DD_CATEGORIES;
+
+  // Generate name based on template type
+  const templateNames: Record<string, string> = {
+    'series_b': 'Series B Due Diligence Checklist',
+    'fundraising': 'Fundraising Due Diligence Checklist',
+    'ma': 'M&A Due Diligence Checklist',
+    'full': 'Standard Due Diligence Checklist',
+  };
 
   // Create the checklist
   const totalItems = Object.values(categories).reduce((sum, cat) => sum + cat.items.length, 0);
   const checklist = await createDataRoomChecklist({
     dataRoomId,
-    name: customName || `${checklistType === 'full' ? 'Standard' : checklistType.toUpperCase()} Due Diligence Checklist`,
-    description: `Standard due diligence checklist with ${totalItems} items across ${Object.keys(categories).length} categories`,
+    name: customName || templateNames[checklistType] || 'Due Diligence Checklist',
+    description: `${templateNames[checklistType] || 'Due diligence checklist'} with ${totalItems} items across ${Object.keys(categories).length} categories`,
     createdBy: userId,
     totalItems,
     missingItems: totalItems,
