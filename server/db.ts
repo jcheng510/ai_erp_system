@@ -81,7 +81,10 @@ import {
   // AI Agent types
   InsertAiAgentTask, InsertAiAgentRule, InsertAiAgentLog, InsertEmailTemplate,
   // Vendor Quote types
-  InsertVendorRfq, InsertVendorQuote, InsertVendorRfqEmail, InsertVendorRfqInvitation
+  InsertVendorRfq, InsertVendorQuote, InsertVendorRfqEmail, InsertVendorRfqInvitation,
+  // Transactional Email System
+  transactionalEmailTemplates, emailMessages, emailEvents,
+  InsertTransactionalEmailTemplate, InsertEmailMessage, InsertEmailEvent
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -816,6 +819,14 @@ export async function updateShipment(id: number, data: Partial<typeof shipments.
   const db = await getDb();
   if (!db) return;
   await db.update(shipments).set(data).where(eq(shipments.id, id));
+}
+
+export async function getShipmentById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const result = await db.select().from(shipments).where(eq(shipments.id, id));
+  return result[0] || null;
 }
 
 // ============================================
@@ -6665,12 +6676,12 @@ export async function createDocumentImportLog(data: DocumentImportLog) {
 export async function getDocumentImportLogs(limit: number = 50) {
   const db = await getDb();
   if (!db) return [];
-  
+
   const result = await db.select().from(auditLogs)
     .where(sql`${auditLogs.entityType} LIKE 'document_import_%'`)
     .orderBy(desc(auditLogs.createdAt))
     .limit(limit);
-  
+
   return result.map(log => {
     const importData = (log.newValues as any) || {};
     return {
@@ -6684,4 +6695,300 @@ export async function getDocumentImportLogs(limit: number = 50) {
       importData,
     };
   });
+}
+
+// ============================================
+// TRANSACTIONAL EMAIL SYSTEM
+// ============================================
+
+// Transactional Email Templates
+export async function createTransactionalEmailTemplate(input: InsertTransactionalEmailTemplate) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const result = await db.insert(transactionalEmailTemplates).values(input);
+  return { id: result[0].insertId };
+}
+
+export async function getTransactionalEmailTemplates() {
+  const db = await getDb();
+  if (!db) return [];
+
+  return db.select().from(transactionalEmailTemplates)
+    .orderBy(transactionalEmailTemplates.name);
+}
+
+export async function getTransactionalEmailTemplateByName(name: string) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const result = await db.select().from(transactionalEmailTemplates)
+    .where(eq(transactionalEmailTemplates.name, name as any));
+  return result[0] || null;
+}
+
+export async function getTransactionalEmailTemplateById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const result = await db.select().from(transactionalEmailTemplates)
+    .where(eq(transactionalEmailTemplates.id, id));
+  return result[0] || null;
+}
+
+export async function updateTransactionalEmailTemplate(id: number, updates: Partial<InsertTransactionalEmailTemplate>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  await db.update(transactionalEmailTemplates)
+    .set(updates)
+    .where(eq(transactionalEmailTemplates.id, id));
+}
+
+export async function deleteTransactionalEmailTemplate(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  await db.delete(transactionalEmailTemplates)
+    .where(eq(transactionalEmailTemplates.id, id));
+}
+
+// Email Messages
+export async function createEmailMessage(input: InsertEmailMessage) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const result = await db.insert(emailMessages).values(input);
+  return { id: result[0].insertId };
+}
+
+export async function getEmailMessageById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const result = await db.select().from(emailMessages)
+    .where(eq(emailMessages.id, id));
+  return result[0] || null;
+}
+
+export async function getEmailMessageByIdempotencyKey(key: string) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const result = await db.select().from(emailMessages)
+    .where(eq(emailMessages.idempotencyKey, key));
+  return result[0] || null;
+}
+
+export async function getEmailMessageByProviderMessageId(providerMessageId: string) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const result = await db.select().from(emailMessages)
+    .where(eq(emailMessages.providerMessageId, providerMessageId));
+  return result[0] || null;
+}
+
+export async function getQueuedEmailMessages(limitCount: number = 10) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const now = new Date();
+  return db.select().from(emailMessages)
+    .where(
+      and(
+        eq(emailMessages.status, 'queued' as any),
+        or(
+          isNull(emailMessages.nextRetryAt),
+          lte(emailMessages.nextRetryAt, now)
+        ),
+        or(
+          isNull(emailMessages.scheduledAt),
+          lte(emailMessages.scheduledAt, now)
+        )
+      )
+    )
+    .orderBy(emailMessages.createdAt)
+    .limit(limitCount);
+}
+
+export async function getEmailMessages(options?: {
+  status?: string;
+  templateName?: string;
+  toEmail?: string;
+  relatedEntityType?: string;
+  relatedEntityId?: number;
+  fromDate?: Date;
+  toDate?: Date;
+  limit?: number;
+  offset?: number;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+
+  if (options?.status) {
+    conditions.push(eq(emailMessages.status, options.status as any));
+  }
+  if (options?.templateName) {
+    conditions.push(eq(emailMessages.templateName, options.templateName as any));
+  }
+  if (options?.toEmail) {
+    conditions.push(like(emailMessages.toEmail, `%${options.toEmail}%`));
+  }
+  if (options?.relatedEntityType) {
+    conditions.push(eq(emailMessages.relatedEntityType, options.relatedEntityType));
+  }
+  if (options?.relatedEntityId) {
+    conditions.push(eq(emailMessages.relatedEntityId, options.relatedEntityId));
+  }
+  if (options?.fromDate) {
+    conditions.push(gte(emailMessages.createdAt, options.fromDate));
+  }
+  if (options?.toDate) {
+    conditions.push(lte(emailMessages.createdAt, options.toDate));
+  }
+
+  let query = db.select().from(emailMessages);
+
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as any;
+  }
+
+  return query.orderBy(desc(emailMessages.createdAt))
+    .limit(options?.limit || 100)
+    .offset(options?.offset || 0);
+}
+
+export async function updateEmailMessage(id: number, updates: Partial<InsertEmailMessage>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  await db.update(emailMessages)
+    .set(updates)
+    .where(eq(emailMessages.id, id));
+}
+
+export async function updateEmailMessageStatus(
+  id: number,
+  status: string,
+  providerMessageId?: string,
+  errorJson?: any
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const updates: any = { status };
+
+  if (providerMessageId) {
+    updates.providerMessageId = providerMessageId;
+  }
+  if (errorJson) {
+    updates.errorJson = errorJson;
+  }
+
+  if (status === 'sent') {
+    updates.sentAt = new Date();
+  } else if (status === 'delivered') {
+    updates.deliveredAt = new Date();
+  }
+
+  await db.update(emailMessages)
+    .set(updates)
+    .where(eq(emailMessages.id, id));
+}
+
+export async function incrementEmailMessageRetry(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Exponential backoff: 2^retryCount minutes
+  const message = await getEmailMessageById(id);
+  if (!message) return;
+
+  const retryCount = (message.retryCount || 0) + 1;
+  const backoffMinutes = Math.pow(2, retryCount);
+  const nextRetryAt = new Date(Date.now() + backoffMinutes * 60 * 1000);
+
+  await db.update(emailMessages)
+    .set({
+      retryCount,
+      nextRetryAt,
+      status: retryCount >= message.maxRetries ? 'failed' as any : 'queued' as any
+    })
+    .where(eq(emailMessages.id, id));
+}
+
+export async function getEmailMessageStats() {
+  const db = await getDb();
+  if (!db) return { total: 0, queued: 0, sent: 0, delivered: 0, failed: 0, bounced: 0 };
+
+  const stats = await db.select({
+    status: emailMessages.status,
+    count: sql<number>`COUNT(*)`
+  }).from(emailMessages).groupBy(emailMessages.status);
+
+  const result = {
+    total: 0,
+    queued: 0,
+    sending: 0,
+    sent: 0,
+    delivered: 0,
+    failed: 0,
+    bounced: 0,
+    dropped: 0,
+    deferred: 0
+  };
+
+  for (const row of stats) {
+    const count = Number(row.count);
+    result.total += count;
+    if (row.status === 'queued') result.queued = count;
+    if (row.status === 'sending') result.sending = count;
+    if (row.status === 'sent') result.sent = count;
+    if (row.status === 'delivered') result.delivered = count;
+    if (row.status === 'failed') result.failed = count;
+    if (row.status === 'bounced') result.bounced = count;
+    if (row.status === 'dropped') result.dropped = count;
+    if (row.status === 'deferred') result.deferred = count;
+  }
+
+  return result;
+}
+
+// Email Events
+export async function createEmailEvent(input: InsertEmailEvent) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const result = await db.insert(emailEvents).values(input);
+  return { id: result[0].insertId };
+}
+
+export async function getEmailEventsByMessageId(emailMessageId: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  return db.select().from(emailEvents)
+    .where(eq(emailEvents.emailMessageId, emailMessageId))
+    .orderBy(desc(emailEvents.createdAt));
+}
+
+export async function getEmailEventsByProviderMessageId(providerMessageId: string) {
+  const db = await getDb();
+  if (!db) return [];
+
+  return db.select().from(emailEvents)
+    .where(eq(emailEvents.providerMessageId, providerMessageId))
+    .orderBy(desc(emailEvents.createdAt));
+}
+
+export async function getRecentEmailEvents(limitCount: number = 100) {
+  const db = await getDb();
+  if (!db) return [];
+
+  return db.select().from(emailEvents)
+    .orderBy(desc(emailEvents.createdAt))
+    .limit(limitCount);
 }

@@ -3149,3 +3149,131 @@ export type InsertVendorRfqEmail = typeof vendorRfqEmails.$inferInsert;
 
 export type VendorRfqInvitation = typeof vendorRfqInvitations.$inferSelect;
 export type InsertVendorRfqInvitation = typeof vendorRfqInvitations.$inferInsert;
+
+// ============================================
+// TRANSACTIONAL EMAIL SYSTEM (SendGrid)
+// ============================================
+
+// Template name enum for transactional emails
+export const transactionalEmailTemplateNameEnum = mysqlEnum("transactional_template_name", [
+  "QUOTE",           // Vendor quote emails
+  "PO",              // Purchase order emails
+  "SHIPMENT",        // Shipment notification emails
+  "ALERT",           // System alert emails
+  "RFQ",             // Request for quote emails
+  "INVOICE",         // Invoice emails
+  "PAYMENT_REMINDER",// Payment reminder emails
+  "WELCOME",         // Welcome/onboarding emails
+  "GENERAL"          // General purpose emails
+]);
+
+// Email message status enum
+export const emailMessageStatusEnum = mysqlEnum("email_message_status", [
+  "queued",          // Waiting to be sent
+  "sending",         // Currently being sent
+  "sent",            // Sent successfully to SendGrid
+  "delivered",       // Confirmed delivered
+  "bounced",         // Email bounced
+  "dropped",         // Dropped by SendGrid
+  "failed",          // Failed to send
+  "deferred"         // Temporarily deferred
+]);
+
+// Transactional Email Templates - Maps template names to SendGrid dynamic template IDs
+export const transactionalEmailTemplates = mysqlTable("transactional_email_templates", {
+  id: int("id").autoincrement().primaryKey(),
+  name: transactionalEmailTemplateNameEnum.notNull().unique(),
+  providerTemplateId: varchar("provider_template_id", { length: 255 }).notNull(), // SendGrid dynamic template ID (d-xxx)
+  description: text("description"),
+  // Template variables documentation
+  variablesSchema: json("variables_schema"), // JSON schema of expected template variables
+  // Settings
+  isActive: boolean("is_active").default(true).notNull(),
+  defaultSubject: varchar("default_subject", { length: 500 }), // Fallback subject if not provided
+  // Audit
+  createdBy: int("created_by"),
+  updatedBy: int("updated_by"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+});
+
+export type TransactionalEmailTemplate = typeof transactionalEmailTemplates.$inferSelect;
+export type InsertTransactionalEmailTemplate = typeof transactionalEmailTemplates.$inferInsert;
+
+// Email Messages - All transactional emails sent through the system
+export const emailMessages = mysqlTable("email_messages", {
+  id: int("id").autoincrement().primaryKey(),
+
+  // Recipient info
+  toEmail: varchar("to_email", { length: 255 }).notNull(),
+  toName: varchar("to_name", { length: 255 }),
+  fromEmail: varchar("from_email", { length: 255 }).notNull(),
+  fromName: varchar("from_name", { length: 255 }),
+  replyTo: varchar("reply_to", { length: 255 }),
+
+  // Message content
+  subject: varchar("subject", { length: 500 }).notNull(),
+  templateName: transactionalEmailTemplateNameEnum.notNull(),
+  payloadJson: json("payload_json"), // Template variables for dynamic content
+
+  // Idempotency - prevent duplicate sends
+  idempotencyKey: varchar("idempotency_key", { length: 255 }).unique(),
+
+  // Status tracking
+  status: emailMessageStatusEnum.default("queued").notNull(),
+  providerMessageId: varchar("provider_message_id", { length: 255 }), // SendGrid x-message-id
+
+  // Error handling
+  errorJson: json("error_json"), // Full error details for debugging
+  retryCount: int("retry_count").default(0).notNull(),
+  maxRetries: int("max_retries").default(3).notNull(),
+  nextRetryAt: timestamp("next_retry_at"),
+
+  // Related entity for audit trail
+  relatedEntityType: varchar("related_entity_type", { length: 64 }), // 'quote', 'purchase_order', 'shipment', 'alert', etc.
+  relatedEntityId: int("related_entity_id"),
+
+  // Who triggered the send
+  triggeredBy: int("triggered_by"), // User ID who triggered the email
+  aiGenerated: boolean("ai_generated").default(false),
+
+  // Timestamps
+  scheduledAt: timestamp("scheduled_at"), // For scheduled sends
+  sentAt: timestamp("sent_at"),
+  deliveredAt: timestamp("delivered_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EmailMessage = typeof emailMessages.$inferSelect;
+export type InsertEmailMessage = typeof emailMessages.$inferInsert;
+
+// Email Events - SendGrid webhook events
+export const emailEvents = mysqlTable("email_events", {
+  id: int("id").autoincrement().primaryKey(),
+  emailMessageId: int("email_message_id"), // FK to emailMessages
+
+  // Provider event info
+  providerEventType: varchar("provider_event_type", { length: 64 }).notNull(), // processed, delivered, bounce, dropped, etc.
+  providerMessageId: varchar("provider_message_id", { length: 255 }), // To match with emailMessages
+  providerTimestamp: timestamp("provider_timestamp"), // When SendGrid recorded the event
+
+  // Raw event data for debugging
+  rawEventJson: json("raw_event_json").notNull(),
+
+  // Event details (extracted from raw for easy querying)
+  email: varchar("email", { length: 255 }),
+  reason: text("reason"), // Bounce/drop reason
+  bounceType: varchar("bounce_type", { length: 64 }), // hard, soft
+
+  // Processing
+  processedAt: timestamp("processed_at"),
+
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type EmailEvent = typeof emailEvents.$inferSelect;
+export type InsertEmailEvent = typeof emailEvents.$inferInsert;
+
+// Index for fast lookups by provider message ID
+// Note: Drizzle indexes are created via migrations
