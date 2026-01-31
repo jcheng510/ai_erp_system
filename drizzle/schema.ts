@@ -987,6 +987,253 @@ export const autoReplyRules = mysqlTable("auto_reply_rules", {
 export type AutoReplyRule = typeof autoReplyRules.$inferSelect;
 export type InsertAutoReplyRule = typeof autoReplyRules.$inferInsert;
 
+// ============================================
+// EMAIL ATTACHMENT FILING
+// ============================================
+
+// Email classification for spam/solicitation detection
+export const emailClassificationEnum = mysqlEnum("emailClassification", [
+  "legitimate",      // Real business email
+  "spam",            // Obvious spam
+  "solicitation",    // Sales/marketing emails
+  "newsletter",      // Newsletters (may have useful content)
+  "automated",       // Auto-generated notifications
+  "unknown"          // Couldn't determine
+]);
+
+// Filing destination types
+export const filingDestinationTypeEnum = mysqlEnum("filingDestinationType", [
+  "data_room",       // File to ERP data room
+  "google_drive",    // File to Google Drive
+  "vendor_folder",   // Vendor-specific folder
+  "customs",         // Customs documents
+  "pending"          // Awaiting manual filing
+]);
+
+// Document category for filing
+export const documentFilingCategoryEnum = mysqlEnum("documentFilingCategory", [
+  "invoice",
+  "receipt",
+  "purchase_order",
+  "packing_slip",
+  "bill_of_lading",
+  "customs_document",
+  "certificate_of_origin",
+  "freight_quote",
+  "shipping_label",
+  "contract",
+  "correspondence",
+  "other"
+]);
+
+// Email filing configuration - global settings for auto-filing
+export const emailFilingConfig = mysqlTable("email_filing_config", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  isEnabled: boolean("isEnabled").default(true).notNull(),
+
+  // Source email matching
+  emailAccountId: int("emailAccountId"), // Which email account to monitor
+  senderPatterns: json("senderPatterns"), // Array of sender patterns to include
+  excludeSenderPatterns: json("excludeSenderPatterns"), // Array of sender patterns to exclude
+  subjectPatterns: json("subjectPatterns"), // Array of subject patterns
+
+  // Spam/solicitation filtering
+  filterSpam: boolean("filterSpam").default(true).notNull(),
+  filterSolicitations: boolean("filterSolicitations").default(true).notNull(),
+  filterNewsletters: boolean("filterNewsletters").default(false).notNull(),
+  minConfidenceThreshold: decimal("minConfidenceThreshold", { precision: 5, scale: 2 }).default("0.7"),
+
+  // Auto-filing settings
+  autoFileAttachments: boolean("autoFileAttachments").default(true).notNull(),
+  defaultDataRoomId: int("defaultDataRoomId"), // Default data room for filing
+  defaultGoogleDriveFolderId: varchar("defaultGoogleDriveFolderId", { length: 255 }), // Default Drive folder
+
+  // Notification settings
+  notifyOnFiling: boolean("notifyOnFiling").default(false),
+  notifyEmail: varchar("notifyEmail", { length: 320 }),
+
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EmailFilingConfig = typeof emailFilingConfig.$inferSelect;
+export type InsertEmailFilingConfig = typeof emailFilingConfig.$inferInsert;
+
+// Email classification results - stores spam/solicitation detection
+export const emailClassifications = mysqlTable("email_classifications", {
+  id: int("id").autoincrement().primaryKey(),
+  emailId: int("emailId").notNull(), // FK to inboundEmails
+
+  // Classification result
+  classification: emailClassificationEnum.default("unknown").notNull(),
+  confidence: decimal("confidence", { precision: 5, scale: 2 }).notNull(),
+
+  // Detection signals
+  spamScore: decimal("spamScore", { precision: 5, scale: 2 }), // 0-1 spam likelihood
+  solicitationScore: decimal("solicitationScore", { precision: 5, scale: 2 }), // 0-1 solicitation likelihood
+
+  // Reasons for classification
+  classificationReasons: json("classificationReasons"), // Array of reasons
+  detectedPatterns: json("detectedPatterns"), // Spam patterns detected
+
+  // Sender reputation
+  senderDomain: varchar("senderDomain", { length: 255 }),
+  senderReputation: mysqlEnum("senderReputation", ["trusted", "neutral", "suspicious", "blocked"]).default("neutral"),
+  isKnownVendor: boolean("isKnownVendor").default(false),
+  matchedVendorId: int("matchedVendorId"),
+
+  // Override for manual corrections
+  overriddenBy: int("overriddenBy"),
+  overriddenAt: timestamp("overriddenAt"),
+  originalClassification: varchar("originalClassification", { length: 50 }),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EmailClassification = typeof emailClassifications.$inferSelect;
+export type InsertEmailClassification = typeof emailClassifications.$inferInsert;
+
+// Email attachment filing records - tracks where attachments are filed
+export const emailAttachmentFilings = mysqlTable("email_attachment_filings", {
+  id: int("id").autoincrement().primaryKey(),
+  emailId: int("emailId").notNull(), // FK to inboundEmails
+  attachmentId: int("attachmentId").notNull(), // FK to emailAttachments
+
+  // Filing destination
+  destinationType: filingDestinationTypeEnum.default("pending").notNull(),
+  destinationId: int("destinationId"), // ID of data room, folder, etc.
+  destinationPath: varchar("destinationPath", { length: 1024 }), // Full path in destination
+
+  // Google Drive specific
+  googleDriveFileId: varchar("googleDriveFileId", { length: 255 }),
+  googleDriveFolderId: varchar("googleDriveFolderId", { length: 255 }),
+  googleDriveWebLink: varchar("googleDriveWebLink", { length: 512 }),
+
+  // ERP Data Room specific
+  dataRoomId: int("dataRoomId"),
+  dataRoomFolderId: int("dataRoomFolderId"),
+  dataRoomDocumentId: int("dataRoomDocumentId"), // Created document ID
+
+  // Document categorization
+  documentCategory: documentFilingCategoryEnum.default("other").notNull(),
+  documentCategoryConfidence: decimal("documentCategoryConfidence", { precision: 5, scale: 2 }),
+
+  // Vendor association
+  vendorId: int("vendorId"),
+  vendorName: varchar("vendorName", { length: 255 }),
+
+  // Related entities
+  purchaseOrderId: int("purchaseOrderId"),
+  shipmentId: int("shipmentId"),
+  customsClearanceId: int("customsClearanceId"),
+  invoiceId: int("invoiceId"),
+
+  // Filing metadata
+  filingStatus: mysqlEnum("filingStatus", ["pending", "processing", "filed", "failed", "skipped"]).default("pending").notNull(),
+  filingError: text("filingError"),
+
+  // Auto vs manual filing
+  autoFiled: boolean("autoFiled").default(false).notNull(),
+  filedBy: int("filedBy"), // User who filed manually
+  filedAt: timestamp("filedAt"),
+
+  // AI analysis results
+  aiAnalysis: json("aiAnalysis"), // Full AI extraction results
+  extractedDocumentNumber: varchar("extractedDocumentNumber", { length: 100 }),
+  extractedDocumentDate: timestamp("extractedDocumentDate"),
+  extractedAmount: decimal("extractedAmount", { precision: 15, scale: 2 }),
+  extractedCurrency: varchar("extractedCurrency", { length: 3 }),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EmailAttachmentFiling = typeof emailAttachmentFilings.$inferSelect;
+export type InsertEmailAttachmentFiling = typeof emailAttachmentFilings.$inferInsert;
+
+// Filing rules - configurable rules for auto-routing attachments
+export const emailFilingRules = mysqlTable("email_filing_rules", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  isEnabled: boolean("isEnabled").default(true).notNull(),
+  priority: int("priority").default(0).notNull(), // Higher = runs first
+
+  // Match conditions
+  senderPattern: varchar("senderPattern", { length: 255 }), // Regex for sender
+  subjectPattern: varchar("subjectPattern", { length: 255 }), // Regex for subject
+  filenamePattern: varchar("filenamePattern", { length: 255 }), // Regex for attachment filename
+  documentCategories: json("documentCategories"), // Array of categories to match
+  emailCategories: json("emailCategories"), // Array of email categories to match
+  vendorIds: json("vendorIds"), // Array of vendor IDs to match
+  minConfidence: decimal("minConfidence", { precision: 5, scale: 2 }).default("0.7"),
+
+  // Filing action
+  destinationType: filingDestinationTypeEnum.notNull(),
+  destinationDataRoomId: int("destinationDataRoomId"),
+  destinationFolderId: int("destinationFolderId"),
+  destinationGoogleDriveFolderId: varchar("destinationGoogleDriveFolderId", { length: 255 }),
+
+  // Path template (supports placeholders like {vendorName}, {documentType}, {date})
+  pathTemplate: varchar("pathTemplate", { length: 512 }),
+
+  // Additional actions
+  createParsedDocument: boolean("createParsedDocument").default(true),
+  linkToVendor: boolean("linkToVendor").default(true),
+  linkToPurchaseOrder: boolean("linkToPurchaseOrder").default(true),
+  notifyOnMatch: boolean("notifyOnMatch").default(false),
+  notifyEmail: varchar("notifyEmail", { length: 320 }),
+
+  // Stats
+  timesMatched: int("timesMatched").default(0),
+  lastMatchedAt: timestamp("lastMatchedAt"),
+
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EmailFilingRule = typeof emailFilingRules.$inferSelect;
+export type InsertEmailFilingRule = typeof emailFilingRules.$inferInsert;
+
+// Blocked senders - known spam/solicitation senders
+export const blockedEmailSenders = mysqlTable("blocked_email_senders", {
+  id: int("id").autoincrement().primaryKey(),
+  pattern: varchar("pattern", { length: 255 }).notNull(), // Email or domain pattern
+  patternType: mysqlEnum("patternType", ["exact", "domain", "regex"]).default("exact").notNull(),
+  reason: mysqlEnum("reason", ["spam", "solicitation", "phishing", "manual"]).notNull(),
+
+  // Auto-detected or manual
+  autoDetected: boolean("autoDetected").default(false),
+  detectedFromEmailId: int("detectedFromEmailId"),
+
+  blockedBy: int("blockedBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type BlockedEmailSender = typeof blockedEmailSenders.$inferSelect;
+export type InsertBlockedEmailSender = typeof blockedEmailSenders.$inferInsert;
+
+// Trusted senders - known good senders (vendors, partners)
+export const trustedEmailSenders = mysqlTable("trusted_email_senders", {
+  id: int("id").autoincrement().primaryKey(),
+  pattern: varchar("pattern", { length: 255 }).notNull(),
+  patternType: mysqlEnum("patternType", ["exact", "domain", "regex"]).default("domain").notNull(),
+
+  // Association
+  vendorId: int("vendorId"),
+  customerId: int("customerId"),
+
+  notes: text("notes"),
+  addedBy: int("addedBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type TrustedEmailSender = typeof trustedEmailSenders.$inferSelect;
+export type InsertTrustedEmailSender = typeof trustedEmailSenders.$inferInsert;
+
 // Sent/Outbound emails for tracking
 export const sentEmails = mysqlTable("sent_emails", {
   id: int("id").autoincrement().primaryKey(),

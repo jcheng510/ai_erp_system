@@ -2,6 +2,7 @@ import { useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { AutoReplyRulesTab } from "@/components/AutoReplyRulesTab";
 import { SentEmailsTab } from "@/components/SentEmailsTab";
+import { AttachmentFilingTab } from "@/components/AttachmentFilingTab";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -838,6 +839,10 @@ export default function EmailInbox() {
               <Send className="h-4 w-4" />
               Sent
             </TabsTrigger>
+            <TabsTrigger value="filing" className="gap-2">
+              <FolderOpen className="h-4 w-4" />
+              Attachment Filing
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="inbox" className="space-y-4">
@@ -1444,6 +1449,10 @@ export default function EmailInbox() {
           {/* Sent Emails Tab */}
           <TabsContent value="sent" className="space-y-4">
             <SentEmailsTab />
+          </TabsContent>
+
+          <TabsContent value="filing" className="space-y-4">
+            <AttachmentFilingTab />
           </TabsContent>
         </Tabs>
       </div>

@@ -36,6 +36,9 @@ import {
   reconciliationRuns, reconciliationLines,
   // Email scanning
   inboundEmails, emailAttachments, parsedDocuments, parsedDocumentLineItems, autoReplyRules, sentEmails,
+  // Email attachment filing
+  emailFilingConfig, emailClassifications, emailAttachmentFilings, emailFilingRules, blockedEmailSenders, trustedEmailSenders,
+  InsertEmailFilingConfig, InsertEmailClassification, InsertEmailAttachmentFiling, InsertEmailFilingRule, InsertBlockedEmailSender, InsertTrustedEmailSender,
   // Data room
   dataRooms, dataRoomFolders, dataRoomDocuments, dataRoomLinks, dataRoomVisitors, documentViews, dataRoomInvitations,
   // NDA e-signatures
@@ -7964,4 +7967,308 @@ export async function checkAndTriggerLowStockPurchaseOrder(
     purchaseOrderId: poResult.id,
     reason: `Auto-generated PO ${poNumber} for ${orderQty} units`
   };
+}
+
+// ============================================
+// EMAIL ATTACHMENT FILING
+// ============================================
+
+// Email Filing Config
+export async function getEmailFilingConfigs() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(emailFilingConfig).orderBy(desc(emailFilingConfig.createdAt));
+}
+
+export async function getEmailFilingConfigById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(emailFilingConfig).where(eq(emailFilingConfig.id, id));
+  return result[0] || null;
+}
+
+export async function createEmailFilingConfig(input: InsertEmailFilingConfig) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(emailFilingConfig).values(input);
+  return { id: result[0].insertId };
+}
+
+export async function updateEmailFilingConfig(id: number, data: Partial<InsertEmailFilingConfig>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(emailFilingConfig).set(data).where(eq(emailFilingConfig.id, id));
+}
+
+export async function getActiveEmailFilingConfigs() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(emailFilingConfig).where(eq(emailFilingConfig.isEnabled, true));
+}
+
+// Email Classifications
+export async function getEmailClassification(emailId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(emailClassifications).where(eq(emailClassifications.emailId, emailId));
+  return result[0] || null;
+}
+
+export async function createEmailClassification(input: InsertEmailClassification) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(emailClassifications).values(input);
+  return { id: result[0].insertId };
+}
+
+export async function updateEmailClassification(id: number, data: Partial<InsertEmailClassification>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(emailClassifications).set(data).where(eq(emailClassifications.id, id));
+}
+
+export async function overrideEmailClassification(id: number, newClassification: string, userId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Get current classification first
+  const current = await db.select().from(emailClassifications).where(eq(emailClassifications.id, id));
+  if (!current[0]) throw new Error("Classification not found");
+
+  await db.update(emailClassifications).set({
+    classification: newClassification as any,
+    originalClassification: current[0].classification,
+    overriddenBy: userId,
+    overriddenAt: new Date(),
+  }).where(eq(emailClassifications.id, id));
+}
+
+// Email Attachment Filings
+export async function getEmailAttachmentFilings(options?: {
+  emailId?: number;
+  attachmentId?: number;
+  status?: string;
+  documentCategory?: string;
+  vendorId?: number;
+  limit?: number;
+  offset?: number;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (options?.emailId) conditions.push(eq(emailAttachmentFilings.emailId, options.emailId));
+  if (options?.attachmentId) conditions.push(eq(emailAttachmentFilings.attachmentId, options.attachmentId));
+  if (options?.status) conditions.push(eq(emailAttachmentFilings.filingStatus, options.status as any));
+  if (options?.documentCategory) conditions.push(eq(emailAttachmentFilings.documentCategory, options.documentCategory as any));
+  if (options?.vendorId) conditions.push(eq(emailAttachmentFilings.vendorId, options.vendorId));
+
+  let query = db.select().from(emailAttachmentFilings);
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as any;
+  }
+
+  query = query.orderBy(desc(emailAttachmentFilings.createdAt)) as any;
+
+  if (options?.limit) query = query.limit(options.limit) as any;
+  if (options?.offset) query = query.offset(options.offset) as any;
+
+  return query;
+}
+
+export async function getEmailAttachmentFilingById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(emailAttachmentFilings).where(eq(emailAttachmentFilings.id, id));
+  return result[0] || null;
+}
+
+export async function createEmailAttachmentFiling(input: InsertEmailAttachmentFiling) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(emailAttachmentFilings).values(input);
+  return { id: result[0].insertId };
+}
+
+export async function updateEmailAttachmentFiling(id: number, data: Partial<InsertEmailAttachmentFiling>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(emailAttachmentFilings).set(data).where(eq(emailAttachmentFilings.id, id));
+}
+
+export async function getPendingFilings(limit: number = 100) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(emailAttachmentFilings)
+    .where(eq(emailAttachmentFilings.filingStatus, 'pending'))
+    .orderBy(emailAttachmentFilings.createdAt)
+    .limit(limit);
+}
+
+export async function getFilingsByEmail(emailId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(emailAttachmentFilings)
+    .where(eq(emailAttachmentFilings.emailId, emailId))
+    .orderBy(emailAttachmentFilings.createdAt);
+}
+
+// Email Filing Rules
+export async function getEmailFilingRules(options?: { isEnabled?: boolean }) {
+  const db = await getDb();
+  if (!db) return [];
+
+  let query = db.select().from(emailFilingRules);
+  if (options?.isEnabled !== undefined) {
+    query = query.where(eq(emailFilingRules.isEnabled, options.isEnabled)) as any;
+  }
+  return query.orderBy(desc(emailFilingRules.priority));
+}
+
+export async function getEmailFilingRuleById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(emailFilingRules).where(eq(emailFilingRules.id, id));
+  return result[0] || null;
+}
+
+export async function createEmailFilingRule(input: InsertEmailFilingRule) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(emailFilingRules).values(input);
+  return { id: result[0].insertId };
+}
+
+export async function updateEmailFilingRule(id: number, data: Partial<InsertEmailFilingRule>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(emailFilingRules).set(data).where(eq(emailFilingRules.id, id));
+}
+
+export async function incrementFilingRuleStats(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(emailFilingRules).set({
+    timesMatched: sql`${emailFilingRules.timesMatched} + 1`,
+    lastMatchedAt: new Date(),
+  }).where(eq(emailFilingRules.id, id));
+}
+
+// Blocked Email Senders
+export async function getBlockedEmailSenders() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(blockedEmailSenders).orderBy(desc(blockedEmailSenders.createdAt));
+}
+
+export async function createBlockedEmailSender(input: InsertBlockedEmailSender) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(blockedEmailSenders).values(input);
+  return { id: result[0].insertId };
+}
+
+export async function deleteBlockedEmailSender(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(blockedEmailSenders).where(eq(blockedEmailSenders.id, id));
+}
+
+export async function isEmailBlocked(email: string): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return false;
+
+  const blockedList = await db.select().from(blockedEmailSenders);
+  const emailLower = email.toLowerCase();
+  const domain = email.split('@')[1]?.toLowerCase();
+
+  for (const blocked of blockedList) {
+    const pattern = blocked.pattern.toLowerCase();
+
+    if (blocked.patternType === 'exact' && emailLower === pattern) {
+      return true;
+    }
+    if (blocked.patternType === 'domain' && domain === pattern) {
+      return true;
+    }
+    if (blocked.patternType === 'regex') {
+      try {
+        const regex = new RegExp(pattern, 'i');
+        if (regex.test(email)) return true;
+      } catch {
+        // Invalid regex, skip
+      }
+    }
+  }
+  return false;
+}
+
+// Trusted Email Senders
+export async function getTrustedEmailSenders() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(trustedEmailSenders).orderBy(desc(trustedEmailSenders.createdAt));
+}
+
+export async function createTrustedEmailSender(input: InsertTrustedEmailSender) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(trustedEmailSenders).values(input);
+  return { id: result[0].insertId };
+}
+
+export async function deleteTrustedEmailSender(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(trustedEmailSenders).where(eq(trustedEmailSenders.id, id));
+}
+
+export async function getTrustedSenderMatch(email: string): Promise<{ trusted: boolean; vendorId?: number; customerId?: number }> {
+  const db = await getDb();
+  if (!db) return { trusted: false };
+
+  const trustedList = await db.select().from(trustedEmailSenders);
+  const emailLower = email.toLowerCase();
+  const domain = email.split('@')[1]?.toLowerCase();
+
+  for (const trusted of trustedList) {
+    const pattern = trusted.pattern.toLowerCase();
+
+    if (trusted.patternType === 'exact' && emailLower === pattern) {
+      return { trusted: true, vendorId: trusted.vendorId || undefined, customerId: trusted.customerId || undefined };
+    }
+    if (trusted.patternType === 'domain' && domain === pattern) {
+      return { trusted: true, vendorId: trusted.vendorId || undefined, customerId: trusted.customerId || undefined };
+    }
+    if (trusted.patternType === 'regex') {
+      try {
+        const regex = new RegExp(pattern, 'i');
+        if (regex.test(email)) {
+          return { trusted: true, vendorId: trusted.vendorId || undefined, customerId: trusted.customerId || undefined };
+        }
+      } catch {
+        // Invalid regex, skip
+      }
+    }
+  }
+  return { trusted: false };
+}
+
+// Get vendor by email domain
+export async function getVendorByEmailDomain(email: string) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const domain = email.split('@')[1]?.toLowerCase();
+  if (!domain) return null;
+
+  // Check if any vendor email matches this domain
+  const vendorList = await db.select().from(vendors).where(
+    and(
+      eq(vendors.status, 'active'),
+      sql`LOWER(${vendors.email}) LIKE ${`%@${domain}`}`
+    )
+  );
+
+  return vendorList[0] || null;
 }

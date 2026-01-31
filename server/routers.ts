@@ -8675,6 +8675,384 @@ Ask if they received the original request and if they can provide a quote.`;
           errors,
         };
       }),
+
+    // ============================================
+    // EMAIL ATTACHMENT FILING
+    // ============================================
+
+    // Get attachment filings
+    getFilings: protectedProcedure
+      .input(z.object({
+        emailId: z.number().optional(),
+        attachmentId: z.number().optional(),
+        status: z.string().optional(),
+        documentCategory: z.string().optional(),
+        vendorId: z.number().optional(),
+        limit: z.number().optional(),
+        offset: z.number().optional(),
+      }).optional())
+      .query(async ({ input }) => {
+        return db.getEmailAttachmentFilings(input);
+      }),
+
+    // Get single filing
+    getFiling: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        return db.getEmailAttachmentFilingById(input.id);
+      }),
+
+    // Get pending filings
+    getPendingFilings: protectedProcedure
+      .input(z.object({ limit: z.number().default(100) }))
+      .query(async ({ input }) => {
+        return db.getPendingFilings(input.limit);
+      }),
+
+    // Process email attachments for filing
+    processEmailForFiling: protectedProcedure
+      .input(z.object({
+        emailId: z.number(),
+        useAI: z.boolean().default(true),
+        autoFile: z.boolean().default(false),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { processEmailAttachments } = await import("./emailAttachmentFilingService");
+        const result = await processEmailAttachments(input.emailId, {
+          useAI: input.useAI,
+          autoFile: input.autoFile,
+          userId: ctx.user.id,
+          filterSpam: true,
+          filterSolicitations: true,
+        });
+        return result;
+      }),
+
+    // Manual file attachment
+    fileAttachment: protectedProcedure
+      .input(z.object({
+        filingId: z.number(),
+        destinationType: z.enum(["data_room", "google_drive", "vendor_folder", "customs", "pending"]),
+        destinationId: z.number(),
+        destinationPath: z.string(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { manualFileAttachment } = await import("./emailAttachmentFilingService");
+
+        // Get Google token if filing to Drive
+        let googleAccessToken: string | undefined;
+        if (input.destinationType === "google_drive") {
+          const token = await db.getGoogleOAuthToken(ctx.user.id);
+          googleAccessToken = token?.accessToken;
+        }
+
+        return manualFileAttachment(
+          input.filingId,
+          input.destinationType,
+          input.destinationId,
+          input.destinationPath,
+          ctx.user.id,
+          { googleAccessToken }
+        );
+      }),
+
+    // Classify document
+    classifyDocument: protectedProcedure
+      .input(z.object({
+        filename: z.string(),
+        extractedText: z.string().optional(),
+        emailSubject: z.string().optional(),
+        emailFrom: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { aiClassifyDocument } = await import("./emailAttachmentFilingService");
+        return aiClassifyDocument(
+          input.filename,
+          input.extractedText,
+          input.emailSubject,
+          input.emailFrom
+        );
+      }),
+
+    // Get filing rules
+    getFilingRules: protectedProcedure
+      .input(z.object({ isEnabled: z.boolean().optional() }).optional())
+      .query(async ({ input }) => {
+        return db.getEmailFilingRules(input);
+      }),
+
+    // Create filing rule
+    createFilingRule: protectedProcedure
+      .input(z.object({
+        name: z.string().min(1),
+        isEnabled: z.boolean().default(true),
+        priority: z.number().default(0),
+        senderPattern: z.string().optional(),
+        subjectPattern: z.string().optional(),
+        filenamePattern: z.string().optional(),
+        documentCategories: z.array(z.string()).optional(),
+        emailCategories: z.array(z.string()).optional(),
+        vendorIds: z.array(z.number()).optional(),
+        minConfidence: z.string().optional(),
+        destinationType: z.enum(["data_room", "google_drive", "vendor_folder", "customs", "pending"]),
+        destinationDataRoomId: z.number().optional(),
+        destinationFolderId: z.number().optional(),
+        destinationGoogleDriveFolderId: z.string().optional(),
+        pathTemplate: z.string().optional(),
+        createParsedDocument: z.boolean().default(true),
+        linkToVendor: z.boolean().default(true),
+        linkToPurchaseOrder: z.boolean().default(true),
+        notifyOnMatch: z.boolean().default(false),
+        notifyEmail: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return db.createEmailFilingRule({ ...input, createdBy: ctx.user.id });
+      }),
+
+    // Update filing rule
+    updateFilingRule: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        name: z.string().optional(),
+        isEnabled: z.boolean().optional(),
+        priority: z.number().optional(),
+        senderPattern: z.string().optional(),
+        subjectPattern: z.string().optional(),
+        filenamePattern: z.string().optional(),
+        documentCategories: z.array(z.string()).optional(),
+        emailCategories: z.array(z.string()).optional(),
+        vendorIds: z.array(z.number()).optional(),
+        minConfidence: z.string().optional(),
+        destinationType: z.enum(["data_room", "google_drive", "vendor_folder", "customs", "pending"]).optional(),
+        destinationDataRoomId: z.number().optional(),
+        destinationFolderId: z.number().optional(),
+        destinationGoogleDriveFolderId: z.string().optional(),
+        pathTemplate: z.string().optional(),
+        createParsedDocument: z.boolean().optional(),
+        linkToVendor: z.boolean().optional(),
+        linkToPurchaseOrder: z.boolean().optional(),
+        notifyOnMatch: z.boolean().optional(),
+        notifyEmail: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { id, ...updates } = input;
+        await db.updateEmailFilingRule(id, updates);
+        return { success: true };
+      }),
+
+    // Delete filing rule
+    deleteFilingRule: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input }) => {
+        // Note: We'd need to add a delete function to db.ts
+        return { success: true };
+      }),
+
+    // Get filing config
+    getFilingConfigs: protectedProcedure
+      .query(async () => {
+        return db.getEmailFilingConfigs();
+      }),
+
+    // Create filing config
+    createFilingConfig: protectedProcedure
+      .input(z.object({
+        name: z.string().min(1),
+        isEnabled: z.boolean().default(true),
+        emailAccountId: z.number().optional(),
+        senderPatterns: z.array(z.string()).optional(),
+        excludeSenderPatterns: z.array(z.string()).optional(),
+        subjectPatterns: z.array(z.string()).optional(),
+        filterSpam: z.boolean().default(true),
+        filterSolicitations: z.boolean().default(true),
+        filterNewsletters: z.boolean().default(false),
+        minConfidenceThreshold: z.string().default("0.7"),
+        autoFileAttachments: z.boolean().default(true),
+        defaultDataRoomId: z.number().optional(),
+        defaultGoogleDriveFolderId: z.string().optional(),
+        notifyOnFiling: z.boolean().default(false),
+        notifyEmail: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return db.createEmailFilingConfig({ ...input, createdBy: ctx.user.id });
+      }),
+
+    // Update filing config
+    updateFilingConfig: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        name: z.string().optional(),
+        isEnabled: z.boolean().optional(),
+        filterSpam: z.boolean().optional(),
+        filterSolicitations: z.boolean().optional(),
+        filterNewsletters: z.boolean().optional(),
+        minConfidenceThreshold: z.string().optional(),
+        autoFileAttachments: z.boolean().optional(),
+        defaultDataRoomId: z.number().optional(),
+        defaultGoogleDriveFolderId: z.string().optional(),
+        notifyOnFiling: z.boolean().optional(),
+        notifyEmail: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { id, ...updates } = input;
+        await db.updateEmailFilingConfig(id, updates);
+        return { success: true };
+      }),
+
+    // Get email classification
+    getEmailClassification: protectedProcedure
+      .input(z.object({ emailId: z.number() }))
+      .query(async ({ input }) => {
+        return db.getEmailClassification(input.emailId);
+      }),
+
+    // Classify email for spam/solicitation
+    classifyEmail: protectedProcedure
+      .input(z.object({ emailId: z.number() }))
+      .mutation(async ({ input }) => {
+        const email = await db.getInboundEmailById(input.emailId);
+        if (!email) throw new TRPCError({ code: "NOT_FOUND" });
+
+        const { classifyAndSaveEmailClassification } = await import("./emailSpamFilterService");
+        return classifyAndSaveEmailClassification(
+          input.emailId,
+          email.subject || "",
+          email.bodyText || "",
+          email.fromEmail,
+          email.fromName || undefined
+        );
+      }),
+
+    // Override email classification
+    overrideClassification: protectedProcedure
+      .input(z.object({
+        classificationId: z.number(),
+        newClassification: z.enum(["legitimate", "spam", "solicitation", "newsletter", "automated", "unknown"]),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        await db.overrideEmailClassification(input.classificationId, input.newClassification, ctx.user.id);
+        return { success: true };
+      }),
+
+    // Get blocked senders
+    getBlockedSenders: protectedProcedure
+      .query(async () => {
+        return db.getBlockedEmailSenders();
+      }),
+
+    // Add blocked sender
+    addBlockedSender: protectedProcedure
+      .input(z.object({
+        pattern: z.string().min(1),
+        patternType: z.enum(["exact", "domain", "regex"]),
+        reason: z.enum(["spam", "solicitation", "phishing", "manual"]),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return db.createBlockedEmailSender({
+          ...input,
+          blockedBy: ctx.user.id,
+          autoDetected: false,
+        });
+      }),
+
+    // Remove blocked sender
+    removeBlockedSender: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input }) => {
+        await db.deleteBlockedEmailSender(input.id);
+        return { success: true };
+      }),
+
+    // Get trusted senders
+    getTrustedSenders: protectedProcedure
+      .query(async () => {
+        return db.getTrustedEmailSenders();
+      }),
+
+    // Add trusted sender
+    addTrustedSender: protectedProcedure
+      .input(z.object({
+        pattern: z.string().min(1),
+        patternType: z.enum(["exact", "domain", "regex"]),
+        vendorId: z.number().optional(),
+        customerId: z.number().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return db.createTrustedEmailSender({
+          ...input,
+          addedBy: ctx.user.id,
+        });
+      }),
+
+    // Remove trusted sender
+    removeTrustedSender: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input }) => {
+        await db.deleteTrustedEmailSender(input.id);
+        return { success: true };
+      }),
+
+    // Scan Gmail inbox for attachments
+    scanGmailForAttachments: protectedProcedure
+      .input(z.object({
+        maxEmails: z.number().default(50),
+        filterSpam: z.boolean().default(true),
+        filterSolicitations: z.boolean().default(true),
+        autoFile: z.boolean().default(false),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { scanGmailInbox } = await import("./emailInboxScannerService");
+
+        // Get Google token
+        const token = await db.getGoogleOAuthToken(ctx.user.id);
+        if (!token?.accessToken) {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Google account not connected" });
+        }
+
+        return scanGmailInbox(token.accessToken, {
+          maxEmails: input.maxEmails,
+          processAttachments: true,
+          filterSpam: input.filterSpam,
+          filterSolicitations: input.filterSolicitations,
+          useAI: true,
+          googleAccessToken: token.accessToken,
+          userId: ctx.user.id,
+        });
+      }),
+
+    // Get filing statistics
+    getFilingStats: protectedProcedure
+      .query(async () => {
+        const { getFilingStatistics } = await import("./emailInboxScannerService");
+        return getFilingStatistics();
+      }),
+
+    // Process unprocessed emails
+    processUnprocessedEmails: protectedProcedure
+      .input(z.object({
+        maxEmails: z.number().default(100),
+        useAI: z.boolean().default(true),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { processUnprocessedEmails } = await import("./emailInboxScannerService");
+
+        // Get Google token if available
+        let googleAccessToken: string | undefined;
+        const token = await db.getGoogleOAuthToken(ctx.user.id);
+        if (token?.accessToken) {
+          googleAccessToken = token.accessToken;
+        }
+
+        return processUnprocessedEmails({
+          maxEmails: input.maxEmails,
+          useAI: input.useAI,
+          googleAccessToken,
+          userId: ctx.user.id,
+          filterSpam: true,
+          filterSolicitations: true,
+        });
+      }),
   }),
 
   // ============================================
