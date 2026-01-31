@@ -104,6 +104,7 @@ import EquityGrants from "./pages/equity/EquityGrants";
 import EquityModeling from "./pages/equity/EquityModeling";
 import ShareholderPortal from "./pages/equity/ShareholderPortal";
 import ImportCapTable from "./pages/equity/ImportCapTable";
+import TermSheets from "./pages/equity/TermSheets";
 
 function Router() {
   return (
@@ -203,6 +204,7 @@ function Router() {
         <Route path="/equity/modeling" component={EquityModeling} />
         <Route path="/equity/portal" component={ShareholderPortal} />
         <Route path="/equity/import" component={ImportCapTable} />
+        <Route path="/equity/term-sheets" component={TermSheets} />
 
         {/* Fallback */}
         <Route path="/404" component={NotFound} />

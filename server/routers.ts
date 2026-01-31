@@ -11730,6 +11730,401 @@ Ask if they received the original request and if they can provide a quote.`;
         };
       }),
     }),
+
+    // SAFE Notes router
+    safes: router({
+      list: financeProcedure.query(async () => {
+        return db.getSafeNotes();
+      }),
+
+      get: financeProcedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
+        return db.getSafeNote(input.id);
+      }),
+
+      outstanding: financeProcedure.query(async () => {
+        return db.getOutstandingSafeNotes();
+      }),
+
+      create: financeProcedure.input(z.object({
+        shareholderId: z.number(),
+        investmentAmount: z.string(),
+        investmentDate: z.date(),
+        safeType: z.enum(['post_money', 'pre_money', 'mfn', 'uncapped']),
+        valuationCap: z.string().optional(),
+        discountRate: z.string().optional(),
+        hasProRataRights: z.boolean().optional(),
+        proRataPercentage: z.string().optional(),
+        hasMfnProvision: z.boolean().optional(),
+        conversionTrigger: z.enum(['equity_financing', 'liquidity_event', 'dissolution', 'maturity']).optional(),
+        qualifiedFinancingThreshold: z.string().optional(),
+        documentUrl: z.string().optional(),
+        boardApprovalDate: z.date().optional(),
+        notes: z.string().optional(),
+      })).mutation(async ({ input }) => {
+        return db.createSafeNote(input);
+      }),
+
+      update: financeProcedure.input(z.object({
+        id: z.number(),
+        data: z.object({
+          valuationCap: z.string().optional(),
+          discountRate: z.string().optional(),
+          hasProRataRights: z.boolean().optional(),
+          status: z.string().optional(),
+          documentUrl: z.string().optional(),
+          notes: z.string().optional(),
+        }),
+      })).mutation(async ({ input }) => {
+        return db.updateSafeNote(input.id, input.data);
+      }),
+
+      delete: financeProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+        return db.deleteSafeNote(input.id);
+      }),
+
+      convert: financeProcedure.input(z.object({
+        safeId: z.number(),
+        roundId: z.number(),
+        shareClassId: z.number(),
+        pricePerShare: z.number(),
+        fullyDilutedShares: z.number(),
+      })).mutation(async ({ input }) => {
+        return db.convertSafeNote(
+          input.safeId,
+          input.roundId,
+          input.shareClassId,
+          input.pricePerShare,
+          input.fullyDilutedShares
+        );
+      }),
+
+      // Preview conversion without actually converting
+      previewConversion: financeProcedure.input(z.object({
+        safeId: z.number(),
+        pricePerShare: z.number(),
+        fullyDilutedShares: z.number(),
+      })).query(async ({ input }) => {
+        const safe = await db.getSafeNote(input.safeId);
+        if (!safe) throw new Error("SAFE not found");
+
+        const investmentAmount = parseFloat(safe.investmentAmount);
+        const valuationCap = safe.valuationCap ? parseFloat(safe.valuationCap) : null;
+        const discountRate = safe.discountRate ? parseFloat(safe.discountRate) : null;
+
+        // Calculate effective price for cap-based conversion
+        let capPrice = input.pricePerShare;
+        let capShares = 0;
+        if (valuationCap) {
+          capPrice = valuationCap / input.fullyDilutedShares;
+          capShares = Math.floor(investmentAmount / capPrice);
+        }
+
+        const discountedPrice = discountRate ? input.pricePerShare * (1 - discountRate) : input.pricePerShare;
+        const discountShares = Math.floor(investmentAmount / discountedPrice);
+        const roundPriceShares = Math.floor(investmentAmount / input.pricePerShare);
+
+        // Determine which method gives most shares
+        let bestMethod = 'round_price';
+        let bestShares = roundPriceShares;
+        let bestPrice = input.pricePerShare;
+
+        if (valuationCap && capShares > bestShares) {
+          bestMethod = 'cap';
+          bestShares = capShares;
+          bestPrice = capPrice;
+        }
+
+        if (discountRate && discountShares > bestShares) {
+          bestMethod = 'discount';
+          bestShares = discountShares;
+          bestPrice = discountedPrice;
+        }
+
+        return {
+          safeId: safe.id,
+          investmentAmount,
+          valuationCap,
+          discountRate,
+          pricePerShare: input.pricePerShare,
+          comparison: {
+            roundPrice: { shares: roundPriceShares, price: input.pricePerShare },
+            cap: valuationCap ? { shares: capShares, price: capPrice } : null,
+            discount: discountRate ? { shares: discountShares, price: discountedPrice } : null,
+          },
+          result: {
+            method: bestMethod,
+            shares: bestShares,
+            effectivePrice: bestPrice,
+            ownershipPercent: (bestShares / (input.fullyDilutedShares + bestShares)) * 100,
+          },
+        };
+      }),
+    }),
+
+    // Convertible Notes router
+    convertibles: router({
+      list: financeProcedure.query(async () => {
+        return db.getConvertibleNotes();
+      }),
+
+      get: financeProcedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
+        return db.getConvertibleNote(input.id);
+      }),
+
+      create: financeProcedure.input(z.object({
+        shareholderId: z.number(),
+        principalAmount: z.string(),
+        investmentDate: z.date(),
+        maturityDate: z.date(),
+        interestRate: z.string(),
+        interestType: z.enum(['simple', 'compound']).optional(),
+        valuationCap: z.string().optional(),
+        discountRate: z.string().optional(),
+        qualifiedFinancingThreshold: z.string().optional(),
+        documentUrl: z.string().optional(),
+        notes: z.string().optional(),
+      })).mutation(async ({ input }) => {
+        return db.createConvertibleNote(input);
+      }),
+
+      update: financeProcedure.input(z.object({
+        id: z.number(),
+        data: z.object({
+          accruedInterest: z.string().optional(),
+          status: z.string().optional(),
+          documentUrl: z.string().optional(),
+          notes: z.string().optional(),
+        }),
+      })).mutation(async ({ input }) => {
+        return db.updateConvertibleNote(input.id, input.data);
+      }),
+
+      delete: financeProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+        return db.deleteConvertibleNote(input.id);
+      }),
+
+      // Calculate accrued interest
+      calculateInterest: financeProcedure.input(z.object({
+        id: z.number(),
+        asOfDate: z.date().optional(),
+      })).query(async ({ input }) => {
+        const note = await db.getConvertibleNote(input.id);
+        if (!note) throw new Error("Convertible note not found");
+
+        const principal = parseFloat(note.principalAmount);
+        const rate = parseFloat(note.interestRate);
+        const startDate = note.investmentDate;
+        const endDate = input.asOfDate || new Date();
+        const interestType = (note.interestType as 'simple' | 'compound') || 'simple';
+
+        const accruedInterest = db.calculateAccruedInterest(principal, rate, startDate, endDate, interestType);
+        const totalOutstanding = principal + accruedInterest;
+
+        return {
+          principal,
+          accruedInterest,
+          totalOutstanding,
+          dailyInterest: (principal * rate) / 365,
+          interestType,
+          daysOutstanding: Math.floor((endDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000)),
+        };
+      }),
+    }),
+
+    // Pro Rata Calculator
+    proRata: router({
+      calculate: financeProcedure.input(z.object({
+        roundSize: z.number(),
+        preMoneyValuation: z.number(),
+      })).query(async ({ input }) => {
+        const proRataData = await db.calculateProRataAmounts(input.roundSize, input.preMoneyValuation);
+
+        const postMoneyValuation = input.preMoneyValuation + input.roundSize;
+
+        return {
+          roundSize: input.roundSize,
+          preMoneyValuation: input.preMoneyValuation,
+          postMoneyValuation,
+          pricePerShare: input.preMoneyValuation / (proRataData[0]?.currentShares || 1),
+          shareholders: proRataData,
+          totalProRataAmount: proRataData.reduce((sum, s) => sum + s.proRataAmount, 0),
+        };
+      }),
+    }),
+
+    // Term Sheets router
+    termSheets: router({
+      list: financeProcedure.query(async () => {
+        return db.getTermSheets();
+      }),
+
+      get: financeProcedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
+        const termSheet = await db.getTermSheet(input.id);
+        if (!termSheet) return null;
+
+        const recipients = await db.getTermSheetRecipients(input.id);
+        const comments = await db.getTermSheetComments(input.id);
+        const versions = await db.getTermSheetVersions(input.id);
+
+        return { ...termSheet, recipients, comments, versions };
+      }),
+
+      getByToken: publicProcedure.input(z.object({ token: z.string() })).query(async ({ input }) => {
+        return db.getTermSheetByToken(input.token);
+      }),
+
+      create: financeProcedure.input(z.object({
+        title: z.string(),
+        roundType: z.enum(['seed', 'series_a', 'series_b', 'series_c', 'bridge', 'convertible']),
+        targetRaise: z.string(),
+        preMoneyValuation: z.string().optional(),
+        postMoneyValuation: z.string().optional(),
+        leadInvestorName: z.string().optional(),
+        leadInvestorCommitment: z.string().optional(),
+        shareClassName: z.string().optional(),
+        pricePerShare: z.string().optional(),
+        liquidationPreference: z.string().optional(),
+        participatingPreferred: z.boolean().optional(),
+        antiDilutionType: z.enum(['full_ratchet', 'broad_weighted_average', 'narrow_weighted_average', 'none']).optional(),
+        dividendType: z.enum(['cumulative', 'non_cumulative', 'none']).optional(),
+        dividendRate: z.string().optional(),
+        proRataRights: z.boolean().optional(),
+        boardSeats: z.number().optional(),
+        observerRights: z.boolean().optional(),
+        optionPoolSize: z.string().optional(),
+        optionPoolPreMoney: z.boolean().optional(),
+        noShopPeriodDays: z.number().optional(),
+        governingLaw: z.string().optional(),
+        expirationDate: z.date().optional(),
+        notes: z.string().optional(),
+      })).mutation(async ({ input, ctx }) => {
+        return db.createTermSheet({
+          ...input,
+          createdBy: ctx.user.id,
+        });
+      }),
+
+      update: financeProcedure.input(z.object({
+        id: z.number(),
+        data: z.object({
+          title: z.string().optional(),
+          status: z.enum(['draft', 'sent', 'negotiating', 'signed', 'expired', 'rejected']).optional(),
+          targetRaise: z.string().optional(),
+          preMoneyValuation: z.string().optional(),
+          postMoneyValuation: z.string().optional(),
+          leadInvestorName: z.string().optional(),
+          leadInvestorCommitment: z.string().optional(),
+          shareClassName: z.string().optional(),
+          pricePerShare: z.string().optional(),
+          liquidationPreference: z.string().optional(),
+          participatingPreferred: z.boolean().optional(),
+          participationCap: z.string().optional(),
+          antiDilutionType: z.string().optional(),
+          dividendType: z.string().optional(),
+          dividendRate: z.string().optional(),
+          proRataRights: z.boolean().optional(),
+          proRataThreshold: z.string().optional(),
+          boardSeats: z.number().optional(),
+          observerRights: z.boolean().optional(),
+          optionPoolSize: z.string().optional(),
+          optionPoolPreMoney: z.boolean().optional(),
+          protectiveProvisions: z.string().optional(),
+          closingConditions: z.string().optional(),
+          expirationDate: z.date().optional(),
+          signedDate: z.date().optional(),
+          closingDate: z.date().optional(),
+          noShopPeriodDays: z.number().optional(),
+          noShopStartDate: z.date().optional(),
+          governingLaw: z.string().optional(),
+          legalCounsel: z.string().optional(),
+          shareEnabled: z.boolean().optional(),
+          notes: z.string().optional(),
+        }),
+      })).mutation(async ({ input, ctx }) => {
+        return db.updateTermSheet(input.id, input.data, ctx.user.id);
+      }),
+
+      delete: financeProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+        return db.deleteTermSheet(input.id);
+      }),
+
+      duplicate: financeProcedure.input(z.object({ id: z.number() })).mutation(async ({ input, ctx }) => {
+        return db.duplicateTermSheet(input.id, ctx.user.id);
+      }),
+
+      // Recipients
+      addRecipient: financeProcedure.input(z.object({
+        termSheetId: z.number(),
+        email: z.string().email(),
+        name: z.string().optional(),
+        organization: z.string().optional(),
+        role: z.enum(['lead_investor', 'investor', 'legal', 'advisor']).optional(),
+        canEdit: z.boolean().optional(),
+        canComment: z.boolean().optional(),
+      })).mutation(async ({ input }) => {
+        return db.addTermSheetRecipient(input);
+      }),
+
+      removeRecipient: financeProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+        return db.deleteTermSheetRecipient(input.id);
+      }),
+
+      updateRecipient: financeProcedure.input(z.object({
+        id: z.number(),
+        data: z.object({
+          response: z.enum(['pending', 'interested', 'declined', 'signed']).optional(),
+          responseNotes: z.string().optional(),
+        }),
+      })).mutation(async ({ input }) => {
+        return db.updateTermSheetRecipient(input.id, {
+          ...input.data,
+          responseDate: input.data.response ? new Date() : undefined,
+        });
+      }),
+
+      sendToRecipient: financeProcedure.input(z.object({
+        recipientId: z.number(),
+      })).mutation(async ({ input }) => {
+        await db.updateTermSheetRecipient(input.id, {
+          sentAt: new Date(),
+        });
+        // TODO: Actually send email to recipient
+        return { success: true };
+      }),
+
+      // Comments
+      addComment: protectedProcedure.input(z.object({
+        termSheetId: z.number(),
+        field: z.string().optional(),
+        content: z.string(),
+        parentCommentId: z.number().optional(),
+      })).mutation(async ({ input, ctx }) => {
+        return db.addTermSheetComment({
+          ...input,
+          userId: ctx.user.id,
+          authorName: ctx.user.name,
+          authorEmail: ctx.user.email,
+        });
+      }),
+
+      resolveComment: protectedProcedure.input(z.object({
+        commentId: z.number(),
+      })).mutation(async ({ input, ctx }) => {
+        return db.resolveTermSheetComment(input.commentId, ctx.user.id);
+      }),
+
+      // Versions
+      getVersions: financeProcedure.input(z.object({ termSheetId: z.number() })).query(async ({ input }) => {
+        return db.getTermSheetVersions(input.termSheetId);
+      }),
+
+      getVersion: financeProcedure.input(z.object({
+        termSheetId: z.number(),
+        version: z.number(),
+      })).query(async ({ input }) => {
+        return db.getTermSheetVersion(input.termSheetId, input.version);
+      }),
+    }),
   }),
 });
 

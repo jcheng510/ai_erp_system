@@ -91,11 +91,14 @@ import {
   shareClasses, shareholders, equityHoldings, vestingSchedules, equityGrants,
   optionExercises, stockTransactions, fundingRounds, fundingInvestments,
   valuations, equityScenarios, equityDocuments, shareholderPortalTokens,
-  shareholderNotifications, optionPools,
+  shareholderNotifications, optionPools, safeNotes, convertibleNotes,
+  termSheets, termSheetVersions, termSheetRecipients, termSheetComments,
   InsertShareClass, InsertShareholder, InsertEquityHolding, InsertVestingSchedule,
   InsertEquityGrant, InsertOptionExercise, InsertStockTransaction, InsertFundingRound,
   InsertFundingInvestment, InsertValuation, InsertEquityScenario, InsertEquityDocument,
-  InsertShareholderPortalToken, InsertShareholderNotification, InsertOptionPool
+  InsertShareholderPortalToken, InsertShareholderNotification, InsertOptionPool,
+  InsertSafeNote, InsertConvertibleNote,
+  InsertTermSheet, InsertTermSheetVersion, InsertTermSheetRecipient, InsertTermSheetComment
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -8312,4 +8315,512 @@ export async function importCapTableData(data: {
   }
 
   return results;
+}
+
+// ============ SAFE Notes ============
+
+export async function getSafeNotes(companyId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  let query = db.select().from(safeNotes);
+  if (companyId) {
+    query = query.where(eq(safeNotes.companyId, companyId));
+  }
+  return query.orderBy(desc(safeNotes.investmentDate));
+}
+
+export async function getSafeNote(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(safeNotes).where(eq(safeNotes.id, id));
+  return result[0] || null;
+}
+
+export async function getOutstandingSafeNotes(companyId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  let query = db.select().from(safeNotes).where(eq(safeNotes.status, 'outstanding'));
+  if (companyId) {
+    query = query.where(and(eq(safeNotes.status, 'outstanding'), eq(safeNotes.companyId, companyId)));
+  }
+  return query;
+}
+
+export async function createSafeNote(data: InsertSafeNote) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(safeNotes).values(data);
+  return { id: Number(result[0].insertId), ...data };
+}
+
+export async function updateSafeNote(id: number, data: Partial<InsertSafeNote>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(safeNotes).set(data).where(eq(safeNotes.id, id));
+  return getSafeNote(id);
+}
+
+export async function deleteSafeNote(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(safeNotes).where(eq(safeNotes.id, id));
+  return { success: true };
+}
+
+// Calculate SAFE conversion shares
+export function calculateSafeConversion(
+  investmentAmount: number,
+  valuationCap: number | null,
+  discountRate: number | null,
+  pricePerShare: number, // Price from the funding round
+  safeType: string
+): { shares: number; effectivePrice: number; method: string } {
+  let capShares = Infinity;
+  let discountShares = Infinity;
+
+  // Calculate shares using valuation cap
+  if (valuationCap && valuationCap > 0) {
+    // For post-money SAFEs, the cap is the post-money valuation
+    // Shares = investment / (cap / fully diluted shares at conversion)
+    // Simplified: using price implied by cap
+    const capPrice = pricePerShare; // This should be calculated from cap/fully-diluted
+    capShares = investmentAmount / capPrice;
+  }
+
+  // Calculate shares using discount
+  if (discountRate && discountRate > 0) {
+    const discountedPrice = pricePerShare * (1 - discountRate);
+    discountShares = investmentAmount / discountedPrice;
+  }
+
+  // Investor gets the better deal (more shares)
+  if (capShares <= discountShares && valuationCap) {
+    const effectivePrice = investmentAmount / capShares;
+    return { shares: Math.floor(capShares), effectivePrice, method: 'cap' };
+  } else if (discountRate && discountRate > 0) {
+    const effectivePrice = pricePerShare * (1 - discountRate);
+    return { shares: Math.floor(discountShares), effectivePrice, method: 'discount' };
+  } else {
+    // No cap or discount - convert at round price
+    return { shares: Math.floor(investmentAmount / pricePerShare), effectivePrice: pricePerShare, method: 'price' };
+  }
+}
+
+// Convert a SAFE note to equity
+export async function convertSafeNote(
+  safeId: number,
+  roundId: number,
+  shareClassId: number,
+  pricePerShare: number,
+  fullyDilutedShares: number
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const safe = await getSafeNote(safeId);
+  if (!safe) throw new Error("SAFE not found");
+  if (safe.status !== 'outstanding') throw new Error("SAFE is not outstanding");
+
+  const investmentAmount = parseFloat(safe.investmentAmount);
+  const valuationCap = safe.valuationCap ? parseFloat(safe.valuationCap) : null;
+  const discountRate = safe.discountRate ? parseFloat(safe.discountRate) : null;
+
+  // Calculate effective price for cap-based conversion
+  let capPrice = pricePerShare;
+  if (valuationCap) {
+    capPrice = valuationCap / fullyDilutedShares;
+  }
+
+  // Calculate shares both ways
+  const capShares = valuationCap ? investmentAmount / capPrice : Infinity;
+  const discountedPrice = discountRate ? pricePerShare * (1 - discountRate) : pricePerShare;
+  const discountShares = discountRate ? investmentAmount / discountedPrice : investmentAmount / pricePerShare;
+
+  // Take the better conversion for investor (more shares)
+  let shares: number;
+  let effectivePrice: number;
+  let method: string;
+
+  if (capShares >= discountShares && valuationCap) {
+    shares = Math.floor(capShares);
+    effectivePrice = capPrice;
+    method = 'cap';
+  } else {
+    shares = Math.floor(discountShares);
+    effectivePrice = discountedPrice;
+    method = 'discount';
+  }
+
+  // Update the SAFE record
+  await db.update(safeNotes).set({
+    status: 'converted',
+    conversionDate: new Date(),
+    conversionRoundId: roundId,
+    conversionShareClassId: shareClassId,
+    conversionShares: shares,
+    conversionPricePerShare: effectivePrice.toString(),
+    conversionMethod: method,
+  }).where(eq(safeNotes.id, safeId));
+
+  // Create equity holding for the shareholder
+  await createEquityHolding({
+    shareholderId: safe.shareholderId,
+    shareClassId,
+    shares,
+    acquisitionDate: new Date(),
+    acquisitionType: 'safe_conversion',
+    purchasePrice: effectivePrice.toString(),
+    totalCostBasis: investmentAmount.toString(),
+    sourceTransactionId: safeId,
+  });
+
+  return {
+    shares,
+    effectivePrice,
+    method,
+    safeId,
+  };
+}
+
+// ============ Convertible Notes ============
+
+export async function getConvertibleNotes(companyId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  let query = db.select().from(convertibleNotes);
+  if (companyId) {
+    query = query.where(eq(convertibleNotes.companyId, companyId));
+  }
+  return query.orderBy(desc(convertibleNotes.investmentDate));
+}
+
+export async function getConvertibleNote(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(convertibleNotes).where(eq(convertibleNotes.id, id));
+  return result[0] || null;
+}
+
+export async function createConvertibleNote(data: InsertConvertibleNote) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(convertibleNotes).values(data);
+  return { id: Number(result[0].insertId), ...data };
+}
+
+export async function updateConvertibleNote(id: number, data: Partial<InsertConvertibleNote>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(convertibleNotes).set(data).where(eq(convertibleNotes.id, id));
+  return getConvertibleNote(id);
+}
+
+export async function deleteConvertibleNote(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(convertibleNotes).where(eq(convertibleNotes.id, id));
+  return { success: true };
+}
+
+// Calculate accrued interest for a convertible note
+export function calculateAccruedInterest(
+  principal: number,
+  annualRate: number,
+  startDate: Date,
+  endDate: Date,
+  interestType: 'simple' | 'compound' = 'simple'
+): number {
+  const years = (endDate.getTime() - startDate.getTime()) / (365.25 * 24 * 60 * 60 * 1000);
+
+  if (interestType === 'simple') {
+    return principal * annualRate * years;
+  } else {
+    // Compound interest
+    return principal * (Math.pow(1 + annualRate, years) - 1);
+  }
+}
+
+// ============ Pro Rata Calculations ============
+
+export async function calculateProRataAmounts(
+  roundSize: number,
+  preMoneyValuation: number,
+  companyId?: number
+): Promise<Array<{
+  shareholderId: number;
+  shareholderName: string;
+  currentShares: number;
+  currentOwnership: number;
+  proRataAmount: number;
+  newSharesAtProRata: number;
+  ownershipIfNoParticipation: number;
+  dilutionWithoutProRata: number;
+}>> {
+  const db = await getDb();
+  if (!db) return [];
+
+  // Get current cap table summary
+  const summary = await getCapTableSummary(companyId);
+  if (!summary) return [];
+
+  const totalShares = summary.totalOutstanding;
+  const postMoneyValuation = preMoneyValuation + roundSize;
+  const pricePerShare = preMoneyValuation / totalShares;
+  const newShares = roundSize / pricePerShare;
+  const newTotalShares = totalShares + newShares;
+
+  // Get all shareholders with their holdings
+  const holdingsList = await db.select({
+    shareholderId: equityHoldings.shareholderId,
+    shares: equityHoldings.shares,
+  }).from(equityHoldings);
+
+  // Aggregate shares per shareholder
+  const shareholderShares = new Map<number, number>();
+  for (const h of holdingsList) {
+    const current = shareholderShares.get(h.shareholderId) || 0;
+    shareholderShares.set(h.shareholderId, current + (h.shares || 0));
+  }
+
+  // Get shareholder names
+  const shareholderList = await getShareholders(companyId);
+  const shareholderMap = new Map(shareholderList.map(s => [s.id, s.name]));
+
+  const results = [];
+
+  for (const [shareholderId, shares] of shareholderShares) {
+    const currentOwnership = shares / totalShares;
+    const proRataAmount = currentOwnership * roundSize; // Amount to invest to maintain ownership
+    const newSharesAtProRata = proRataAmount / pricePerShare;
+    const ownershipIfNoParticipation = shares / newTotalShares;
+    const dilutionWithoutProRata = currentOwnership - ownershipIfNoParticipation;
+
+    results.push({
+      shareholderId,
+      shareholderName: shareholderMap.get(shareholderId) || 'Unknown',
+      currentShares: shares,
+      currentOwnership,
+      proRataAmount,
+      newSharesAtProRata: Math.floor(newSharesAtProRata),
+      ownershipIfNoParticipation,
+      dilutionWithoutProRata,
+    });
+  }
+
+  return results.sort((a, b) => b.currentOwnership - a.currentOwnership);
+}
+
+// ============ Term Sheets ============
+
+export async function getTermSheets(companyId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  let query = db.select().from(termSheets);
+  if (companyId) {
+    query = query.where(eq(termSheets.companyId, companyId));
+  }
+  return query.orderBy(desc(termSheets.createdAt));
+}
+
+export async function getTermSheet(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(termSheets).where(eq(termSheets.id, id));
+  return result[0] || null;
+}
+
+export async function getTermSheetByToken(token: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(termSheets)
+    .where(and(eq(termSheets.shareToken, token), eq(termSheets.shareEnabled, true)));
+  return result[0] || null;
+}
+
+export async function createTermSheet(data: InsertTermSheet) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Generate share token
+  const shareToken = crypto.randomUUID().replace(/-/g, '');
+
+  const result = await db.insert(termSheets).values({
+    ...data,
+    shareToken,
+  });
+
+  const newTermSheet = await getTermSheet(Number(result[0].insertId));
+
+  // Create initial version snapshot
+  if (newTermSheet) {
+    await db.insert(termSheetVersions).values({
+      termSheetId: newTermSheet.id,
+      version: 1,
+      snapshotData: JSON.stringify(newTermSheet),
+      createdBy: data.createdBy,
+    });
+  }
+
+  return newTermSheet;
+}
+
+export async function updateTermSheet(id: number, data: Partial<InsertTermSheet>, userId?: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Get current term sheet for version tracking
+  const current = await getTermSheet(id);
+  if (!current) throw new Error("Term sheet not found");
+
+  // Increment version
+  const newVersion = current.version + 1;
+
+  await db.update(termSheets).set({
+    ...data,
+    version: newVersion,
+  }).where(eq(termSheets.id, id));
+
+  const updated = await getTermSheet(id);
+
+  // Create version snapshot
+  if (updated) {
+    await db.insert(termSheetVersions).values({
+      termSheetId: id,
+      version: newVersion,
+      snapshotData: JSON.stringify(updated),
+      changes: JSON.stringify(data),
+      createdBy: userId,
+    });
+  }
+
+  return updated;
+}
+
+export async function deleteTermSheet(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Delete related records first
+  await db.delete(termSheetComments).where(eq(termSheetComments.termSheetId, id));
+  await db.delete(termSheetRecipients).where(eq(termSheetRecipients.termSheetId, id));
+  await db.delete(termSheetVersions).where(eq(termSheetVersions.termSheetId, id));
+  await db.delete(termSheets).where(eq(termSheets.id, id));
+
+  return { success: true };
+}
+
+export async function duplicateTermSheet(id: number, userId?: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const original = await getTermSheet(id);
+  if (!original) throw new Error("Term sheet not found");
+
+  const { id: _, createdAt, updatedAt, version, shareToken, ...termSheetData } = original;
+
+  return createTermSheet({
+    ...termSheetData,
+    title: `${original.title} (Copy)`,
+    status: 'draft',
+    createdBy: userId,
+  });
+}
+
+// Term Sheet Recipients
+
+export async function getTermSheetRecipients(termSheetId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(termSheetRecipients)
+    .where(eq(termSheetRecipients.termSheetId, termSheetId))
+    .orderBy(desc(termSheetRecipients.createdAt));
+}
+
+export async function addTermSheetRecipient(data: InsertTermSheetRecipient) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const accessToken = crypto.randomUUID().replace(/-/g, '');
+  const result = await db.insert(termSheetRecipients).values({
+    ...data,
+    accessToken,
+  });
+
+  return { id: Number(result[0].insertId), ...data, accessToken };
+}
+
+export async function updateTermSheetRecipient(id: number, data: Partial<InsertTermSheetRecipient>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(termSheetRecipients).set(data).where(eq(termSheetRecipients.id, id));
+}
+
+export async function deleteTermSheetRecipient(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(termSheetRecipients).where(eq(termSheetRecipients.id, id));
+  return { success: true };
+}
+
+export async function recordTermSheetView(recipientId: number) {
+  const db = await getDb();
+  if (!db) return;
+
+  const now = new Date();
+  await db.update(termSheetRecipients).set({
+    viewedAt: sql`COALESCE(${termSheetRecipients.viewedAt}, ${now})`,
+    lastAccessedAt: now,
+  }).where(eq(termSheetRecipients.id, recipientId));
+}
+
+// Term Sheet Comments
+
+export async function getTermSheetComments(termSheetId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(termSheetComments)
+    .where(eq(termSheetComments.termSheetId, termSheetId))
+    .orderBy(termSheetComments.createdAt);
+}
+
+export async function addTermSheetComment(data: InsertTermSheetComment) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(termSheetComments).values(data);
+  return { id: Number(result[0].insertId), ...data };
+}
+
+export async function resolveTermSheetComment(commentId: number, userId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(termSheetComments).set({
+    isResolved: true,
+    resolvedBy: userId,
+    resolvedAt: new Date(),
+  }).where(eq(termSheetComments.id, commentId));
+}
+
+// Term Sheet Versions
+
+export async function getTermSheetVersions(termSheetId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(termSheetVersions)
+    .where(eq(termSheetVersions.termSheetId, termSheetId))
+    .orderBy(desc(termSheetVersions.version));
+}
+
+export async function getTermSheetVersion(termSheetId: number, version: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(termSheetVersions)
+    .where(and(
+      eq(termSheetVersions.termSheetId, termSheetId),
+      eq(termSheetVersions.version, version)
+    ));
+  return result[0] || null;
 }

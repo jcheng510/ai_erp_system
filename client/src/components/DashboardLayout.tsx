@@ -132,6 +132,7 @@ const menuGroups = [
       { icon: Users, label: "Shareholders", path: "/equity/shareholders" },
       { icon: Award, label: "Equity Grants", path: "/equity/grants" },
       { icon: LineChart, label: "Modeling", path: "/equity/modeling" },
+      { icon: FileText, label: "Term Sheets", path: "/equity/term-sheets" },
       { icon: User, label: "My Equity", path: "/equity/portal" },
       { icon: Upload, label: "Import Cap Table", path: "/equity/import" },
     ],

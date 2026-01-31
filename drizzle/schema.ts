@@ -4085,3 +4085,271 @@ export const optionPools = mysqlTable("option_pools", {
 
 export type OptionPool = typeof optionPools.$inferSelect;
 export type InsertOptionPool = typeof optionPools.$inferInsert;
+
+// SAFE Notes (Simple Agreement for Future Equity)
+export const safeNotes = mysqlTable("safe_notes", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+
+  // Investor info
+  shareholderId: int("shareholderId").notNull(), // Links to shareholders table
+
+  // Investment details
+  investmentAmount: decimal("investmentAmount", { precision: 15, scale: 2 }).notNull(),
+  investmentDate: timestamp("investmentDate").notNull(),
+
+  // SAFE terms
+  safeType: varchar("safeType", { length: 50 }).notNull(), // "post_money", "pre_money", "mfn", "uncapped"
+  valuationCap: decimal("valuationCap", { precision: 15, scale: 2 }), // null for uncapped
+  discountRate: decimal("discountRate", { precision: 5, scale: 4 }), // e.g., 0.20 for 20% discount
+
+  // Pro rata rights
+  hasProRataRights: boolean("hasProRataRights").default(false).notNull(),
+  proRataPercentage: decimal("proRataPercentage", { precision: 5, scale: 4 }), // Percentage they can invest in next round
+
+  // MFN (Most Favored Nation) provision
+  hasMfnProvision: boolean("hasMfnProvision").default(false).notNull(),
+
+  // Conversion trigger events
+  conversionTrigger: varchar("conversionTrigger", { length: 50 }).default("equity_financing").notNull(), // "equity_financing", "liquidity_event", "dissolution", "maturity"
+  qualifiedFinancingThreshold: decimal("qualifiedFinancingThreshold", { precision: 15, scale: 2 }), // Minimum raise to trigger conversion
+
+  // Status
+  status: varchar("status", { length: 50 }).default("outstanding").notNull(), // "outstanding", "converted", "cancelled", "repaid"
+
+  // Conversion details (filled when converted)
+  conversionDate: timestamp("conversionDate"),
+  conversionRoundId: int("conversionRoundId"), // Links to funding round that triggered conversion
+  conversionShareClassId: int("conversionShareClassId"), // Share class received upon conversion
+  conversionShares: bigint("conversionShares", { mode: "number" }), // Number of shares received
+  conversionPricePerShare: decimal("conversionPricePerShare", { precision: 10, scale: 6 }), // Price used for conversion
+  conversionMethod: varchar("conversionMethod", { length: 50 }), // "cap", "discount", "mfn"
+
+  // Documents
+  documentUrl: varchar("documentUrl", { length: 500 }),
+  boardApprovalDate: timestamp("boardApprovalDate"),
+
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type SafeNote = typeof safeNotes.$inferSelect;
+export type InsertSafeNote = typeof safeNotes.$inferInsert;
+
+// Convertible Notes (debt that converts to equity)
+export const convertibleNotes = mysqlTable("convertible_notes", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+
+  // Investor info
+  shareholderId: int("shareholderId").notNull(),
+
+  // Investment details
+  principalAmount: decimal("principalAmount", { precision: 15, scale: 2 }).notNull(),
+  investmentDate: timestamp("investmentDate").notNull(),
+  maturityDate: timestamp("maturityDate").notNull(),
+
+  // Interest terms
+  interestRate: decimal("interestRate", { precision: 5, scale: 4 }).notNull(), // Annual interest rate
+  interestType: varchar("interestType", { length: 50 }).default("simple").notNull(), // "simple", "compound"
+  accruedInterest: decimal("accruedInterest", { precision: 15, scale: 2 }).default("0").notNull(),
+
+  // Conversion terms
+  valuationCap: decimal("valuationCap", { precision: 15, scale: 2 }),
+  discountRate: decimal("discountRate", { precision: 5, scale: 4 }),
+
+  // Qualified financing threshold
+  qualifiedFinancingThreshold: decimal("qualifiedFinancingThreshold", { precision: 15, scale: 2 }),
+
+  // Status
+  status: varchar("status", { length: 50 }).default("outstanding").notNull(), // "outstanding", "converted", "repaid", "defaulted"
+
+  // Conversion details
+  conversionDate: timestamp("conversionDate"),
+  conversionRoundId: int("conversionRoundId"),
+  conversionShareClassId: int("conversionShareClassId"),
+  conversionShares: bigint("conversionShares", { mode: "number" }),
+  conversionPricePerShare: decimal("conversionPricePerShare", { precision: 10, scale: 6 }),
+
+  documentUrl: varchar("documentUrl", { length: 500 }),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ConvertibleNote = typeof convertibleNotes.$inferSelect;
+export type InsertConvertibleNote = typeof convertibleNotes.$inferInsert;
+
+// Term Sheets
+export const termSheets = mysqlTable("term_sheets", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+
+  // Basic info
+  title: varchar("title", { length: 200 }).notNull(),
+  version: int("version").default(1).notNull(),
+  status: varchar("status", { length: 50 }).default("draft").notNull(), // "draft", "sent", "negotiating", "signed", "expired", "rejected"
+
+  // Round info
+  roundType: varchar("roundType", { length: 50 }).notNull(), // "seed", "series_a", "series_b", "bridge", "convertible"
+  targetRaise: decimal("targetRaise", { precision: 15, scale: 2 }).notNull(),
+  preMoneyValuation: decimal("preMoneyValuation", { precision: 15, scale: 2 }),
+  postMoneyValuation: decimal("postMoneyValuation", { precision: 15, scale: 2 }),
+
+  // Lead investor info
+  leadInvestorId: int("leadInvestorId"), // Links to shareholders
+  leadInvestorName: varchar("leadInvestorName", { length: 200 }),
+  leadInvestorCommitment: decimal("leadInvestorCommitment", { precision: 15, scale: 2 }),
+
+  // Share class terms
+  shareClassName: varchar("shareClassName", { length: 100 }),
+  pricePerShare: decimal("pricePerShare", { precision: 10, scale: 6 }),
+
+  // Liquidation preference
+  liquidationPreference: decimal("liquidationPreference", { precision: 5, scale: 2 }).default("1.00"), // 1x, 2x, etc.
+  participatingPreferred: boolean("participatingPreferred").default(false),
+  participationCap: decimal("participationCap", { precision: 5, scale: 2 }), // null means uncapped
+
+  // Anti-dilution
+  antiDilutionType: varchar("antiDilutionType", { length: 50 }).default("broad_weighted_average"), // "full_ratchet", "broad_weighted_average", "narrow_weighted_average", "none"
+
+  // Dividends
+  dividendType: varchar("dividendType", { length: 50 }).default("non_cumulative"), // "cumulative", "non_cumulative", "none"
+  dividendRate: decimal("dividendRate", { precision: 5, scale: 4 }),
+
+  // Conversion
+  conversionRatio: decimal("conversionRatio", { precision: 10, scale: 6 }).default("1.000000"),
+  autoConversionThreshold: decimal("autoConversionThreshold", { precision: 15, scale: 2 }), // IPO threshold
+
+  // Voting rights
+  votingRights: boolean("votingRights").default(true),
+  votesPerShare: int("votesPerShare").default(1),
+
+  // Board composition
+  boardSeats: int("boardSeats").default(1),
+  observerRights: boolean("observerRights").default(true),
+
+  // Pro rata & preemptive rights
+  proRataRights: boolean("proRataRights").default(true),
+  proRataThreshold: decimal("proRataThreshold", { precision: 5, scale: 4 }), // Min ownership to maintain pro rata
+
+  // Information rights
+  financialReportingFrequency: varchar("financialReportingFrequency", { length: 50 }).default("quarterly"), // "monthly", "quarterly", "annually"
+  auditRights: boolean("auditRights").default(true),
+
+  // Protective provisions
+  protectiveProvisions: text("protectiveProvisions"), // JSON array of protective provisions
+
+  // Option pool
+  optionPoolSize: decimal("optionPoolSize", { precision: 5, scale: 4 }), // e.g., 0.15 for 15%
+  optionPoolPreMoney: boolean("optionPoolPreMoney").default(true), // Whether pool comes from pre or post money
+
+  // Closing conditions
+  closingConditions: text("closingConditions"), // JSON array of conditions
+
+  // Key dates
+  termSheetDate: timestamp("termSheetDate").defaultNow().notNull(),
+  expirationDate: timestamp("expirationDate"),
+  signedDate: timestamp("signedDate"),
+  closingDate: timestamp("closingDate"),
+
+  // No-shop clause
+  noShopPeriodDays: int("noShopPeriodDays").default(45),
+  noShopStartDate: timestamp("noShopStartDate"),
+
+  // Legal
+  governingLaw: varchar("governingLaw", { length: 100 }).default("Delaware"),
+  legalCounsel: varchar("legalCounsel", { length: 200 }),
+
+  // Documents
+  documentUrl: varchar("documentUrl", { length: 500 }),
+
+  // Sharing
+  shareToken: varchar("shareToken", { length: 100 }), // For generating shareable links
+  shareEnabled: boolean("shareEnabled").default(false),
+
+  notes: text("notes"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type TermSheet = typeof termSheets.$inferSelect;
+export type InsertTermSheet = typeof termSheets.$inferInsert;
+
+// Term Sheet Versions (for tracking changes)
+export const termSheetVersions = mysqlTable("term_sheet_versions", {
+  id: int("id").autoincrement().primaryKey(),
+  termSheetId: int("termSheetId").notNull(),
+  version: int("version").notNull(),
+  changes: text("changes"), // JSON describing what changed
+  snapshotData: text("snapshotData").notNull(), // Full JSON snapshot of term sheet at this version
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type TermSheetVersion = typeof termSheetVersions.$inferSelect;
+export type InsertTermSheetVersion = typeof termSheetVersions.$inferInsert;
+
+// Term Sheet Recipients (for sharing)
+export const termSheetRecipients = mysqlTable("term_sheet_recipients", {
+  id: int("id").autoincrement().primaryKey(),
+  termSheetId: int("termSheetId").notNull(),
+
+  // Recipient info
+  email: varchar("email", { length: 255 }).notNull(),
+  name: varchar("name", { length: 200 }),
+  organization: varchar("organization", { length: 200 }),
+  role: varchar("role", { length: 100 }), // "lead_investor", "investor", "legal", "advisor"
+
+  // Access control
+  canEdit: boolean("canEdit").default(false),
+  canComment: boolean("canComment").default(true),
+
+  // Status tracking
+  sentAt: timestamp("sentAt"),
+  viewedAt: timestamp("viewedAt"),
+  lastAccessedAt: timestamp("lastAccessedAt"),
+
+  // Response
+  response: varchar("response", { length: 50 }), // "pending", "interested", "declined", "signed"
+  responseDate: timestamp("responseDate"),
+  responseNotes: text("responseNotes"),
+
+  accessToken: varchar("accessToken", { length: 100 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type TermSheetRecipient = typeof termSheetRecipients.$inferSelect;
+export type InsertTermSheetRecipient = typeof termSheetRecipients.$inferInsert;
+
+// Term Sheet Comments
+export const termSheetComments = mysqlTable("term_sheet_comments", {
+  id: int("id").autoincrement().primaryKey(),
+  termSheetId: int("termSheetId").notNull(),
+
+  // Who commented
+  userId: int("userId"),
+  recipientId: int("recipientId"), // If external investor commenting
+  authorName: varchar("authorName", { length: 200 }),
+  authorEmail: varchar("authorEmail", { length: 255 }),
+
+  // Comment content
+  field: varchar("field", { length: 100 }), // Which field/term the comment is about
+  content: text("content").notNull(),
+
+  // Threading
+  parentCommentId: int("parentCommentId"), // For replies
+
+  // Status
+  isResolved: boolean("isResolved").default(false),
+  resolvedBy: int("resolvedBy"),
+  resolvedAt: timestamp("resolvedAt"),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type TermSheetComment = typeof termSheetComments.$inferSelect;
+export type InsertTermSheetComment = typeof termSheetComments.$inferInsert;
