@@ -7017,20 +7017,28 @@ export async function getDetailedVisitorAnalytics(dataRoomId: number, visitorId:
   const db = await getDb();
   if (!db) return null;
 
-  // Get visitor info
+  // Get visitor info, scoped to the specified data room
   const visitor = await db.select().from(dataRoomVisitors)
-    .where(eq(dataRoomVisitors.id, visitorId));
+    .where(and(
+      eq(dataRoomVisitors.id, visitorId),
+      eq(dataRoomVisitors.dataRoomId, dataRoomId),
+    ));
   if (!visitor[0]) return null;
 
-  // Get all sessions
-  const sessions = await getVisitorSessions(visitorId);
+  // Get all sessions for this visitor, scoped to the specified data room
+  const allSessions = await getVisitorSessions(visitorId);
+  const sessions = allSessions.filter(s => s.dataRoomId === dataRoomId);
 
-  // Get all page views
-  const pageViews = await getPageViewsByVisitor(visitorId);
+  // Get all page views for this visitor, scoped to the specified data room
+  const allPageViews = await getPageViewsByVisitor(visitorId);
+  const pageViews = allPageViews.filter(pv => pv.dataRoomId === dataRoomId);
 
-  // Get document views
+  // Get document views for this visitor, scoped to the specified data room
   const docViews = await db.select().from(documentViews)
-    .where(eq(documentViews.visitorId, visitorId));
+    .where(and(
+      eq(documentViews.visitorId, visitorId),
+      eq(documentViews.dataRoomId, dataRoomId),
+    ));
 
   // Get documents info
   const docIds = [...new Set(pageViews.map(pv => pv.documentId))];
