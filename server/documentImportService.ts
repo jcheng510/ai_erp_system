@@ -4,6 +4,7 @@ import { writeFileSync, readFileSync, unlinkSync, mkdirSync, existsSync } from "
 import { join } from "path";
 import { tmpdir } from "os";
 import { execSync } from "child_process";
+import { fromBuffer } from "pdf2pic";
 
 // PDF.js will be imported dynamically in the function to avoid worker issues
 
@@ -200,7 +201,7 @@ If document type is unknown, return both as null.`;
         return { success: false, documentType: "unknown", error: "Failed to process image file" };
       }
     } else if (isPdf) {
-      // For PDFs, extract text using pdfjs-dist (pure JavaScript, works everywhere including production)
+      // For PDFs, first try text extraction, then fall back to OCR for scanned PDFs
       console.log("[DocumentImport] Extracting text from PDF using pdfjs-dist");
       try {
         // Download the PDF
@@ -210,6 +211,7 @@ If document type is unknown, return both as null.`;
         }
         const arrayBuffer = await response.arrayBuffer();
         const uint8Array = new Uint8Array(arrayBuffer);
+        const buffer = Buffer.from(arrayBuffer);
         console.log("[DocumentImport] Downloaded PDF, size:", uint8Array.byteLength);
         
         // Use pdfjs-dist to extract text (pure JavaScript, no native dependencies)
@@ -228,12 +230,69 @@ If document type is unknown, return both as null.`;
         }
         console.log("[DocumentImport] PDF text extracted, length:", fullText.length);
         
-        // Use the extracted text for LLM analysis
-        const pdfText = fullText.substring(0, 50000); // Limit to 50k chars
-        messageContent = [
-          { type: "text", text: `${prompt}\n\nEXTRACTED PDF TEXT:\n${pdfText}` }
-        ];
-        console.log("[DocumentImport] PDF text extracted successfully");
+        // Check if we got sufficient text (less than 100 chars suggests scanned/image PDF)
+        if (fullText.trim().length < 100) {
+          console.log("[DocumentImport] Insufficient text extracted, PDF appears to be scanned. Falling back to OCR...");
+          
+          // Convert PDF to images using pdf2pic for OCR
+          const tempDir = join(tmpdir(), `pdf_ocr_${Date.now()}`);
+          if (!existsSync(tempDir)) {
+            mkdirSync(tempDir, { recursive: true });
+          }
+          
+          try {
+            const options = {
+              density: 200, // DPI for image conversion
+              saveFilename: "pdf_page",
+              savePath: tempDir,
+              format: "png" as const,
+              width: 2000,
+              height: 2800
+            };
+            
+            console.log("[DocumentImport] Converting PDF to images for OCR...");
+            const convert = fromBuffer(buffer, options);
+            
+            // Convert first page to base64 for vision OCR (limiting to first page for efficiency)
+            const pageResult = await convert(1, { responseType: "base64" });
+            
+            if (!pageResult || !pageResult.base64) {
+              throw new Error("PDF to image conversion failed");
+            }
+            
+            console.log("[DocumentImport] PDF converted to image, using vision OCR");
+            const dataUrl = `data:image/png;base64,${pageResult.base64}`;
+            
+            // Use vision-based OCR (similar to image processing)
+            messageContent = [
+              { type: "text", text: prompt },
+              { type: "image_url", image_url: { url: dataUrl, detail: "high" } }
+            ];
+            
+            // Clean up temp directory
+            try {
+              execSync(`rm -rf "${tempDir}"`, { timeout: 5000 });
+            } catch (cleanupError) {
+              console.warn("[DocumentImport] Failed to cleanup temp directory:", cleanupError);
+            }
+          } catch (ocrError) {
+            console.error("[DocumentImport] OCR conversion failed:", ocrError);
+            // Clean up temp directory on error
+            try {
+              execSync(`rm -rf "${tempDir}"`, { timeout: 5000 });
+            } catch (cleanupError) {
+              // Ignore cleanup errors
+            }
+            throw new Error(`Failed to process scanned PDF: ${ocrError instanceof Error ? ocrError.message : 'Unknown error'}`);
+          }
+        } else {
+          // Use the extracted text for LLM analysis
+          const pdfText = fullText.substring(0, 50000); // Limit to 50k chars
+          messageContent = [
+            { type: "text", text: `${prompt}\n\nEXTRACTED PDF TEXT:\n${pdfText}` }
+          ];
+          console.log("[DocumentImport] PDF text extracted successfully");
+        }
       } catch (pdfError) {
         console.error("[DocumentImport] Failed to extract PDF text:", pdfError);
         return { success: false, documentType: "unknown", error: `Failed to process PDF: ${pdfError instanceof Error ? pdfError.message : 'Unknown error'}` };
@@ -257,13 +316,14 @@ If document type is unknown, return both as null.`;
       }
     }
     
-    console.log("[DocumentImport] Sending to LLM with content type:", isImage ? "image_url (base64)" : isPdf ? "text (extracted from PDF)" : "text");
+    console.log("[DocumentImport] Sending to LLM with content type:", isImage ? "image_url (base64)" : isPdf ? "text or image_url (OCR if needed)" : "text");
     console.log("[DocumentImport] Message content structure:", JSON.stringify(messageContent.map((m: any) => ({ type: m.type, hasUrl: !!m.image_url?.url || !!m.file_url?.url }))));
     
-    // For images only, we need to use a simpler approach without strict JSON schema
+    // For images and scanned PDFs using OCR, we need to use a simpler approach without strict JSON schema
     // because some models don't support image_url with response_format
-    // PDFs now use text extraction so they can use the full JSON schema
-    const useSimpleFormat = isImage;
+    // Text-based PDFs can use the full JSON schema
+    const hasImageContent = messageContent.some((m: any) => m.type === 'image_url');
+    const useSimpleFormat = hasImageContent;
     console.log("[DocumentImport] Using simple format (no response_format):", useSimpleFormat);
     
     let response;
