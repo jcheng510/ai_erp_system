@@ -6830,13 +6830,323 @@ Ask if they received the original request and if they can provide a quote.`;
           await db.updateWebhookEvent(eventId, { status: 'processed', processedAt: new Date() });
           return { success: true };
         } catch (error) {
-          await db.updateWebhookEvent(eventId, { 
-            status: 'failed', 
-            errorMessage: error instanceof Error ? error.message : 'Unknown error' 
+          await db.updateWebhookEvent(eventId, {
+            status: 'failed',
+            errorMessage: error instanceof Error ? error.message : 'Unknown error'
           });
           throw error;
         }
       }),
+    // Sync operations
+    sync: router({
+      // Sync orders from Shopify store
+      orders: protectedProcedure
+        .input(z.object({ storeId: z.number().optional() }))
+        .mutation(async ({ input, ctx }) => {
+          const stores = input.storeId
+            ? [await db.getShopifyStoreById(input.storeId)]
+            : await db.getShopifyStores();
+
+          const activeStores = stores.filter(s => s && s.isEnabled && s.accessToken);
+          if (activeStores.length === 0) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'No active Shopify stores configured' });
+          }
+
+          let totalImported = 0;
+          let totalUpdated = 0;
+          let totalErrors = 0;
+
+          for (const store of activeStores) {
+            if (!store) continue;
+            try {
+              const response = await fetch(`https://${store.storeDomain}/admin/api/2024-01/orders.json?status=any&limit=50`, {
+                headers: {
+                  'X-Shopify-Access-Token': store.accessToken!,
+                  'Content-Type': 'application/json',
+                },
+              });
+
+              if (!response.ok) {
+                throw new Error(`Shopify API error: ${response.status}`);
+              }
+
+              const data = await response.json();
+              const orders = data.orders || [];
+
+              for (const order of orders) {
+                const existingOrder = await db.getSalesOrderByShopifyId(order.id.toString());
+                if (existingOrder) {
+                  await db.updateSalesOrder(existingOrder.id, {
+                    status: order.fulfillment_status === 'fulfilled' ? 'delivered' :
+                            order.financial_status === 'paid' ? 'confirmed' : 'pending',
+                    totalAmount: order.total_price,
+                  });
+                  totalUpdated++;
+                } else {
+                  // Find or create customer
+                  let customerId: number | undefined;
+                  if (order.customer?.email) {
+                    const customer = await db.getCustomerByEmail(order.customer.email);
+                    if (customer) {
+                      customerId = customer.id;
+                    }
+                  }
+
+                  await db.createSalesOrder({
+                    shopifyOrderId: order.id.toString(),
+                    source: 'shopify',
+                    status: order.fulfillment_status === 'fulfilled' ? 'delivered' :
+                            order.financial_status === 'paid' ? 'confirmed' : 'pending',
+                    orderDate: new Date(order.created_at),
+                    totalAmount: order.total_price,
+                    customerId,
+                    shippingAddress: JSON.stringify(order.shipping_address),
+                    notes: `Shopify Order: ${order.name}`,
+                  });
+                  totalImported++;
+                }
+              }
+
+              await db.updateShopifyStore(store.id, { lastSyncAt: new Date() });
+            } catch (error) {
+              totalErrors++;
+              console.error(`Error syncing orders from ${store.storeName}:`, error);
+            }
+          }
+
+          await db.createSyncLog({
+            integration: 'shopify',
+            action: 'sync_orders',
+            status: totalErrors > 0 ? 'warning' : 'success',
+            details: `Imported ${totalImported}, Updated ${totalUpdated}`,
+            recordsProcessed: totalImported + totalUpdated,
+            recordsFailed: totalErrors,
+          });
+
+          return { imported: totalImported, updated: totalUpdated, errors: totalErrors };
+        }),
+
+      // Sync products from Shopify store
+      products: protectedProcedure
+        .input(z.object({ storeId: z.number().optional() }))
+        .mutation(async ({ input, ctx }) => {
+          const stores = input.storeId
+            ? [await db.getShopifyStoreById(input.storeId)]
+            : await db.getShopifyStores();
+
+          const activeStores = stores.filter(s => s && s.isEnabled && s.accessToken);
+          if (activeStores.length === 0) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'No active Shopify stores configured' });
+          }
+
+          let totalImported = 0;
+          let totalUpdated = 0;
+          let totalErrors = 0;
+
+          for (const store of activeStores) {
+            if (!store) continue;
+            try {
+              const response = await fetch(`https://${store.storeDomain}/admin/api/2024-01/products.json?limit=100`, {
+                headers: {
+                  'X-Shopify-Access-Token': store.accessToken!,
+                  'Content-Type': 'application/json',
+                },
+              });
+
+              if (!response.ok) {
+                throw new Error(`Shopify API error: ${response.status}`);
+              }
+
+              const data = await response.json();
+              const products = data.products || [];
+
+              for (const product of products) {
+                const existingProduct = await db.getProductBySku(product.variants[0]?.sku || `SHOP-${product.id}`);
+                if (existingProduct) {
+                  await db.updateProduct(existingProduct.id, {
+                    name: product.title,
+                    price: product.variants[0]?.price || '0',
+                    description: product.body_html?.replace(/<[^>]*>/g, '') || '',
+                    isActive: product.status === 'active',
+                  });
+                  totalUpdated++;
+                } else {
+                  await db.createProduct({
+                    name: product.title,
+                    sku: product.variants[0]?.sku || `SHOP-${product.id}`,
+                    description: product.body_html?.replace(/<[^>]*>/g, '') || '',
+                    price: product.variants[0]?.price || '0',
+                    isActive: product.status === 'active',
+                    category: product.product_type || 'General',
+                    source: 'shopify',
+                  });
+                  totalImported++;
+                }
+              }
+
+              await db.updateShopifyStore(store.id, { lastSyncAt: new Date() });
+            } catch (error) {
+              totalErrors++;
+              console.error(`Error syncing products from ${store.storeName}:`, error);
+            }
+          }
+
+          await db.createSyncLog({
+            integration: 'shopify',
+            action: 'sync_products',
+            status: totalErrors > 0 ? 'warning' : 'success',
+            details: `Imported ${totalImported}, Updated ${totalUpdated}`,
+            recordsProcessed: totalImported + totalUpdated,
+            recordsFailed: totalErrors,
+          });
+
+          return { imported: totalImported, updated: totalUpdated, errors: totalErrors };
+        }),
+
+      // Sync inventory from Shopify store
+      inventory: protectedProcedure
+        .input(z.object({ storeId: z.number().optional() }))
+        .mutation(async ({ input, ctx }) => {
+          const stores = input.storeId
+            ? [await db.getShopifyStoreById(input.storeId)]
+            : await db.getShopifyStores();
+
+          const activeStores = stores.filter(s => s && s.isEnabled && s.accessToken);
+          if (activeStores.length === 0) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'No active Shopify stores configured' });
+          }
+
+          let totalUpdated = 0;
+          let totalErrors = 0;
+
+          for (const store of activeStores) {
+            if (!store) continue;
+            try {
+              // Get inventory levels from Shopify
+              const response = await fetch(`https://${store.storeDomain}/admin/api/2024-01/inventory_levels.json?limit=100`, {
+                headers: {
+                  'X-Shopify-Access-Token': store.accessToken!,
+                  'Content-Type': 'application/json',
+                },
+              });
+
+              if (!response.ok) {
+                throw new Error(`Shopify API error: ${response.status}`);
+              }
+
+              const data = await response.json();
+              const levels = data.inventory_levels || [];
+
+              // Get SKU mappings for this store
+              const mappings = await db.getShopifySkuMappings(store.id);
+
+              for (const level of levels) {
+                const mapping = mappings.find(m => m.shopifyVariantId === level.inventory_item_id.toString());
+                if (mapping) {
+                  // Update local inventory
+                  const inventory = await db.getInventoryByProductId(mapping.productId);
+                  if (inventory) {
+                    await db.updateInventory(inventory.id, {
+                      quantity: level.available?.toString() || '0',
+                    });
+                    totalUpdated++;
+                  }
+                }
+              }
+
+              await db.updateShopifyStore(store.id, { lastSyncAt: new Date() });
+            } catch (error) {
+              totalErrors++;
+              console.error(`Error syncing inventory from ${store.storeName}:`, error);
+            }
+          }
+
+          await db.createSyncLog({
+            integration: 'shopify',
+            action: 'sync_inventory',
+            status: totalErrors > 0 ? 'warning' : 'success',
+            details: `Updated ${totalUpdated} inventory records`,
+            recordsProcessed: totalUpdated,
+            recordsFailed: totalErrors,
+          });
+
+          return { updated: totalUpdated, errors: totalErrors };
+        }),
+
+      // Sync customers from Shopify store
+      customers: protectedProcedure
+        .input(z.object({ storeId: z.number().optional() }))
+        .mutation(async ({ input, ctx }) => {
+          const stores = input.storeId
+            ? [await db.getShopifyStoreById(input.storeId)]
+            : await db.getShopifyStores();
+
+          const activeStores = stores.filter(s => s && s.isEnabled && s.accessToken);
+          if (activeStores.length === 0) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'No active Shopify stores configured' });
+          }
+
+          let totalImported = 0;
+          let totalUpdated = 0;
+          let totalErrors = 0;
+
+          for (const store of activeStores) {
+            if (!store) continue;
+            try {
+              const response = await fetch(`https://${store.storeDomain}/admin/api/2024-01/customers.json?limit=100`, {
+                headers: {
+                  'X-Shopify-Access-Token': store.accessToken!,
+                  'Content-Type': 'application/json',
+                },
+              });
+
+              if (!response.ok) {
+                throw new Error(`Shopify API error: ${response.status}`);
+              }
+
+              const data = await response.json();
+              const customers = data.customers || [];
+
+              for (const customer of customers) {
+                const existingCustomer = await db.getCustomerByEmail(customer.email);
+                if (existingCustomer) {
+                  await db.updateCustomer(existingCustomer.id, {
+                    name: `${customer.first_name || ''} ${customer.last_name || ''}`.trim() || existingCustomer.name,
+                    phone: customer.phone || existingCustomer.phone,
+                    shopifyCustomerId: customer.id.toString(),
+                  });
+                  totalUpdated++;
+                } else if (customer.email) {
+                  await db.createCustomer({
+                    name: `${customer.first_name || ''} ${customer.last_name || ''}`.trim() || 'Shopify Customer',
+                    email: customer.email,
+                    phone: customer.phone || '',
+                    shopifyCustomerId: customer.id.toString(),
+                    syncSource: 'shopify',
+                  });
+                  totalImported++;
+                }
+              }
+
+              await db.updateShopifyStore(store.id, { lastSyncAt: new Date() });
+            } catch (error) {
+              totalErrors++;
+              console.error(`Error syncing customers from ${store.storeName}:`, error);
+            }
+          }
+
+          await db.createSyncLog({
+            integration: 'shopify',
+            action: 'sync_customers',
+            status: totalErrors > 0 ? 'warning' : 'success',
+            details: `Imported ${totalImported}, Updated ${totalUpdated}`,
+            recordsProcessed: totalImported + totalUpdated,
+            recordsFailed: totalErrors,
+          });
+
+          return { imported: totalImported, updated: totalUpdated, errors: totalErrors };
+        }),
+    }),
   }),
 
   // ============================================
