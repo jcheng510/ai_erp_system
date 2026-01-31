@@ -173,6 +173,7 @@ export const products = mysqlTable("products", {
   status: mysqlEnum("status", ["active", "inactive", "discontinued"]).default("active").notNull(),
   shopifyProductId: varchar("shopifyProductId", { length: 64 }),
   quickbooksItemId: varchar("quickbooksItemId", { length: 64 }),
+  preferredVendorId: int("preferredVendorId"), // Preferred vendor for auto-purchase orders
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
