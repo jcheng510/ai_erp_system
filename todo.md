@@ -804,3 +804,8 @@
 - [x] Add single "Operations" menu item in sidebar
 - [x] Update routing in App.tsx
 - [x] Test all functionality in consolidated view
+
+## Fix TypeScript Error in InventoryHub
+- [x] Fix missing 'mode' property error on shipment objects in InventoryHub.tsx line 1663
+- [x] Verify shipment type definition includes all required properties
+- [x] Updated getFreightBookings to include quote and carrier relations

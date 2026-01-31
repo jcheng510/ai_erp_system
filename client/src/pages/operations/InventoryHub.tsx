@@ -771,8 +771,8 @@ export default function InventoryHub() {
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-4">
                               <div className="p-2 bg-blue-100 rounded-lg">
-                                {freightBooking?.mode === "ocean" ? <Ship className="h-5 w-5 text-blue-600" /> :
-                                 freightBooking?.mode === "air" ? <Plane className="h-5 w-5 text-blue-600" /> :
+                                {freightBooking?.quote?.shippingMode === "ocean" ? <Ship className="h-5 w-5 text-blue-600" /> :
+                                 freightBooking?.quote?.shippingMode === "air" ? <Plane className="h-5 w-5 text-blue-600" /> :
                                  <Truck className="h-5 w-5 text-blue-600" />}
                               </div>
                               <div>
@@ -1192,8 +1192,8 @@ export default function InventoryHub() {
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-4">
                         <div className="p-2 bg-blue-100 rounded-lg">
-                          {freightBooking?.mode === "ocean" ? <Ship className="h-5 w-5 text-blue-600" /> :
-                           freightBooking?.mode === "air" ? <Plane className="h-5 w-5 text-blue-600" /> :
+                          {freightBooking?.quote?.shippingMode === "ocean" ? <Ship className="h-5 w-5 text-blue-600" /> :
+                           freightBooking?.quote?.shippingMode === "air" ? <Plane className="h-5 w-5 text-blue-600" /> :
                            <Truck className="h-5 w-5 text-blue-600" />}
                         </div>
                         <div>
@@ -1648,9 +1648,9 @@ export default function InventoryHub() {
                 {freightBooking && (
                   <div className="border rounded-lg p-4">
                     <h4 className="font-medium mb-3 flex items-center gap-2">
-                      {freightBooking.mode === "ocean" ? <Ship className="h-4 w-4" /> :
-                       freightBooking.mode === "air" ? <Plane className="h-4 w-4" /> :
-                       <Truck className="h-4 w-4" />}
+                       {freightBooking.quote?.shippingMode === "ocean" ? <Ship className="h-4 w-4" /> :
+                        freightBooking.quote?.shippingMode === "air" ? <Plane className="h-4 w-4" /> :
+                        <Truck className="h-4 w-4" />}
                       Freight Information
                     </h4>
                     <div className="grid grid-cols-2 gap-3">
@@ -1660,7 +1660,7 @@ export default function InventoryHub() {
                       </div>
                       <div className="bg-muted/30 rounded p-2">
                         <p className="text-xs text-muted-foreground">Mode</p>
-                        <p className="font-medium capitalize">{freightBooking.mode || "Ground"}</p>
+                        <p className="font-medium capitalize">{freightBooking.quote?.shippingMode || "Ground"}</p>
                       </div>
                       {freightBooking.trackingNumber && (
                         <div className="bg-muted/30 rounded p-2">

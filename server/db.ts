@@ -1611,13 +1611,18 @@ export async function getFreightBookings(filters?: { status?: string }) {
   const db = await getDb();
   if (!db) return [];
   
-  let query = db.select().from(freightBookings);
+  const bookings = await db.select()
+    .from(freightBookings)
+    .leftJoin(freightQuotes, eq(freightBookings.quoteId, freightQuotes.id))
+    .leftJoin(freightCarriers, eq(freightBookings.carrierId, freightCarriers.id))
+    .where(filters?.status ? eq(freightBookings.status, filters.status as any) : undefined)
+    .orderBy(desc(freightBookings.createdAt));
   
-  if (filters?.status) {
-    query = query.where(eq(freightBookings.status, filters.status as any)) as any;
-  }
-  
-  return query.orderBy(desc(freightBookings.createdAt));
+  return bookings.map(row => ({
+    ...row.freightBookings,
+    quote: row.freightQuotes,
+    carrier: row.freightCarriers,
+  }));
 }
 
 export async function getFreightBookingById(id: number) {
