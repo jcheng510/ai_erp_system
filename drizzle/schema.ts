@@ -4353,3 +4353,383 @@ export const termSheetComments = mysqlTable("term_sheet_comments", {
 
 export type TermSheetComment = typeof termSheetComments.$inferSelect;
 export type InsertTermSheetComment = typeof termSheetComments.$inferInsert;
+
+// ============ FUNDRAISING MANAGEMENT ============
+
+// Investor Commitments (soft and hard commitments for a round)
+export const investorCommitments = mysqlTable("investor_commitments", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+
+  // Link to funding round
+  fundingRoundId: int("fundingRoundId").notNull(),
+
+  // Investor info - can link to shareholder or CRM contact
+  shareholderId: int("shareholderId"),
+  crmContactId: int("crmContactId"),
+  investorName: varchar("investorName", { length: 200 }).notNull(),
+  investorType: varchar("investorType", { length: 50 }), // "angel", "vc", "corporate", "family_office", "strategic"
+  investorEmail: varchar("investorEmail", { length: 255 }),
+
+  // Commitment details
+  commitmentType: varchar("commitmentType", { length: 50 }).default("soft").notNull(), // "soft", "hard", "signed", "wired"
+  commitmentAmount: decimal("commitmentAmount", { precision: 15, scale: 2 }).notNull(),
+  currency: varchar("currency", { length: 10 }).default("USD").notNull(),
+
+  // Allocation (may differ from commitment in oversubscribed rounds)
+  allocatedAmount: decimal("allocatedAmount", { precision: 15, scale: 2 }),
+  allocationConfirmed: boolean("allocationConfirmed").default(false),
+
+  // Instrument type
+  instrumentType: varchar("instrumentType", { length: 50 }).default("preferred").notNull(), // "preferred", "common", "safe", "convertible_note"
+  safeNoteId: int("safeNoteId"), // Link to SAFE if applicable
+  termSheetId: int("termSheetId"), // Link to term sheet
+
+  // Pro rata from previous rounds
+  isProRataInvestment: boolean("isProRataInvestment").default(false),
+  proRataAmount: decimal("proRataAmount", { precision: 15, scale: 2 }),
+
+  // Lead investor details
+  isLeadInvestor: boolean("isLeadInvestor").default(false),
+  boardSeatRequested: boolean("boardSeatRequested").default(false),
+  observerSeatRequested: boolean("observerSeatRequested").default(false),
+
+  // Status tracking
+  status: varchar("status", { length: 50 }).default("interested").notNull(), // "interested", "reviewing", "committed", "docs_sent", "docs_signed", "wired", "closed", "declined"
+  declinedReason: varchar("declinedReason", { length: 500 }),
+
+  // Key dates
+  initialContactDate: timestamp("initialContactDate"),
+  commitmentDate: timestamp("commitmentDate"),
+  docsSignedDate: timestamp("docsSignedDate"),
+  wireDate: timestamp("wireDate"),
+
+  // Wire details
+  wireConfirmed: boolean("wireConfirmed").default(false),
+  wireAmount: decimal("wireAmount", { precision: 15, scale: 2 }),
+  wireReference: varchar("wireReference", { length: 100 }),
+
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type InvestorCommitment = typeof investorCommitments.$inferSelect;
+export type InsertInvestorCommitment = typeof investorCommitments.$inferInsert;
+
+// Closing Checklist Items
+export const closingChecklistItems = mysqlTable("closing_checklist_items", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+
+  // Link to funding round
+  fundingRoundId: int("fundingRoundId").notNull(),
+
+  // Checklist item details
+  category: varchar("category", { length: 50 }).notNull(), // "legal", "corporate", "investor", "regulatory", "financial"
+  name: varchar("name", { length: 200 }).notNull(),
+  description: text("description"),
+
+  // Responsibility
+  responsibleParty: varchar("responsibleParty", { length: 50 }), // "company", "investor", "legal_counsel", "other"
+  assignedTo: varchar("assignedTo", { length: 200 }),
+  assignedEmail: varchar("assignedEmail", { length: 255 }),
+
+  // Status
+  status: varchar("status", { length: 50 }).default("not_started").notNull(), // "not_started", "in_progress", "pending_review", "completed", "waived", "blocked"
+  priority: varchar("priority", { length: 20 }).default("medium"), // "low", "medium", "high", "critical"
+
+  // Dates
+  dueDate: timestamp("dueDate"),
+  completedDate: timestamp("completedDate"),
+  completedBy: int("completedBy"),
+
+  // Document link
+  documentUrl: varchar("documentUrl", { length: 500 }),
+  documentName: varchar("documentName", { length: 200 }),
+
+  // For investor-specific items
+  investorCommitmentId: int("investorCommitmentId"),
+
+  // Blocking issues
+  blockerNotes: text("blockerNotes"),
+  isBlocking: boolean("isBlocking").default(false),
+
+  // Order for display
+  sortOrder: int("sortOrder").default(0),
+
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ClosingChecklistItem = typeof closingChecklistItems.$inferSelect;
+export type InsertClosingChecklistItem = typeof closingChecklistItems.$inferInsert;
+
+// Closing Checklist Templates (reusable templates for different round types)
+export const closingChecklistTemplates = mysqlTable("closing_checklist_templates", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+
+  name: varchar("name", { length: 200 }).notNull(),
+  roundType: varchar("roundType", { length: 50 }).notNull(), // "seed", "series_a", "series_b", "bridge", "safe"
+  description: text("description"),
+
+  // Template items stored as JSON
+  items: text("items").notNull(), // JSON array of checklist items
+
+  isDefault: boolean("isDefault").default(false),
+  isActive: boolean("isActive").default(true),
+
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ClosingChecklistTemplate = typeof closingChecklistTemplates.$inferSelect;
+export type InsertClosingChecklistTemplate = typeof closingChecklistTemplates.$inferInsert;
+
+// Investor Updates (quarterly reports, board materials, etc.)
+export const investorUpdates = mysqlTable("investor_updates", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+
+  // Update details
+  title: varchar("title", { length: 200 }).notNull(),
+  updateType: varchar("updateType", { length: 50 }).notNull(), // "monthly", "quarterly", "annual", "board_deck", "ad_hoc", "fundraising"
+  period: varchar("period", { length: 50 }), // "Q1 2024", "January 2024", etc.
+
+  // Content
+  content: text("content"), // Rich text/markdown content
+  summary: text("summary"), // Executive summary
+
+  // Metrics snapshot
+  metricsJson: text("metricsJson"), // JSON with key metrics at time of update
+
+  // Attachments
+  attachments: text("attachments"), // JSON array of attachment URLs
+
+  // Status
+  status: varchar("status", { length: 50 }).default("draft").notNull(), // "draft", "review", "approved", "sent"
+
+  // Approval workflow
+  approvedBy: int("approvedBy"),
+  approvedAt: timestamp("approvedAt"),
+
+  // Distribution
+  sentAt: timestamp("sentAt"),
+  sentTo: text("sentTo"), // JSON array of recipient emails or groups
+
+  // Engagement tracking
+  totalRecipients: int("totalRecipients").default(0),
+  totalOpened: int("totalOpened").default(0),
+  totalClicked: int("totalClicked").default(0),
+
+  // Access control
+  isPublic: boolean("isPublic").default(false),
+  accessToken: varchar("accessToken", { length: 100 }), // For sharing via link
+
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type InvestorUpdate = typeof investorUpdates.$inferSelect;
+export type InsertInvestorUpdate = typeof investorUpdates.$inferInsert;
+
+// Investor Update Recipients (tracking who received/opened updates)
+export const investorUpdateRecipients = mysqlTable("investor_update_recipients", {
+  id: int("id").autoincrement().primaryKey(),
+  updateId: int("updateId").notNull(),
+
+  // Recipient
+  shareholderId: int("shareholderId"),
+  crmContactId: int("crmContactId"),
+  email: varchar("email", { length: 255 }).notNull(),
+  name: varchar("name", { length: 200 }),
+
+  // Engagement tracking
+  sentAt: timestamp("sentAt"),
+  openedAt: timestamp("openedAt"),
+  clickedAt: timestamp("clickedAt"),
+  openCount: int("openCount").default(0),
+
+  // Unsubscribe
+  unsubscribed: boolean("unsubscribed").default(false),
+  unsubscribedAt: timestamp("unsubscribedAt"),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type InvestorUpdateRecipient = typeof investorUpdateRecipients.$inferSelect;
+export type InsertInvestorUpdateRecipient = typeof investorUpdateRecipients.$inferInsert;
+
+// Investor Compliance Records
+export const investorCompliance = mysqlTable("investor_compliance", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+
+  // Link to investor
+  shareholderId: int("shareholderId"),
+  investorCommitmentId: int("investorCommitmentId"),
+  investorName: varchar("investorName", { length: 200 }).notNull(),
+  investorEmail: varchar("investorEmail", { length: 255 }),
+
+  // Accreditation status
+  accreditationType: varchar("accreditationType", { length: 50 }), // "individual_income", "individual_net_worth", "entity", "qualified_purchaser", "non_accredited"
+  accreditationVerified: boolean("accreditationVerified").default(false),
+  accreditationVerifiedDate: timestamp("accreditationVerifiedDate"),
+  accreditationExpiresDate: timestamp("accreditationExpiresDate"),
+  accreditationMethod: varchar("accreditationMethod", { length: 50 }), // "self_certified", "third_party_verified", "attorney_letter", "cpa_letter"
+
+  // Questionnaire
+  investorQuestionnaireCompleted: boolean("investorQuestionnaireCompleted").default(false),
+  investorQuestionnaireDate: timestamp("investorQuestionnaireDate"),
+  investorQuestionnaireUrl: varchar("investorQuestionnaireUrl", { length: 500 }),
+
+  // KYC/AML
+  kycCompleted: boolean("kycCompleted").default(false),
+  kycCompletedDate: timestamp("kycCompletedDate"),
+  kycProvider: varchar("kycProvider", { length: 100 }),
+  kycReference: varchar("kycReference", { length: 100 }),
+
+  // Tax documents
+  w9Received: boolean("w9Received").default(false),
+  w9ReceivedDate: timestamp("w9ReceivedDate"),
+  w8benReceived: boolean("w8benReceived").default(false),
+  w8benReceivedDate: timestamp("w8benReceivedDate"),
+  taxDocumentUrl: varchar("taxDocumentUrl", { length: 500 }),
+
+  // Investor type for compliance
+  isUSPerson: boolean("isUSPerson").default(true),
+  jurisdiction: varchar("jurisdiction", { length: 100 }),
+
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type InvestorCompliance = typeof investorCompliance.$inferSelect;
+export type InsertInvestorCompliance = typeof investorCompliance.$inferInsert;
+
+// SEC Form D Filings
+export const formDFilings = mysqlTable("form_d_filings", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+
+  // Link to funding round
+  fundingRoundId: int("fundingRoundId"),
+
+  // Filing details
+  filingType: varchar("filingType", { length: 50 }).notNull(), // "initial", "amendment"
+  exemptionType: varchar("exemptionType", { length: 50 }).notNull(), // "506b", "506c", "504", "regulation_a"
+
+  // SEC filing info
+  cikNumber: varchar("cikNumber", { length: 20 }),
+  accessionNumber: varchar("accessionNumber", { length: 30 }),
+  fileNumber: varchar("fileNumber", { length: 30 }),
+
+  // Offering details
+  offeringAmount: decimal("offeringAmount", { precision: 15, scale: 2 }),
+  amountSold: decimal("amountSold", { precision: 15, scale: 2 }),
+  investorsCount: int("investorsCount"),
+  accreditedInvestorsCount: int("accreditedInvestorsCount"),
+  nonAccreditedInvestorsCount: int("nonAccreditedInvestorsCount"),
+
+  // Dates
+  firstSaleDate: timestamp("firstSaleDate"),
+  filingDate: timestamp("filingDate"),
+  dueDate: timestamp("dueDate"), // 15 days after first sale
+
+  // Status
+  status: varchar("status", { length: 50 }).default("not_filed").notNull(), // "not_filed", "preparing", "filed", "accepted", "amended"
+
+  // Document
+  filingDocumentUrl: varchar("filingDocumentUrl", { length: 500 }),
+  confirmationUrl: varchar("confirmationUrl", { length: 500 }),
+
+  notes: text("notes"),
+  filedBy: int("filedBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type FormDFiling = typeof formDFilings.$inferSelect;
+export type InsertFormDFiling = typeof formDFilings.$inferInsert;
+
+// State Blue Sky Filings
+export const blueSkyFilings = mysqlTable("blue_sky_filings", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  fundingRoundId: int("fundingRoundId"),
+  formDFilingId: int("formDFilingId"),
+
+  // State info
+  state: varchar("state", { length: 50 }).notNull(),
+  stateCode: varchar("stateCode", { length: 2 }).notNull(),
+
+  // Filing requirements
+  filingRequired: boolean("filingRequired").default(true),
+  filingFee: decimal("filingFee", { precision: 10, scale: 2 }),
+
+  // Status
+  status: varchar("status", { length: 50 }).default("not_filed").notNull(), // "not_required", "not_filed", "filed", "accepted", "exempt"
+  exemptionType: varchar("exemptionType", { length: 100 }),
+
+  // Dates
+  filingDate: timestamp("filingDate"),
+  dueDate: timestamp("dueDate"),
+
+  // Document
+  filingDocumentUrl: varchar("filingDocumentUrl", { length: 500 }),
+  confirmationNumber: varchar("confirmationNumber", { length: 50 }),
+
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type BlueSkyFiling = typeof blueSkyFilings.$inferSelect;
+export type InsertBlueSkyFiling = typeof blueSkyFilings.$inferInsert;
+
+// Due Diligence Requests
+export const dueDiligenceRequests = mysqlTable("due_diligence_requests", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  fundingRoundId: int("fundingRoundId"),
+
+  // Requesting investor
+  investorCommitmentId: int("investorCommitmentId"),
+  investorName: varchar("investorName", { length: 200 }).notNull(),
+  investorEmail: varchar("investorEmail", { length: 255 }),
+
+  // Request details
+  category: varchar("category", { length: 50 }).notNull(), // "legal", "financial", "technical", "commercial", "hr", "ip"
+  requestItem: varchar("requestItem", { length: 300 }).notNull(),
+  description: text("description"),
+
+  // Priority and timing
+  priority: varchar("priority", { length: 20 }).default("medium"), // "low", "medium", "high", "urgent"
+  requestedDate: timestamp("requestedDate").defaultNow().notNull(),
+  dueDate: timestamp("dueDate"),
+
+  // Status
+  status: varchar("status", { length: 50 }).default("requested").notNull(), // "requested", "in_progress", "ready", "shared", "closed", "declined"
+
+  // Response
+  responseNotes: text("responseNotes"),
+  documentUrl: varchar("documentUrl", { length: 500 }),
+  dataRoomFolderId: int("dataRoomFolderId"), // Link to data room folder
+  sharedAt: timestamp("sharedAt"),
+  sharedBy: int("sharedBy"),
+
+  // If declined
+  declinedReason: varchar("declinedReason", { length: 500 }),
+
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type DueDiligenceRequest = typeof dueDiligenceRequests.$inferSelect;
+export type InsertDueDiligenceRequest = typeof dueDiligenceRequests.$inferInsert;

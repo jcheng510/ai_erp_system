@@ -98,7 +98,14 @@ import {
   InsertFundingInvestment, InsertValuation, InsertEquityScenario, InsertEquityDocument,
   InsertShareholderPortalToken, InsertShareholderNotification, InsertOptionPool,
   InsertSafeNote, InsertConvertibleNote,
-  InsertTermSheet, InsertTermSheetVersion, InsertTermSheetRecipient, InsertTermSheetComment
+  InsertTermSheet, InsertTermSheetVersion, InsertTermSheetRecipient, InsertTermSheetComment,
+  // Fundraising management
+  investorCommitments, closingChecklistItems, closingChecklistTemplates,
+  investorUpdates, investorUpdateRecipients, investorCompliance,
+  formDFilings, blueSkyFilings, dueDiligenceRequests,
+  InsertInvestorCommitment, InsertClosingChecklistItem, InsertClosingChecklistTemplate,
+  InsertInvestorUpdate, InsertInvestorUpdateRecipient, InsertInvestorCompliance,
+  InsertFormDFiling, InsertBlueSkyFiling, InsertDueDiligenceRequest
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -8823,4 +8830,433 @@ export async function getTermSheetVersion(termSheetId: number, version: number) 
       eq(termSheetVersions.version, version)
     ));
   return result[0] || null;
+}
+
+// ============ FUNDRAISING MANAGEMENT ============
+
+// Investor Commitments
+
+export async function getInvestorCommitments(fundingRoundId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  let query = db.select().from(investorCommitments);
+  if (fundingRoundId) {
+    query = query.where(eq(investorCommitments.fundingRoundId, fundingRoundId));
+  }
+  return query.orderBy(desc(investorCommitments.commitmentAmount));
+}
+
+export async function getInvestorCommitment(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(investorCommitments).where(eq(investorCommitments.id, id));
+  return result[0] || null;
+}
+
+export async function createInvestorCommitment(data: InsertInvestorCommitment) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(investorCommitments).values(data);
+  return { id: Number(result[0].insertId), ...data };
+}
+
+export async function updateInvestorCommitment(id: number, data: Partial<InsertInvestorCommitment>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(investorCommitments).set(data).where(eq(investorCommitments.id, id));
+  return getInvestorCommitment(id);
+}
+
+export async function deleteInvestorCommitment(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(investorCommitments).where(eq(investorCommitments.id, id));
+  return { success: true };
+}
+
+export async function getCommitmentStats(fundingRoundId: number) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const commitments = await db.select().from(investorCommitments)
+    .where(eq(investorCommitments.fundingRoundId, fundingRoundId));
+
+  let softCommitments = 0;
+  let hardCommitments = 0;
+  let signedCommitments = 0;
+  let wiredAmount = 0;
+  let totalAllocated = 0;
+
+  for (const c of commitments) {
+    const amount = parseFloat(c.commitmentAmount);
+    switch (c.commitmentType) {
+      case 'soft':
+        softCommitments += amount;
+        break;
+      case 'hard':
+        hardCommitments += amount;
+        break;
+      case 'signed':
+        signedCommitments += amount;
+        break;
+      case 'wired':
+        wiredAmount += amount;
+        break;
+    }
+    if (c.allocatedAmount) {
+      totalAllocated += parseFloat(c.allocatedAmount);
+    }
+  }
+
+  return {
+    totalInvestors: commitments.length,
+    softCommitments,
+    hardCommitments,
+    signedCommitments,
+    wiredAmount,
+    totalAllocated,
+    totalCommitted: softCommitments + hardCommitments + signedCommitments + wiredAmount,
+    leadInvestors: commitments.filter(c => c.isLeadInvestor).length,
+  };
+}
+
+// Closing Checklist
+
+export async function getClosingChecklistItems(fundingRoundId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(closingChecklistItems)
+    .where(eq(closingChecklistItems.fundingRoundId, fundingRoundId))
+    .orderBy(closingChecklistItems.sortOrder, closingChecklistItems.category);
+}
+
+export async function getClosingChecklistItem(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(closingChecklistItems).where(eq(closingChecklistItems.id, id));
+  return result[0] || null;
+}
+
+export async function createClosingChecklistItem(data: InsertClosingChecklistItem) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(closingChecklistItems).values(data);
+  return { id: Number(result[0].insertId), ...data };
+}
+
+export async function updateClosingChecklistItem(id: number, data: Partial<InsertClosingChecklistItem>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(closingChecklistItems).set(data).where(eq(closingChecklistItems.id, id));
+  return getClosingChecklistItem(id);
+}
+
+export async function deleteClosingChecklistItem(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(closingChecklistItems).where(eq(closingChecklistItems.id, id));
+  return { success: true };
+}
+
+export async function getChecklistProgress(fundingRoundId: number) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const items = await db.select().from(closingChecklistItems)
+    .where(eq(closingChecklistItems.fundingRoundId, fundingRoundId));
+
+  const total = items.length;
+  const completed = items.filter(i => i.status === 'completed' || i.status === 'waived').length;
+  const inProgress = items.filter(i => i.status === 'in_progress').length;
+  const blocked = items.filter(i => i.status === 'blocked' || i.isBlocking).length;
+  const overdue = items.filter(i => i.dueDate && new Date(i.dueDate) < new Date() && i.status !== 'completed').length;
+
+  return {
+    total,
+    completed,
+    inProgress,
+    blocked,
+    notStarted: total - completed - inProgress - blocked,
+    overdue,
+    percentComplete: total > 0 ? Math.round((completed / total) * 100) : 0,
+    byCategory: {
+      legal: items.filter(i => i.category === 'legal'),
+      corporate: items.filter(i => i.category === 'corporate'),
+      investor: items.filter(i => i.category === 'investor'),
+      regulatory: items.filter(i => i.category === 'regulatory'),
+      financial: items.filter(i => i.category === 'financial'),
+    },
+  };
+}
+
+// Checklist Templates
+
+export async function getClosingChecklistTemplates(roundType?: string) {
+  const db = await getDb();
+  if (!db) return [];
+
+  let query = db.select().from(closingChecklistTemplates).where(eq(closingChecklistTemplates.isActive, true));
+  if (roundType) {
+    query = query.where(and(eq(closingChecklistTemplates.isActive, true), eq(closingChecklistTemplates.roundType, roundType)));
+  }
+  return query;
+}
+
+export async function createClosingChecklistTemplate(data: InsertClosingChecklistTemplate) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(closingChecklistTemplates).values(data);
+  return { id: Number(result[0].insertId), ...data };
+}
+
+export async function applyChecklistTemplate(templateId: number, fundingRoundId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const template = await db.select().from(closingChecklistTemplates).where(eq(closingChecklistTemplates.id, templateId));
+  if (!template[0]) throw new Error("Template not found");
+
+  const items = JSON.parse(template[0].items) as Array<{
+    category: string;
+    name: string;
+    description?: string;
+    responsibleParty?: string;
+    priority?: string;
+    sortOrder?: number;
+  }>;
+
+  const createdItems = [];
+  for (const item of items) {
+    const result = await db.insert(closingChecklistItems).values({
+      fundingRoundId,
+      category: item.category,
+      name: item.name,
+      description: item.description,
+      responsibleParty: item.responsibleParty,
+      priority: item.priority || 'medium',
+      sortOrder: item.sortOrder || 0,
+      status: 'not_started',
+    });
+    createdItems.push({ id: Number(result[0].insertId), ...item });
+  }
+
+  return createdItems;
+}
+
+// Investor Updates
+
+export async function getInvestorUpdates(status?: string) {
+  const db = await getDb();
+  if (!db) return [];
+
+  let query = db.select().from(investorUpdates);
+  if (status) {
+    query = query.where(eq(investorUpdates.status, status));
+  }
+  return query.orderBy(desc(investorUpdates.createdAt));
+}
+
+export async function getInvestorUpdate(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(investorUpdates).where(eq(investorUpdates.id, id));
+  return result[0] || null;
+}
+
+export async function createInvestorUpdate(data: InsertInvestorUpdate) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const accessToken = crypto.randomUUID().replace(/-/g, '');
+  const result = await db.insert(investorUpdates).values({
+    ...data,
+    accessToken,
+  });
+  return { id: Number(result[0].insertId), ...data, accessToken };
+}
+
+export async function updateInvestorUpdate(id: number, data: Partial<InsertInvestorUpdate>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(investorUpdates).set(data).where(eq(investorUpdates.id, id));
+  return getInvestorUpdate(id);
+}
+
+export async function deleteInvestorUpdate(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(investorUpdateRecipients).where(eq(investorUpdateRecipients.updateId, id));
+  await db.delete(investorUpdates).where(eq(investorUpdates.id, id));
+  return { success: true };
+}
+
+export async function addInvestorUpdateRecipient(data: InsertInvestorUpdateRecipient) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(investorUpdateRecipients).values(data);
+  return { id: Number(result[0].insertId), ...data };
+}
+
+export async function getInvestorUpdateRecipients(updateId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(investorUpdateRecipients)
+    .where(eq(investorUpdateRecipients.updateId, updateId));
+}
+
+// Investor Compliance
+
+export async function getInvestorComplianceRecords(fundingRoundId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(investorCompliance).orderBy(investorCompliance.investorName);
+}
+
+export async function getInvestorComplianceRecord(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(investorCompliance).where(eq(investorCompliance.id, id));
+  return result[0] || null;
+}
+
+export async function createInvestorComplianceRecord(data: InsertInvestorCompliance) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(investorCompliance).values(data);
+  return { id: Number(result[0].insertId), ...data };
+}
+
+export async function updateInvestorComplianceRecord(id: number, data: Partial<InsertInvestorCompliance>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(investorCompliance).set(data).where(eq(investorCompliance.id, id));
+  return getInvestorComplianceRecord(id);
+}
+
+// Form D Filings
+
+export async function getFormDFilings(fundingRoundId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  let query = db.select().from(formDFilings);
+  if (fundingRoundId) {
+    query = query.where(eq(formDFilings.fundingRoundId, fundingRoundId));
+  }
+  return query.orderBy(desc(formDFilings.createdAt));
+}
+
+export async function getFormDFiling(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(formDFilings).where(eq(formDFilings.id, id));
+  return result[0] || null;
+}
+
+export async function createFormDFiling(data: InsertFormDFiling) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(formDFilings).values(data);
+  return { id: Number(result[0].insertId), ...data };
+}
+
+export async function updateFormDFiling(id: number, data: Partial<InsertFormDFiling>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(formDFilings).set(data).where(eq(formDFilings.id, id));
+  return getFormDFiling(id);
+}
+
+// Blue Sky Filings
+
+export async function getBlueSkyFilings(fundingRoundId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  let query = db.select().from(blueSkyFilings);
+  if (fundingRoundId) {
+    query = query.where(eq(blueSkyFilings.fundingRoundId, fundingRoundId));
+  }
+  return query.orderBy(blueSkyFilings.state);
+}
+
+export async function createBlueSkyFiling(data: InsertBlueSkyFiling) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(blueSkyFilings).values(data);
+  return { id: Number(result[0].insertId), ...data };
+}
+
+export async function updateBlueSkyFiling(id: number, data: Partial<InsertBlueSkyFiling>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(blueSkyFilings).set(data).where(eq(blueSkyFilings.id, id));
+}
+
+// Due Diligence Requests
+
+export async function getDueDiligenceRequests(fundingRoundId?: number, investorCommitmentId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  let conditions = [];
+  if (fundingRoundId) {
+    conditions.push(eq(dueDiligenceRequests.fundingRoundId, fundingRoundId));
+  }
+  if (investorCommitmentId) {
+    conditions.push(eq(dueDiligenceRequests.investorCommitmentId, investorCommitmentId));
+  }
+
+  let query = db.select().from(dueDiligenceRequests);
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions));
+  }
+  return query.orderBy(desc(dueDiligenceRequests.requestedDate));
+}
+
+export async function getDueDiligenceRequest(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(dueDiligenceRequests).where(eq(dueDiligenceRequests.id, id));
+  return result[0] || null;
+}
+
+export async function createDueDiligenceRequest(data: InsertDueDiligenceRequest) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(dueDiligenceRequests).values(data);
+  return { id: Number(result[0].insertId), ...data };
+}
+
+export async function updateDueDiligenceRequest(id: number, data: Partial<InsertDueDiligenceRequest>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(dueDiligenceRequests).set(data).where(eq(dueDiligenceRequests.id, id));
+  return getDueDiligenceRequest(id);
+}
+
+export async function deleteDueDiligenceRequest(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(dueDiligenceRequests).where(eq(dueDiligenceRequests.id, id));
+  return { success: true };
+}
+
+// Fundraising Dashboard Stats
+
+export async function getFundraisingDashboardStats(fundingRoundId: number) {
+  const commitmentStats = await getCommitmentStats(fundingRoundId);
+  const checklistProgress = await getChecklistProgress(fundingRoundId);
+  const ddRequests = await getDueDiligenceRequests(fundingRoundId);
+
+  return {
+    commitments: commitmentStats,
+    checklist: checklistProgress,
+    dueDiligence: {
+      total: ddRequests.length,
+      pending: ddRequests.filter(r => r.status === 'requested' || r.status === 'in_progress').length,
+      completed: ddRequests.filter(r => r.status === 'shared' || r.status === 'closed').length,
+    },
+  };
 }

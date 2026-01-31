@@ -12126,6 +12126,429 @@ Ask if they received the original request and if they can provide a quote.`;
       }),
     }),
   }),
+
+  // ============ FUNDRAISING MANAGEMENT ============
+  fundraising: router({
+    // Investor Commitments
+    commitments: router({
+      list: financeProcedure.input(z.object({
+        fundingRoundId: z.number().optional(),
+      })).query(async ({ input }) => {
+        return db.getInvestorCommitments(input.fundingRoundId);
+      }),
+
+      get: financeProcedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
+        return db.getInvestorCommitment(input.id);
+      }),
+
+      stats: financeProcedure.input(z.object({ fundingRoundId: z.number() })).query(async ({ input }) => {
+        return db.getCommitmentStats(input.fundingRoundId);
+      }),
+
+      create: financeProcedure.input(z.object({
+        fundingRoundId: z.number(),
+        investorName: z.string(),
+        investorType: z.enum(['angel', 'vc', 'corporate', 'family_office', 'strategic']).optional(),
+        investorEmail: z.string().email().optional(),
+        shareholderId: z.number().optional(),
+        crmContactId: z.number().optional(),
+        commitmentType: z.enum(['soft', 'hard', 'signed', 'wired']).optional(),
+        commitmentAmount: z.string(),
+        allocatedAmount: z.string().optional(),
+        instrumentType: z.enum(['preferred', 'common', 'safe', 'convertible_note']).optional(),
+        isLeadInvestor: z.boolean().optional(),
+        isProRataInvestment: z.boolean().optional(),
+        proRataAmount: z.string().optional(),
+        boardSeatRequested: z.boolean().optional(),
+        observerSeatRequested: z.boolean().optional(),
+        notes: z.string().optional(),
+      })).mutation(async ({ input }) => {
+        return db.createInvestorCommitment(input);
+      }),
+
+      update: financeProcedure.input(z.object({
+        id: z.number(),
+        data: z.object({
+          commitmentType: z.enum(['soft', 'hard', 'signed', 'wired']).optional(),
+          commitmentAmount: z.string().optional(),
+          allocatedAmount: z.string().optional(),
+          allocationConfirmed: z.boolean().optional(),
+          status: z.string().optional(),
+          wireConfirmed: z.boolean().optional(),
+          wireAmount: z.string().optional(),
+          wireReference: z.string().optional(),
+          wireDate: z.date().optional(),
+          docsSignedDate: z.date().optional(),
+          declinedReason: z.string().optional(),
+          notes: z.string().optional(),
+        }),
+      })).mutation(async ({ input }) => {
+        return db.updateInvestorCommitment(input.id, input.data);
+      }),
+
+      delete: financeProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+        return db.deleteInvestorCommitment(input.id);
+      }),
+    }),
+
+    // Closing Checklist
+    checklist: router({
+      list: financeProcedure.input(z.object({
+        fundingRoundId: z.number(),
+      })).query(async ({ input }) => {
+        return db.getClosingChecklistItems(input.fundingRoundId);
+      }),
+
+      get: financeProcedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
+        return db.getClosingChecklistItem(input.id);
+      }),
+
+      progress: financeProcedure.input(z.object({ fundingRoundId: z.number() })).query(async ({ input }) => {
+        return db.getChecklistProgress(input.fundingRoundId);
+      }),
+
+      create: financeProcedure.input(z.object({
+        fundingRoundId: z.number(),
+        category: z.enum(['legal', 'corporate', 'investor', 'regulatory', 'financial']),
+        name: z.string(),
+        description: z.string().optional(),
+        responsibleParty: z.enum(['company', 'investor', 'legal_counsel', 'other']).optional(),
+        assignedTo: z.string().optional(),
+        assignedEmail: z.string().email().optional(),
+        priority: z.enum(['low', 'medium', 'high', 'critical']).optional(),
+        dueDate: z.date().optional(),
+        investorCommitmentId: z.number().optional(),
+        sortOrder: z.number().optional(),
+        notes: z.string().optional(),
+      })).mutation(async ({ input }) => {
+        return db.createClosingChecklistItem(input);
+      }),
+
+      update: financeProcedure.input(z.object({
+        id: z.number(),
+        data: z.object({
+          status: z.enum(['not_started', 'in_progress', 'pending_review', 'completed', 'waived', 'blocked']).optional(),
+          completedDate: z.date().optional(),
+          documentUrl: z.string().optional(),
+          documentName: z.string().optional(),
+          blockerNotes: z.string().optional(),
+          isBlocking: z.boolean().optional(),
+          notes: z.string().optional(),
+        }),
+      })).mutation(async ({ input, ctx }) => {
+        const data = {
+          ...input.data,
+          completedBy: input.data.status === 'completed' ? ctx.user.id : undefined,
+          completedDate: input.data.status === 'completed' ? new Date() : input.data.completedDate,
+        };
+        return db.updateClosingChecklistItem(input.id, data);
+      }),
+
+      delete: financeProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+        return db.deleteClosingChecklistItem(input.id);
+      }),
+
+      // Templates
+      templates: financeProcedure.input(z.object({
+        roundType: z.string().optional(),
+      })).query(async ({ input }) => {
+        return db.getClosingChecklistTemplates(input.roundType);
+      }),
+
+      createTemplate: financeProcedure.input(z.object({
+        name: z.string(),
+        roundType: z.string(),
+        description: z.string().optional(),
+        items: z.string(), // JSON array
+      })).mutation(async ({ input, ctx }) => {
+        return db.createClosingChecklistTemplate({
+          ...input,
+          createdBy: ctx.user.id,
+        });
+      }),
+
+      applyTemplate: financeProcedure.input(z.object({
+        templateId: z.number(),
+        fundingRoundId: z.number(),
+      })).mutation(async ({ input }) => {
+        return db.applyChecklistTemplate(input.templateId, input.fundingRoundId);
+      }),
+    }),
+
+    // Investor Updates
+    updates: router({
+      list: financeProcedure.input(z.object({
+        status: z.string().optional(),
+      })).query(async ({ input }) => {
+        return db.getInvestorUpdates(input.status);
+      }),
+
+      get: financeProcedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
+        const update = await db.getInvestorUpdate(input.id);
+        if (!update) return null;
+        const recipients = await db.getInvestorUpdateRecipients(input.id);
+        return { ...update, recipients };
+      }),
+
+      create: financeProcedure.input(z.object({
+        title: z.string(),
+        updateType: z.enum(['monthly', 'quarterly', 'annual', 'board_deck', 'ad_hoc', 'fundraising']),
+        period: z.string().optional(),
+        content: z.string().optional(),
+        summary: z.string().optional(),
+        metricsJson: z.string().optional(),
+        attachments: z.string().optional(),
+      })).mutation(async ({ input, ctx }) => {
+        return db.createInvestorUpdate({
+          ...input,
+          createdBy: ctx.user.id,
+          status: 'draft',
+        });
+      }),
+
+      update: financeProcedure.input(z.object({
+        id: z.number(),
+        data: z.object({
+          title: z.string().optional(),
+          content: z.string().optional(),
+          summary: z.string().optional(),
+          metricsJson: z.string().optional(),
+          attachments: z.string().optional(),
+          status: z.enum(['draft', 'review', 'approved', 'sent']).optional(),
+        }),
+      })).mutation(async ({ input }) => {
+        return db.updateInvestorUpdate(input.id, input.data);
+      }),
+
+      approve: financeProcedure.input(z.object({ id: z.number() })).mutation(async ({ input, ctx }) => {
+        return db.updateInvestorUpdate(input.id, {
+          status: 'approved',
+          approvedBy: ctx.user.id,
+          approvedAt: new Date(),
+        });
+      }),
+
+      send: financeProcedure.input(z.object({
+        id: z.number(),
+        recipientEmails: z.array(z.string().email()),
+      })).mutation(async ({ input }) => {
+        // Add recipients and mark as sent
+        for (const email of input.recipientEmails) {
+          await db.addInvestorUpdateRecipient({
+            updateId: input.id,
+            email,
+            sentAt: new Date(),
+          });
+        }
+        return db.updateInvestorUpdate(input.id, {
+          status: 'sent',
+          sentAt: new Date(),
+          totalRecipients: input.recipientEmails.length,
+        });
+      }),
+
+      delete: financeProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+        return db.deleteInvestorUpdate(input.id);
+      }),
+    }),
+
+    // Compliance
+    compliance: router({
+      list: financeProcedure.query(async () => {
+        return db.getInvestorComplianceRecords();
+      }),
+
+      get: financeProcedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
+        return db.getInvestorComplianceRecord(input.id);
+      }),
+
+      create: financeProcedure.input(z.object({
+        investorName: z.string(),
+        investorEmail: z.string().email().optional(),
+        shareholderId: z.number().optional(),
+        investorCommitmentId: z.number().optional(),
+        accreditationType: z.enum(['individual_income', 'individual_net_worth', 'entity', 'qualified_purchaser', 'non_accredited']).optional(),
+        accreditationMethod: z.enum(['self_certified', 'third_party_verified', 'attorney_letter', 'cpa_letter']).optional(),
+        isUSPerson: z.boolean().optional(),
+        jurisdiction: z.string().optional(),
+        notes: z.string().optional(),
+      })).mutation(async ({ input }) => {
+        return db.createInvestorComplianceRecord(input);
+      }),
+
+      update: financeProcedure.input(z.object({
+        id: z.number(),
+        data: z.object({
+          accreditationType: z.string().optional(),
+          accreditationVerified: z.boolean().optional(),
+          accreditationVerifiedDate: z.date().optional(),
+          accreditationExpiresDate: z.date().optional(),
+          investorQuestionnaireCompleted: z.boolean().optional(),
+          investorQuestionnaireDate: z.date().optional(),
+          investorQuestionnaireUrl: z.string().optional(),
+          kycCompleted: z.boolean().optional(),
+          kycCompletedDate: z.date().optional(),
+          kycProvider: z.string().optional(),
+          kycReference: z.string().optional(),
+          w9Received: z.boolean().optional(),
+          w9ReceivedDate: z.date().optional(),
+          w8benReceived: z.boolean().optional(),
+          w8benReceivedDate: z.date().optional(),
+          taxDocumentUrl: z.string().optional(),
+          notes: z.string().optional(),
+        }),
+      })).mutation(async ({ input }) => {
+        return db.updateInvestorComplianceRecord(input.id, input.data);
+      }),
+    }),
+
+    // Form D Filings
+    formD: router({
+      list: financeProcedure.input(z.object({
+        fundingRoundId: z.number().optional(),
+      })).query(async ({ input }) => {
+        return db.getFormDFilings(input.fundingRoundId);
+      }),
+
+      get: financeProcedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
+        return db.getFormDFiling(input.id);
+      }),
+
+      create: financeProcedure.input(z.object({
+        fundingRoundId: z.number().optional(),
+        filingType: z.enum(['initial', 'amendment']),
+        exemptionType: z.enum(['506b', '506c', '504', 'regulation_a']),
+        offeringAmount: z.string().optional(),
+        firstSaleDate: z.date().optional(),
+        notes: z.string().optional(),
+      })).mutation(async ({ input }) => {
+        // Calculate due date (15 days after first sale)
+        const dueDate = input.firstSaleDate ? new Date(input.firstSaleDate.getTime() + 15 * 24 * 60 * 60 * 1000) : undefined;
+        return db.createFormDFiling({
+          ...input,
+          dueDate,
+          status: 'not_filed',
+        });
+      }),
+
+      update: financeProcedure.input(z.object({
+        id: z.number(),
+        data: z.object({
+          status: z.enum(['not_filed', 'preparing', 'filed', 'accepted', 'amended']).optional(),
+          cikNumber: z.string().optional(),
+          accessionNumber: z.string().optional(),
+          fileNumber: z.string().optional(),
+          amountSold: z.string().optional(),
+          investorsCount: z.number().optional(),
+          accreditedInvestorsCount: z.number().optional(),
+          nonAccreditedInvestorsCount: z.number().optional(),
+          filingDate: z.date().optional(),
+          filingDocumentUrl: z.string().optional(),
+          confirmationUrl: z.string().optional(),
+          notes: z.string().optional(),
+        }),
+      })).mutation(async ({ input, ctx }) => {
+        const data = {
+          ...input.data,
+          filedBy: input.data.status === 'filed' ? ctx.user.id : undefined,
+        };
+        return db.updateFormDFiling(input.id, data);
+      }),
+    }),
+
+    // Blue Sky Filings
+    blueSky: router({
+      list: financeProcedure.input(z.object({
+        fundingRoundId: z.number().optional(),
+      })).query(async ({ input }) => {
+        return db.getBlueSkyFilings(input.fundingRoundId);
+      }),
+
+      create: financeProcedure.input(z.object({
+        fundingRoundId: z.number().optional(),
+        formDFilingId: z.number().optional(),
+        state: z.string(),
+        stateCode: z.string(),
+        filingRequired: z.boolean().optional(),
+        filingFee: z.string().optional(),
+        exemptionType: z.string().optional(),
+        dueDate: z.date().optional(),
+        notes: z.string().optional(),
+      })).mutation(async ({ input }) => {
+        return db.createBlueSkyFiling(input);
+      }),
+
+      update: financeProcedure.input(z.object({
+        id: z.number(),
+        data: z.object({
+          status: z.enum(['not_required', 'not_filed', 'filed', 'accepted', 'exempt']).optional(),
+          filingDate: z.date().optional(),
+          filingDocumentUrl: z.string().optional(),
+          confirmationNumber: z.string().optional(),
+          notes: z.string().optional(),
+        }),
+      })).mutation(async ({ input }) => {
+        return db.updateBlueSkyFiling(input.id, input.data);
+      }),
+    }),
+
+    // Due Diligence
+    dueDiligence: router({
+      list: financeProcedure.input(z.object({
+        fundingRoundId: z.number().optional(),
+        investorCommitmentId: z.number().optional(),
+      })).query(async ({ input }) => {
+        return db.getDueDiligenceRequests(input.fundingRoundId, input.investorCommitmentId);
+      }),
+
+      get: financeProcedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
+        return db.getDueDiligenceRequest(input.id);
+      }),
+
+      create: financeProcedure.input(z.object({
+        fundingRoundId: z.number().optional(),
+        investorCommitmentId: z.number().optional(),
+        investorName: z.string(),
+        investorEmail: z.string().email().optional(),
+        category: z.enum(['legal', 'financial', 'technical', 'commercial', 'hr', 'ip']),
+        requestItem: z.string(),
+        description: z.string().optional(),
+        priority: z.enum(['low', 'medium', 'high', 'urgent']).optional(),
+        dueDate: z.date().optional(),
+      })).mutation(async ({ input }) => {
+        return db.createDueDiligenceRequest(input);
+      }),
+
+      update: financeProcedure.input(z.object({
+        id: z.number(),
+        data: z.object({
+          status: z.enum(['requested', 'in_progress', 'ready', 'shared', 'closed', 'declined']).optional(),
+          responseNotes: z.string().optional(),
+          documentUrl: z.string().optional(),
+          dataRoomFolderId: z.number().optional(),
+          declinedReason: z.string().optional(),
+        }),
+      })).mutation(async ({ input, ctx }) => {
+        const data = {
+          ...input.data,
+          sharedBy: input.data.status === 'shared' ? ctx.user.id : undefined,
+          sharedAt: input.data.status === 'shared' ? new Date() : undefined,
+        };
+        return db.updateDueDiligenceRequest(input.id, data);
+      }),
+
+      delete: financeProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+        return db.deleteDueDiligenceRequest(input.id);
+      }),
+    }),
+
+    // Dashboard Stats
+    dashboardStats: financeProcedure.input(z.object({
+      fundingRoundId: z.number(),
+    })).query(async ({ input }) => {
+      return db.getFundraisingDashboardStats(input.fundingRoundId);
+    }),
+  }),
 });
 
 // Helper function to calculate next generation date for recurring invoices
