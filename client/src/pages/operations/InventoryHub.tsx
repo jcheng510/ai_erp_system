@@ -5,14 +5,16 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { 
-  Package, 
-  MapPin, 
-  AlertTriangle, 
-  Search, 
+import {
+  Package,
+  MapPin,
+  AlertTriangle,
+  Search,
   ChevronRight,
   ChevronDown,
   Truck,
@@ -29,9 +31,15 @@ import {
   AlertCircle,
   RefreshCw,
   Plus,
+  FileText,
+  ExternalLink,
+  Loader2,
+  Ship,
+  Plane,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { QuickCreateDialog } from "@/components/QuickCreateDialog";
+import { Link } from "wouter";
 
 // Types
 interface InventoryItem {
@@ -85,6 +93,16 @@ export default function InventoryHub() {
   const [selectedItem, setSelectedItem] = useState<any>(null);
   const [showNewInventoryDialog, setShowNewInventoryDialog] = useState(false);
   const [showNewLocationDialog, setShowNewLocationDialog] = useState(false);
+  const [showWorkOrderDialog, setShowWorkOrderDialog] = useState(false);
+  const [selectedWorkOrder, setSelectedWorkOrder] = useState<any>(null);
+  const [showQcHoldDialog, setShowQcHoldDialog] = useState(false);
+  const [qcHoldReason, setQcHoldReason] = useState("");
+  const [showExceptionDialog, setShowExceptionDialog] = useState(false);
+  const [exceptionType, setExceptionType] = useState("yield_variance");
+  const [exceptionDescription, setExceptionDescription] = useState("");
+  const [selectedWorkOrderForException, setSelectedWorkOrderForException] = useState<any>(null);
+  const [showTransferDetailDialog, setShowTransferDetailDialog] = useState(false);
+  const [selectedTransfer, setSelectedTransfer] = useState<any>(null);
 
   // Data fetching
   const { data: warehouses, isLoading: warehousesLoading } = trpc.warehouses.list.useQuery();
@@ -93,6 +111,7 @@ export default function InventoryHub() {
   const { data: workOrders, isLoading: workOrdersLoading } = trpc.workOrders.list.useQuery();
   const { data: transfers, isLoading: transfersLoading } = trpc.transfers.list.useQuery();
   const { data: alerts, isLoading: alertsLoading } = trpc.alerts.list.useQuery({ status: "open" });
+  const { data: freightBookings } = trpc.freight.bookings.list.useQuery({});
   // Lots and balances will be fetched from inventory data
 
   const utils = trpc.useUtils();
@@ -120,6 +139,22 @@ export default function InventoryHub() {
     onSuccess: () => {
       toast.success("Exception resolved!");
       utils.alerts.invalidate();
+    },
+    onError: (err: any) => toast.error(err.message),
+  });
+
+  const createAlert = trpc.alerts.create.useMutation({
+    onSuccess: () => {
+      toast.success("Alert created!");
+      utils.alerts.invalidate();
+    },
+    onError: (err: any) => toast.error(err.message),
+  });
+
+  const updateInventory = trpc.inventory.update.useMutation({
+    onSuccess: () => {
+      toast.success("Inventory updated!");
+      utils.inventory.invalidate();
     },
     onError: (err: any) => toast.error(err.message),
   });
@@ -314,6 +349,82 @@ export default function InventoryHub() {
 
   const handleResolveException = (alertId: number) => {
     resolveAlert.mutate({ id: alertId, notes: "Resolved via Inventory Hub" });
+  };
+
+  const handleViewWorkOrderDetails = (wo: any) => {
+    setSelectedWorkOrder(wo);
+    setShowWorkOrderDialog(true);
+  };
+
+  const handleQcHold = (item: any) => {
+    setSelectedItem(item);
+    setQcHoldReason("");
+    setShowQcHoldDialog(true);
+  };
+
+  const submitQcHold = () => {
+    if (!selectedItem || !qcHoldReason.trim()) {
+      toast.error("Please provide a reason for QC hold");
+      return;
+    }
+    createAlert.mutate({
+      type: "quality_issue",
+      severity: "warning",
+      title: `QC Hold: ${selectedItem.product?.name || selectedItem.rawMaterial?.name || "Unknown Item"}`,
+      description: qcHoldReason,
+      entityType: "inventory",
+      entityId: selectedItem.id,
+    });
+    setShowQcHoldDialog(false);
+    setQcHoldReason("");
+    setSelectedItem(null);
+  };
+
+  const handleReportException = (wo: any) => {
+    setSelectedWorkOrderForException(wo);
+    setExceptionType("yield_variance");
+    setExceptionDescription("");
+    setShowExceptionDialog(true);
+  };
+
+  const submitException = () => {
+    if (!selectedWorkOrderForException || !exceptionDescription.trim()) {
+      toast.error("Please provide a description for the exception");
+      return;
+    }
+    // Map exception types to valid alert types
+    const alertTypeMap: Record<string, string> = {
+      yield_variance: "yield_variance",
+      blocked_production: "shortage",
+      qc_hold: "quality_issue",
+      equipment_failure: "shortage",
+      material_shortage: "shortage",
+    };
+    const alertType = alertTypeMap[exceptionType] || "yield_variance";
+    createAlert.mutate({
+      type: alertType as any,
+      severity: exceptionType === "blocked_production" || exceptionType === "material_shortage" ? "critical" : "warning",
+      title: `${exceptionType.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase())}: WO-${selectedWorkOrderForException.id}`,
+      description: exceptionDescription,
+      entityType: "workOrder",
+      entityId: selectedWorkOrderForException.id,
+    });
+    setShowExceptionDialog(false);
+    setExceptionDescription("");
+    setSelectedWorkOrderForException(null);
+  };
+
+  const handleViewTransferDetails = (transfer: any) => {
+    setSelectedTransfer(transfer);
+    setShowTransferDetailDialog(true);
+  };
+
+  // Find freight booking for a transfer
+  const getFreightBookingForTransfer = (transfer: any) => {
+    return freightBookings?.find((booking: any) =>
+      booking.shipmentId === transfer.id ||
+      booking.referenceNumber === transfer.transferNumber
+    );
   };
 
   const getTypeIcon = (type: string) => {
@@ -607,11 +718,16 @@ export default function InventoryHub() {
                         
                         {/* Actions */}
                         <div className="flex justify-end gap-2 mt-4">
-                          <Button size="sm" variant="outline" onClick={() => toast.info("View work order details")}>
+                          <Button size="sm" variant="outline" onClick={() => handleViewWorkOrderDetails(wo)}>
+                            <FileText className="h-4 w-4 mr-1" />
                             View Details
                           </Button>
-                          <Button 
-                            size="sm" 
+                          <Button size="sm" variant="outline" onClick={() => handleReportException(wo)}>
+                            <AlertTriangle className="h-4 w-4 mr-1" />
+                            Exception
+                          </Button>
+                          <Button
+                            size="sm"
                             className="bg-green-600 hover:bg-green-700"
                             onClick={() => {
                               updateWorkOrder.mutate({ id: wo.id, status: "completed" });
@@ -645,33 +761,62 @@ export default function InventoryHub() {
                     {transfers?.filter((t: any) => t.status === "in_transit").map((transfer: any) => {
                       const fromWarehouse = warehouses?.find((w: any) => w.id === transfer.fromWarehouseId);
                       const toWarehouse = warehouses?.find((w: any) => w.id === transfer.toWarehouseId);
+                      const freightBooking = getFreightBookingForTransfer(transfer);
                       return (
-                        <div key={transfer.id} className="flex items-center justify-between p-4 border rounded-lg bg-blue-50/50">
-                          <div className="flex items-center gap-4">
-                            <div className="p-2 bg-blue-100 rounded-lg">
-                              <Truck className="h-5 w-5 text-blue-600" />
-                            </div>
-                            <div>
-                              <p className="font-medium">{transfer.transferNumber}</p>
-                              <p className="text-sm text-muted-foreground">
-                                {fromWarehouse?.name || "Unknown"} → {toWarehouse?.name || "Unknown"}
-                              </p>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-4">
-                            {transfer.expectedArrival && (
-                              <div className="text-right">
-                                <p className="text-sm text-muted-foreground">ETA</p>
-                                <p className="font-medium">{new Date(transfer.expectedArrival).toLocaleDateString()}</p>
+                        <div
+                          key={transfer.id}
+                          className="p-4 border rounded-lg bg-blue-50/50 hover:bg-blue-100/50 cursor-pointer transition-colors"
+                          onClick={() => handleViewTransferDetails(transfer)}
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-4">
+                              <div className="p-2 bg-blue-100 rounded-lg">
+                                {freightBooking?.mode === "ocean" ? <Ship className="h-5 w-5 text-blue-600" /> :
+                                 freightBooking?.mode === "air" ? <Plane className="h-5 w-5 text-blue-600" /> :
+                                 <Truck className="h-5 w-5 text-blue-600" />}
                               </div>
-                            )}
-                            <Button 
-                              className="bg-green-600 hover:bg-green-700"
-                              onClick={() => handleReceiveShipment(transfer.id)}
-                            >
-                              <CheckCircle className="h-4 w-4 mr-2" />
-                              One-Click Receive
-                            </Button>
+                              <div>
+                                <p className="font-medium">{transfer.transferNumber}</p>
+                                <p className="text-sm text-muted-foreground">
+                                  {fromWarehouse?.name || "Unknown"} → {toWarehouse?.name || "Unknown"}
+                                </p>
+                                {freightBooking && (
+                                  <div className="flex items-center gap-2 mt-1">
+                                    <Badge variant="outline" className="text-xs">
+                                      {freightBooking.carrier?.name || "Carrier TBD"}
+                                    </Badge>
+                                    {freightBooking.trackingNumber && (
+                                      <Badge variant="secondary" className="text-xs">
+                                        {freightBooking.trackingNumber}
+                                      </Badge>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-4">
+                              {transfer.expectedArrival && (
+                                <div className="text-right">
+                                  <p className="text-sm text-muted-foreground">ETA</p>
+                                  <p className="font-medium">{new Date(transfer.expectedArrival).toLocaleDateString()}</p>
+                                </div>
+                              )}
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={(e) => { e.stopPropagation(); handleViewTransferDetails(transfer); }}
+                              >
+                                <ExternalLink className="h-4 w-4 mr-1" />
+                                Details
+                              </Button>
+                              <Button
+                                className="bg-green-600 hover:bg-green-700"
+                                onClick={(e) => { e.stopPropagation(); handleReceiveShipment(transfer.id); }}
+                              >
+                                <CheckCircle className="h-4 w-4 mr-2" />
+                                One-Click Receive
+                              </Button>
+                            </div>
                           </div>
                         </div>
                       );
@@ -743,7 +888,7 @@ export default function InventoryHub() {
                             <Factory className="h-4 w-4 mr-1" />
                             Allocate
                           </Button>
-                          <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); toast.info("QC Hold feature coming soon"); }}>
+                          <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); handleQcHold(item); }}>
                             <Shield className="h-4 w-4 mr-1" />
                             QC Hold
                           </Button>
@@ -1009,7 +1154,7 @@ export default function InventoryHub() {
                         Complete
                       </Button>
                     )}
-                    <Button size="sm" variant="outline" onClick={() => toast.info("Exception reporting coming soon")}>
+                    <Button size="sm" variant="outline" onClick={() => handleReportException(wo)}>
                       <AlertTriangle className="h-4 w-4 mr-1" />
                       Exception
                     </Button>
@@ -1036,38 +1181,79 @@ export default function InventoryHub() {
               {inTransitShipments.map((shipment: any) => {
                 const fromWarehouse = warehouses?.find((w: any) => w.id === shipment.fromWarehouseId);
                 const toWarehouse = warehouses?.find((w: any) => w.id === shipment.toWarehouseId);
-                
+                const freightBooking = getFreightBookingForTransfer(shipment);
+
                 return (
-                  <div key={shipment.id} className="flex items-center justify-between p-4 border rounded-lg bg-blue-50/50 border-blue-200">
-                    <div className="flex items-center gap-4">
-                      <div className="p-2 bg-blue-100 rounded-lg">
-                        <Truck className="h-5 w-5 text-blue-600" />
-                      </div>
-                      <div>
-                        <p className="font-medium">Shipment #{shipment.transferNumber}</p>
-                        <p className="text-sm text-muted-foreground">
-                          {fromWarehouse?.name || "Unknown"} → {toWarehouse?.name || "Unknown"}
-                        </p>
-                        <div className="flex items-center gap-2 mt-1">
-                          {shipment.items?.map((item: any, idx: number) => (
-                            <Badge key={idx} variant="outline" className="text-xs">
-                              {item.product?.name || "Item"}: {item.shippedQuantity || item.requestedQuantity}
-                            </Badge>
-                          ))}
+                  <div
+                    key={shipment.id}
+                    className="p-4 border rounded-lg bg-blue-50/50 border-blue-200 hover:bg-blue-100/50 cursor-pointer transition-colors"
+                    onClick={() => handleViewTransferDetails(shipment)}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-4">
+                        <div className="p-2 bg-blue-100 rounded-lg">
+                          {freightBooking?.mode === "ocean" ? <Ship className="h-5 w-5 text-blue-600" /> :
+                           freightBooking?.mode === "air" ? <Plane className="h-5 w-5 text-blue-600" /> :
+                           <Truck className="h-5 w-5 text-blue-600" />}
+                        </div>
+                        <div>
+                          <p className="font-medium">Shipment #{shipment.transferNumber}</p>
+                          <p className="text-sm text-muted-foreground">
+                            {fromWarehouse?.name || "Unknown"} → {toWarehouse?.name || "Unknown"}
+                          </p>
+                          <div className="flex items-center gap-2 mt-1">
+                            {shipment.items?.slice(0, 2).map((item: any, idx: number) => (
+                              <Badge key={idx} variant="outline" className="text-xs">
+                                {item.product?.name || "Item"}: {item.shippedQuantity || item.requestedQuantity}
+                              </Badge>
+                            ))}
+                            {shipment.items?.length > 2 && (
+                              <Badge variant="secondary" className="text-xs">+{shipment.items.length - 2} more</Badge>
+                            )}
+                          </div>
+                          {freightBooking && (
+                            <div className="flex items-center gap-2 mt-1">
+                              <Badge variant="outline" className="text-xs bg-blue-100">
+                                {freightBooking.carrier?.name || "Carrier"}
+                              </Badge>
+                              {freightBooking.trackingNumber && (
+                                <Badge variant="secondary" className="text-xs">
+                                  Tracking: {freightBooking.trackingNumber}
+                                </Badge>
+                              )}
+                              <Badge className={cn(
+                                "text-xs",
+                                freightBooking.status === "in_transit" ? "bg-purple-500" :
+                                freightBooking.status === "delivered" ? "bg-green-500" :
+                                "bg-gray-500"
+                              )}>
+                                {freightBooking.status?.replace(/_/g, " ")}
+                              </Badge>
+                            </div>
+                          )}
                         </div>
                       </div>
-                    </div>
-                    <div className="flex items-center gap-4">
-                      {shipment.expectedArrival && (
-                        <div className="text-right">
-                          <p className="text-sm text-muted-foreground">ETA</p>
-                          <p className="font-medium">{new Date(shipment.expectedArrival).toLocaleDateString()}</p>
-                        </div>
-                      )}
-                      <Button onClick={() => handleReceiveShipment(shipment.id)} disabled={receiveTransfer.isPending}>
-                        <CheckCircle className="h-4 w-4 mr-2" />
-                        RECEIVE
-                      </Button>
+                      <div className="flex items-center gap-4">
+                        {shipment.expectedArrival && (
+                          <div className="text-right">
+                            <p className="text-sm text-muted-foreground">ETA</p>
+                            <p className="font-medium">{new Date(shipment.expectedArrival).toLocaleDateString()}</p>
+                          </div>
+                        )}
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={(e) => { e.stopPropagation(); handleViewTransferDetails(shipment); }}
+                        >
+                          <ExternalLink className="h-4 w-4 mr-1" />
+                          Details
+                        </Button>
+                        <Button onClick={(e) => { e.stopPropagation(); handleReceiveShipment(shipment.id); }} disabled={receiveTransfer.isPending}>
+                          {receiveTransfer.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                          <CheckCircle className="h-4 w-4 mr-2" />
+                          RECEIVE
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 );
@@ -1193,6 +1379,373 @@ export default function InventoryHub() {
           setShowNewLocationDialog(false);
         }}
       />
+
+      {/* Work Order Detail Dialog */}
+      <Dialog open={showWorkOrderDialog} onOpenChange={setShowWorkOrderDialog}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Factory className="h-5 w-5" />
+              Work Order Details
+            </DialogTitle>
+            <DialogDescription>
+              {selectedWorkOrder?.workOrderNumber || `WO-${selectedWorkOrder?.id}`}
+            </DialogDescription>
+          </DialogHeader>
+          {selectedWorkOrder && (
+            <div className="space-y-4">
+              {/* Status and Basic Info */}
+              <div className="flex items-center justify-between">
+                <Badge className={cn(
+                  selectedWorkOrder.status === "completed" ? "bg-green-500" :
+                  selectedWorkOrder.status === "in_progress" ? "bg-blue-500" :
+                  selectedWorkOrder.status === "cancelled" ? "bg-red-500" :
+                  "bg-yellow-500"
+                )}>
+                  {selectedWorkOrder.status}
+                </Badge>
+                <span className="text-sm text-muted-foreground">
+                  Created: {new Date(selectedWorkOrder.createdAt).toLocaleDateString()}
+                </span>
+              </div>
+
+              {/* Product Information */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="bg-muted/50 rounded-lg p-3">
+                  <p className="text-xs text-muted-foreground">Product</p>
+                  <p className="font-medium">{selectedWorkOrder.product?.name || selectedWorkOrder.bom?.product?.name || "Unknown"}</p>
+                </div>
+                <div className="bg-muted/50 rounded-lg p-3">
+                  <p className="text-xs text-muted-foreground">Quantity</p>
+                  <p className="font-medium">{selectedWorkOrder.quantity} {selectedWorkOrder.unit || "EA"}</p>
+                </div>
+                <div className="bg-muted/50 rounded-lg p-3">
+                  <p className="text-xs text-muted-foreground">Start Date</p>
+                  <p className="font-medium">{selectedWorkOrder.startDate ? new Date(selectedWorkOrder.startDate).toLocaleDateString() : "Not started"}</p>
+                </div>
+                <div className="bg-muted/50 rounded-lg p-3">
+                  <p className="text-xs text-muted-foreground">Due Date</p>
+                  <p className="font-medium">{selectedWorkOrder.dueDate ? new Date(selectedWorkOrder.dueDate).toLocaleDateString() : "Not set"}</p>
+                </div>
+              </div>
+
+              {/* Progress */}
+              {selectedWorkOrder.completedQuantity > 0 && (
+                <div>
+                  <div className="flex justify-between text-sm mb-1">
+                    <span>Progress</span>
+                    <span>{Math.round((selectedWorkOrder.completedQuantity / selectedWorkOrder.quantity) * 100)}%</span>
+                  </div>
+                  <div className="h-3 bg-gray-200 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-green-500 rounded-full transition-all"
+                      style={{ width: `${(selectedWorkOrder.completedQuantity / selectedWorkOrder.quantity) * 100}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* BOM Components */}
+              {selectedWorkOrder.bom?.components && selectedWorkOrder.bom.components.length > 0 && (
+                <div>
+                  <h4 className="font-medium mb-2">Bill of Materials</h4>
+                  <div className="border rounded-lg overflow-hidden">
+                    <table className="w-full text-sm">
+                      <thead className="bg-muted">
+                        <tr>
+                          <th className="text-left p-2">Component</th>
+                          <th className="text-right p-2">Required Qty</th>
+                          <th className="text-right p-2">Unit</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedWorkOrder.bom.components.map((comp: any, idx: number) => (
+                          <tr key={idx} className="border-t">
+                            <td className="p-2">{comp.rawMaterial?.name || comp.name || "Component"}</td>
+                            <td className="text-right p-2">{comp.quantity}</td>
+                            <td className="text-right p-2">{comp.unit || "LB"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* Notes */}
+              {selectedWorkOrder.notes && (
+                <div>
+                  <h4 className="font-medium mb-1">Notes</h4>
+                  <p className="text-sm text-muted-foreground bg-muted/30 p-2 rounded">{selectedWorkOrder.notes}</p>
+                </div>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowWorkOrderDialog(false)}>Close</Button>
+            {selectedWorkOrder?.status === "pending" && (
+              <Button onClick={() => { updateWorkOrder.mutate({ id: selectedWorkOrder.id, status: "in_progress" }); setShowWorkOrderDialog(false); }}>
+                <Play className="h-4 w-4 mr-1" /> Start Production
+              </Button>
+            )}
+            {selectedWorkOrder?.status === "in_progress" && (
+              <Button onClick={() => { updateWorkOrder.mutate({ id: selectedWorkOrder.id, status: "completed" }); setShowWorkOrderDialog(false); }}>
+                <CheckCircle className="h-4 w-4 mr-1" /> Complete
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* QC Hold Dialog */}
+      <Dialog open={showQcHoldDialog} onOpenChange={setShowQcHoldDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Shield className="h-5 w-5 text-yellow-500" />
+              Place on QC Hold
+            </DialogTitle>
+            <DialogDescription>
+              Place {selectedItem?.product?.name || selectedItem?.rawMaterial?.name || "item"} on quality control hold
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label>Reason for Hold *</Label>
+              <Textarea
+                value={qcHoldReason}
+                onChange={(e) => setQcHoldReason(e.target.value)}
+                placeholder="Describe the reason for placing this item on QC hold..."
+                rows={4}
+              />
+            </div>
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+              <p className="text-sm text-yellow-800">
+                Placing an item on QC hold will create an alert and prevent it from being used in production until the hold is resolved.
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowQcHoldDialog(false)}>Cancel</Button>
+            <Button
+              onClick={submitQcHold}
+              disabled={createAlert.isPending}
+              className="bg-yellow-500 hover:bg-yellow-600"
+            >
+              {createAlert.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              <Shield className="h-4 w-4 mr-1" />
+              Place on Hold
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Exception Reporting Dialog */}
+      <Dialog open={showExceptionDialog} onOpenChange={setShowExceptionDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-orange-500" />
+              Report Exception
+            </DialogTitle>
+            <DialogDescription>
+              Report an issue with {selectedWorkOrderForException?.workOrderNumber || `WO-${selectedWorkOrderForException?.id}`}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label>Exception Type *</Label>
+              <Select value={exceptionType} onValueChange={setExceptionType}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="yield_variance">Yield Variance</SelectItem>
+                  <SelectItem value="blocked_production">Blocked Production</SelectItem>
+                  <SelectItem value="qc_hold">Quality Issue</SelectItem>
+                  <SelectItem value="equipment_failure">Equipment Failure</SelectItem>
+                  <SelectItem value="material_shortage">Material Shortage</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Description *</Label>
+              <Textarea
+                value={exceptionDescription}
+                onChange={(e) => setExceptionDescription(e.target.value)}
+                placeholder="Describe the issue in detail..."
+                rows={4}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowExceptionDialog(false)}>Cancel</Button>
+            <Button
+              onClick={submitException}
+              disabled={createAlert.isPending}
+              className="bg-orange-500 hover:bg-orange-600"
+            >
+              {createAlert.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              <AlertTriangle className="h-4 w-4 mr-1" />
+              Report Exception
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Transfer Detail Dialog */}
+      <Dialog open={showTransferDetailDialog} onOpenChange={setShowTransferDetailDialog}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Truck className="h-5 w-5" />
+              Transfer Details
+            </DialogTitle>
+            <DialogDescription>
+              {selectedTransfer?.transferNumber}
+            </DialogDescription>
+          </DialogHeader>
+          {selectedTransfer && (() => {
+            const fromWarehouse = warehouses?.find((w: any) => w.id === selectedTransfer.fromWarehouseId);
+            const toWarehouse = warehouses?.find((w: any) => w.id === selectedTransfer.toWarehouseId);
+            const freightBooking = getFreightBookingForTransfer(selectedTransfer);
+            return (
+              <div className="space-y-4">
+                {/* Transfer Status */}
+                <div className="flex items-center justify-between">
+                  <Badge className={cn(
+                    selectedTransfer.status === "completed" ? "bg-green-500" :
+                    selectedTransfer.status === "in_transit" ? "bg-blue-500" :
+                    "bg-yellow-500"
+                  )}>
+                    {selectedTransfer.status?.replace(/_/g, " ")}
+                  </Badge>
+                  {selectedTransfer.expectedArrival && (
+                    <span className="text-sm text-muted-foreground">
+                      ETA: {new Date(selectedTransfer.expectedArrival).toLocaleDateString()}
+                    </span>
+                  )}
+                </div>
+
+                {/* Route Information */}
+                <div className="bg-muted/50 rounded-lg p-4">
+                  <div className="flex items-center justify-between">
+                    <div className="text-center">
+                      <p className="text-xs text-muted-foreground">From</p>
+                      <p className="font-medium">{fromWarehouse?.name || "Unknown"}</p>
+                      <Badge variant="outline" className="mt-1 text-xs">{fromWarehouse?.type}</Badge>
+                    </div>
+                    <ArrowRight className="h-6 w-6 text-muted-foreground" />
+                    <div className="text-center">
+                      <p className="text-xs text-muted-foreground">To</p>
+                      <p className="font-medium">{toWarehouse?.name || "Unknown"}</p>
+                      <Badge variant="outline" className="mt-1 text-xs">{toWarehouse?.type}</Badge>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Freight Information */}
+                {freightBooking && (
+                  <div className="border rounded-lg p-4">
+                    <h4 className="font-medium mb-3 flex items-center gap-2">
+                      {freightBooking.mode === "ocean" ? <Ship className="h-4 w-4" /> :
+                       freightBooking.mode === "air" ? <Plane className="h-4 w-4" /> :
+                       <Truck className="h-4 w-4" />}
+                      Freight Information
+                    </h4>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="bg-muted/30 rounded p-2">
+                        <p className="text-xs text-muted-foreground">Carrier</p>
+                        <p className="font-medium">{freightBooking.carrier?.name || "TBD"}</p>
+                      </div>
+                      <div className="bg-muted/30 rounded p-2">
+                        <p className="text-xs text-muted-foreground">Mode</p>
+                        <p className="font-medium capitalize">{freightBooking.mode || "Ground"}</p>
+                      </div>
+                      {freightBooking.trackingNumber && (
+                        <div className="bg-muted/30 rounded p-2">
+                          <p className="text-xs text-muted-foreground">Tracking Number</p>
+                          <p className="font-medium font-mono">{freightBooking.trackingNumber}</p>
+                        </div>
+                      )}
+                      <div className="bg-muted/30 rounded p-2">
+                        <p className="text-xs text-muted-foreground">Freight Status</p>
+                        <Badge className={cn(
+                          "mt-1",
+                          freightBooking.status === "in_transit" ? "bg-purple-500" :
+                          freightBooking.status === "delivered" ? "bg-green-500" :
+                          "bg-gray-500"
+                        )}>
+                          {freightBooking.status?.replace(/_/g, " ")}
+                        </Badge>
+                      </div>
+                    </div>
+                    <div className="mt-3">
+                      <Link href={`/freight/bookings/${freightBooking.id}`}>
+                        <Button variant="outline" size="sm" className="w-full">
+                          <ExternalLink className="h-4 w-4 mr-1" />
+                          View Full Freight Details
+                        </Button>
+                      </Link>
+                    </div>
+                  </div>
+                )}
+
+                {/* Transfer Items */}
+                {selectedTransfer.items && selectedTransfer.items.length > 0 && (
+                  <div>
+                    <h4 className="font-medium mb-2">Transfer Items</h4>
+                    <div className="border rounded-lg overflow-hidden">
+                      <table className="w-full text-sm">
+                        <thead className="bg-muted">
+                          <tr>
+                            <th className="text-left p-2">Item</th>
+                            <th className="text-right p-2">Requested</th>
+                            <th className="text-right p-2">Shipped</th>
+                            <th className="text-right p-2">Received</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {selectedTransfer.items.map((item: any, idx: number) => (
+                            <tr key={idx} className="border-t">
+                              <td className="p-2">{item.product?.name || "Item"}</td>
+                              <td className="text-right p-2">{item.requestedQuantity}</td>
+                              <td className="text-right p-2">{item.shippedQuantity || "-"}</td>
+                              <td className="text-right p-2">{item.receivedQuantity || "-"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Notes */}
+                {selectedTransfer.notes && (
+                  <div>
+                    <h4 className="font-medium mb-1">Notes</h4>
+                    <p className="text-sm text-muted-foreground bg-muted/30 p-2 rounded">{selectedTransfer.notes}</p>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowTransferDetailDialog(false)}>Close</Button>
+            {selectedTransfer?.status === "in_transit" && (
+              <Button
+                onClick={() => { handleReceiveShipment(selectedTransfer.id); setShowTransferDetailDialog(false); }}
+                disabled={receiveTransfer.isPending}
+                className="bg-green-600 hover:bg-green-700"
+              >
+                {receiveTransfer.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                <CheckCircle className="h-4 w-4 mr-1" />
+                Receive Shipment
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
