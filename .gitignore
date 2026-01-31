@@ -1,6 +1,7 @@
 # Dependencies
 **/node_modules
 .pnpm-store/
+package-lock.json
 
 # Build outputs
 dist/
@@ -61,6 +62,9 @@ jspm_packages/
 
 # Optional npm cache directory
 .npm
+
+# Lock files (project uses pnpm)
+package-lock.json
 
 # Optional eslint cache
 .eslintcache

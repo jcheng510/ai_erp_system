@@ -5,6 +5,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { SelectWithCreate } from "@/components/ui/select-with-create";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -20,6 +21,7 @@ export default function RawMaterials() {
     categoryFilter !== "all" ? { category: categoryFilter } : undefined
   );
   const { data: vendors } = trpc.vendors.list.useQuery();
+  const utils = trpc.useUtils();
   
   const createMaterial = trpc.rawMaterials.create.useMutation({
     onSuccess: () => {
@@ -185,25 +187,23 @@ export default function RawMaterials() {
                 </div>
                 <div className="space-y-2">
                   <Label>Preferred Vendor</Label>
-                  <Select
-                    value={newMaterial.preferredVendorId?.toString() || "none"}
+                  <SelectWithCreate
+                    value={newMaterial.preferredVendorId?.toString() || ""}
                     onValueChange={(v) => setNewMaterial({ 
                       ...newMaterial, 
-                      preferredVendorId: v === "none" ? undefined : parseInt(v) 
+                      preferredVendorId: v === "" ? undefined : parseInt(v) 
                     })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select vendor" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">None</SelectItem>
-                      {vendors?.map((v) => (
-                        <SelectItem key={v.id} value={v.id.toString()}>
-                          {v.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    placeholder="Select vendor (optional)"
+                    items={vendors?.map((v) => ({
+                      id: v.id,
+                      label: v.name,
+                    })) || []}
+                    entityType="vendor"
+                    onEntityCreated={() => {
+                      utils.vendors.list.invalidate();
+                    }}
+                    emptyMessage="No vendors available"
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label>Description</Label>

@@ -27,25 +27,53 @@ type EntityType = "vendor" | "material" | "bom" | "workOrder" | "rfq" | "product
 // Product select field component
 function ProductSelectField({ value, onChange }: { value?: number; onChange: (value: number) => void }) {
   const { data: products } = trpc.products.list.useQuery();
+  const utils = trpc.useUtils();
+  const [createOpen, setCreateOpen] = useState(false);
+  
   return (
-    <Select
-      value={value?.toString() || ""}
-      onValueChange={(v) => onChange(parseInt(v))}
-    >
-      <SelectTrigger>
-        <SelectValue placeholder="Select a product..." />
-      </SelectTrigger>
-      <SelectContent>
-        {products?.map((product: any) => (
-          <SelectItem key={product.id} value={product.id.toString()}>
-            {product.name} {product.sku && `(${product.sku})`}
-          </SelectItem>
-        ))}
-        {(!products || products.length === 0) && (
-          <div className="p-2 text-sm text-muted-foreground text-center">No products found</div>
-        )}
-      </SelectContent>
-    </Select>
+    <>
+      <Select
+        value={value?.toString() || ""}
+        onValueChange={(v) => onChange(parseInt(v))}
+      >
+        <SelectTrigger>
+          <SelectValue placeholder="Select a product..." />
+        </SelectTrigger>
+        <SelectContent>
+          <div className="p-1 border-b">
+            <button
+              type="button"
+              className="w-full text-left px-2 py-1.5 text-sm hover:bg-accent rounded-sm flex items-center gap-2"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setCreateOpen(true);
+              }}
+            >
+              <Plus className="h-4 w-4" />
+              Create New Product
+            </button>
+          </div>
+          {products?.map((product: any) => (
+            <SelectItem key={product.id} value={product.id.toString()}>
+              {product.name} {product.sku && `(${product.sku})`}
+            </SelectItem>
+          ))}
+          {(!products || products.length === 0) && (
+            <div className="p-2 text-sm text-muted-foreground text-center">No products found</div>
+          )}
+        </SelectContent>
+      </Select>
+      <QuickCreateDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        entityType="product"
+        onCreated={(entity) => {
+          utils.products.list.invalidate();
+          if (entity?.id) onChange(entity.id);
+        }}
+      />
+    </>
   );
 }
 
@@ -79,25 +107,53 @@ function BomSelectField({ value, productId, onChange }: { value?: number; produc
 // Warehouse select field component
 function WarehouseSelectField({ value, onChange }: { value?: number; onChange: (value: number) => void }) {
   const { data: warehouses } = trpc.warehouses.list.useQuery();
+  const utils = trpc.useUtils();
+  const [createOpen, setCreateOpen] = useState(false);
+  
   return (
-    <Select
-      value={value?.toString() || ""}
-      onValueChange={(v) => onChange(parseInt(v))}
-    >
-      <SelectTrigger>
-        <SelectValue placeholder="Select a location..." />
-      </SelectTrigger>
-      <SelectContent>
-        {warehouses?.map((wh: any) => (
-          <SelectItem key={wh.id} value={wh.id.toString()}>
-            {wh.name} ({wh.type})
-          </SelectItem>
-        ))}
-        {(!warehouses || warehouses.length === 0) && (
-          <div className="p-2 text-sm text-muted-foreground text-center">No locations found</div>
-        )}
-      </SelectContent>
-    </Select>
+    <>
+      <Select
+        value={value?.toString() || ""}
+        onValueChange={(v) => onChange(parseInt(v))}
+      >
+        <SelectTrigger>
+          <SelectValue placeholder="Select a location..." />
+        </SelectTrigger>
+        <SelectContent>
+          <div className="p-1 border-b">
+            <button
+              type="button"
+              className="w-full text-left px-2 py-1.5 text-sm hover:bg-accent rounded-sm flex items-center gap-2"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setCreateOpen(true);
+              }}
+            >
+              <Plus className="h-4 w-4" />
+              Create New Location
+            </button>
+          </div>
+          {warehouses?.map((wh: any) => (
+            <SelectItem key={wh.id} value={wh.id.toString()}>
+              {wh.name} ({wh.type})
+            </SelectItem>
+          ))}
+          {(!warehouses || warehouses.length === 0) && (
+            <div className="p-2 text-sm text-muted-foreground text-center">No locations found</div>
+          )}
+        </SelectContent>
+      </Select>
+      <QuickCreateDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        entityType="location"
+        onCreated={(entity) => {
+          utils.warehouses.list.invalidate();
+          if (entity?.id) onChange(entity.id);
+        }}
+      />
+    </>
   );
 }
 

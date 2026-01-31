@@ -20,4 +20,9 @@ export const ENV = {
   googleClientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
   googleRedirectUri: process.env.GOOGLE_REDIRECT_URI ?? "",
   appUrl: process.env.APP_URL ?? "http://localhost:3000",
+  // QuickBooks OAuth configuration
+  quickbooksClientId: process.env.QUICKBOOKS_CLIENT_ID ?? "",
+  quickbooksClientSecret: process.env.QUICKBOOKS_CLIENT_SECRET ?? "",
+  quickbooksRedirectUri: process.env.QUICKBOOKS_REDIRECT_URI ?? "",
+  quickbooksEnvironment: process.env.QUICKBOOKS_ENVIRONMENT ?? "sandbox", // sandbox or production
 };

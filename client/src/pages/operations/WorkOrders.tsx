@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { SelectWithCreate } from "@/components/ui/select-with-create";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -27,6 +28,7 @@ export default function WorkOrders() {
   const { data: boms } = trpc.bom.list.useQuery();
   const { data: products } = trpc.products.list.useQuery();
   const { data: warehouses } = trpc.warehouses.list.useQuery();
+  const utils = trpc.useUtils();
 
   const createMutation = trpc.workOrders.create.useMutation({
     onSuccess: () => {
@@ -93,33 +95,37 @@ export default function WorkOrders() {
               <div className="space-y-4">
                 <div>
                   <Label>Bill of Materials</Label>
-                  <Select value={newWorkOrder.bomId.toString()} onValueChange={handleBomSelect}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select BOM" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {boms?.filter(b => b.status === 'active').map(bom => (
-                        <SelectItem key={bom.id} value={bom.id.toString()}>
-                          {bom.name} (v{bom.version})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <SelectWithCreate
+                    value={newWorkOrder.bomId === 0 ? "" : newWorkOrder.bomId.toString()}
+                    onValueChange={handleBomSelect}
+                    placeholder="Select BOM"
+                    items={boms?.filter(b => b.status === 'active').map((bom) => ({
+                      id: bom.id,
+                      label: `${bom.name} (v${bom.version})`,
+                    })) || []}
+                    entityType="bom"
+                    onEntityCreated={() => {
+                      utils.bom.list.invalidate();
+                    }}
+                    emptyMessage="No active BOMs available. Create one to continue."
+                  />
                 </div>
                 <div>
                   <Label>Production Location</Label>
-                  <Select value={newWorkOrder.warehouseId.toString()} onValueChange={v => setNewWorkOrder({ ...newWorkOrder, warehouseId: parseInt(v) })}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select location" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {warehouses?.map(wh => (
-                        <SelectItem key={wh.id} value={wh.id.toString()}>
-                          {wh.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <SelectWithCreate
+                    value={newWorkOrder.warehouseId === 0 ? "" : newWorkOrder.warehouseId.toString()}
+                    onValueChange={v => setNewWorkOrder({ ...newWorkOrder, warehouseId: parseInt(v) })}
+                    placeholder="Select location"
+                    items={warehouses?.map((wh) => ({
+                      id: wh.id,
+                      label: wh.name,
+                    })) || []}
+                    entityType="location"
+                    onEntityCreated={() => {
+                      utils.warehouses.list.invalidate();
+                    }}
+                    emptyMessage="No locations available. Create one to continue."
+                  />
                 </div>
                 <div>
                   <Label>Quantity to Produce</Label>

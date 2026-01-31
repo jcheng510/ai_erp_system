@@ -16,7 +16,7 @@ import {
   Plus, FolderOpen, Link2, Users, BarChart3, Settings, 
   Eye, Download, Clock, Trash2, Copy, ExternalLink,
   FileText, Lock, Globe, Archive, Upload, File, Folder,
-  ChevronRight, ArrowLeft, MoreVertical, Mail, Send
+  ChevronRight, ArrowLeft, MoreVertical, Mail, Send, Cloud
 } from "lucide-react";
 import { useLocation, useParams } from "wouter";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -43,6 +43,8 @@ export default function DataRoomDetail() {
     name: "",
     message: "",
   });
+  const [googleDriveSyncOpen, setGoogleDriveSyncOpen] = useState(false);
+  const [selectedDriveFolderId, setSelectedDriveFolderId] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: room, isLoading: roomLoading, refetch: refetchRoom } = trpc.dataRoom.getById.useQuery({ id: roomId });
@@ -137,6 +139,20 @@ export default function DataRoomDetail() {
     onSuccess: () => {
       toast.success("Visitor access restored");
       utils.dataRoom.visitors.list.invalidate({ dataRoomId: roomId });
+    },
+  });
+
+  const syncGoogleDriveMutation = trpc.dataRoom.googleDrive.syncFolder.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Synced ${data.foldersCreated} new folders and ${data.filesCreated} new files from Google Drive`);
+      setGoogleDriveSyncOpen(false);
+      setSelectedDriveFolderId(""); // Clear the input
+      refetchFolders();
+      refetchDocuments();
+      refetchRoom();
+    },
+    onError: (error) => {
+      toast.error(error.message);
     },
   });
 
@@ -381,7 +397,15 @@ export default function DataRoomDetail() {
                     >
                       <div className="flex items-center gap-3">
                         <Folder className="h-5 w-5 text-blue-500" />
-                        <span className="font-medium">{folder.name}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">{folder.name}</span>
+                          {folder.googleDriveFolderId && (
+                            <Badge variant="outline" className="text-xs">
+                              <Cloud className="h-3 w-3 mr-1" />
+                              Google Drive
+                            </Badge>
+                          )}
+                        </div>
                       </div>
                       <div className="flex items-center gap-2">
                         <ChevronRight className="h-4 w-4 text-muted-foreground" />
@@ -417,18 +441,26 @@ export default function DataRoomDetail() {
                       <div className="flex items-center gap-3">
                         {getFileIcon(doc.fileType)}
                         <div>
-                          <div className="font-medium">{doc.name}</div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium">{doc.name}</span>
+                            {doc.storageType === 'google_drive' && (
+                              <Badge variant="outline" className="text-xs">
+                                <Cloud className="h-3 w-3 mr-1" />
+                                Google Drive
+                              </Badge>
+                            )}
+                          </div>
                           <div className="text-sm text-muted-foreground">
                             {doc.fileSize ? `${(doc.fileSize / 1024).toFixed(1)} KB` : "Unknown size"}
                           </div>
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
-                        {doc.storageUrl && (
+                        {(doc.storageUrl || doc.googleDriveWebViewLink) && (
                           <Button
                             variant="ghost"
                             size="icon"
-                            onClick={() => window.open(doc.storageUrl!, '_blank')}
+                            onClick={() => window.open(doc.googleDriveWebViewLink || doc.storageUrl!, '_blank')}
                           >
                             <Eye className="h-4 w-4" />
                           </Button>
@@ -897,10 +929,107 @@ export default function DataRoomDetail() {
                     )}
                   </div>
                 </div>
+                <div className="border-t pt-6 mt-6">
+                  <h3 className="font-medium mb-4">Google Drive Sync</h3>
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <Label>Google Drive Folder</Label>
+                        <p className="text-sm text-muted-foreground">
+                          {room.googleDriveFolderId 
+                            ? `Synced to Google Drive folder` 
+                            : "Not connected to Google Drive"}
+                        </p>
+                        {room.lastSyncedAt && (
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Last synced: {new Date(room.lastSyncedAt).toLocaleString()}
+                          </p>
+                        )}
+                      </div>
+                      <Button
+                        onClick={() => setGoogleDriveSyncOpen(true)}
+                        variant={room.googleDriveFolderId ? "outline" : "default"}
+                      >
+                        {room.googleDriveFolderId ? "Re-sync" : "Connect"}
+                      </Button>
+                    </div>
+                    {room.googleDriveFolderId && (
+                      <div className="pl-4 border-l-2 border-muted text-sm text-muted-foreground">
+                        <p>Files and folders from Google Drive will inherit all security settings from this data room, including:</p>
+                        <ul className="list-disc list-inside mt-2 space-y-1">
+                          <li>Password protection</li>
+                          <li>NDA requirements</li>
+                          <li>Download and print permissions</li>
+                          <li>Access controls and invitations</li>
+                          <li>Visitor tracking and analytics</li>
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                </div>
               </CardContent>
             </Card>
           </TabsContent>
         </Tabs>
+
+        {/* Google Drive Sync Dialog */}
+        <Dialog open={googleDriveSyncOpen} onOpenChange={setGoogleDriveSyncOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Sync Google Drive Folder</DialogTitle>
+              <DialogDescription>
+                Connect this data room to an existing Google Drive folder. All files and folders will be imported with the security and access controls configured for this data room.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label htmlFor="driveFolderId">Google Drive Folder ID</Label>
+                <Input
+                  id="driveFolderId"
+                  placeholder="Paste Google Drive folder ID here"
+                  value={selectedDriveFolderId}
+                  onChange={(e) => setSelectedDriveFolderId(e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  To get the folder ID, open the folder in Google Drive and copy the ID from the URL (the part after /folders/)
+                </p>
+              </div>
+              <div className="bg-muted p-4 rounded-lg space-y-2">
+                <p className="text-sm font-medium">Security & Access Controls</p>
+                <p className="text-xs text-muted-foreground">
+                  All synced files will have:
+                </p>
+                <ul className="text-xs text-muted-foreground list-disc list-inside space-y-1">
+                  {room.requiresNda && <li>NDA requirement before access</li>}
+                  {room.password && <li>Password protection</li>}
+                  {!room.allowDownload && <li>Download disabled</li>}
+                  {!room.allowPrint && <li>Print disabled</li>}
+                  {room.watermarkEnabled && <li>Watermarked with visitor email</li>}
+                </ul>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setGoogleDriveSyncOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                onClick={() => {
+                  if (!selectedDriveFolderId) {
+                    toast.error("Please enter a Google Drive folder ID");
+                    return;
+                  }
+                  syncGoogleDriveMutation.mutate({
+                    dataRoomId: roomId,
+                    googleDriveFolderId: selectedDriveFolderId,
+                  });
+                }}
+                disabled={syncGoogleDriveMutation.isPending}
+              >
+                {syncGoogleDriveMutation.isPending ? "Syncing..." : "Sync Folder"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
   );
 }
@@ -946,7 +1075,12 @@ function NdaManagement({ dataRoomId, requiresNda }: { dataRoomId: number; requir
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      if (file.type !== 'application/pdf') {
+      // Check if file is a PDF by MIME type or file extension
+      const isPdf = file.type === 'application/pdf' || 
+                    file.type === 'application/x-pdf' ||
+                    file.name.toLowerCase().endsWith('.pdf');
+      
+      if (!isPdf) {
         toast.error("Please upload a PDF file");
         return;
       }
