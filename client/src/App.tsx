@@ -4,6 +4,7 @@ import NotFound from "@/pages/NotFound";
 import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
+import { AIAgentProvider } from "./contexts/AIAgentContext";
 import DashboardLayout from "./components/DashboardLayout";
 
 // Pages
@@ -213,17 +214,19 @@ function App() {
   return (
     <ErrorBoundary>
       <ThemeProvider defaultTheme="light">
-        <TooltipProvider>
-          <Toaster />
-          <Switch>
-            {/* Public Data Room Access (outside dashboard) */}
-            <Route path="/share/:code" component={DataRoomPublic} />
-            {/* Supplier Portal (public) */}
-            <Route path="/supplier-portal/:token" component={SupplierPortal} />
-            {/* All other routes go through dashboard */}
-            <Route component={Router} />
-          </Switch>
-        </TooltipProvider>
+        <AIAgentProvider>
+          <TooltipProvider>
+            <Toaster />
+            <Switch>
+              {/* Public Data Room Access (outside dashboard) */}
+              <Route path="/share/:code" component={DataRoomPublic} />
+              {/* Supplier Portal (public) */}
+              <Route path="/supplier-portal/:token" component={SupplierPortal} />
+              {/* All other routes go through dashboard */}
+              <Route component={Router} />
+            </Switch>
+          </TooltipProvider>
+        </AIAgentProvider>
       </ThemeProvider>
     </ErrorBoundary>
   );

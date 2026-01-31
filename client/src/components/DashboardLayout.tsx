@@ -71,6 +71,7 @@ import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
 import { AICommandBar } from './AICommandBar';
+import { FloatingAIAssistant } from './FloatingAIAssistant';
 import { Button } from "./ui/button";
 import { toast } from "sonner";
 import {
@@ -496,6 +497,9 @@ function DashboardLayoutContent({
         <AICommandBar open={aiCommandOpen} onOpenChange={setAiCommandOpen} />
         <main className="flex-1 overflow-auto p-4 md:p-6">{children}</main>
       </SidebarInset>
+
+      {/* Floating AI Assistant - available throughout the app */}
+      <FloatingAIAssistant />
     </>
   );
 }

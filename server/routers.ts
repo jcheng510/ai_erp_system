@@ -8,6 +8,7 @@ import { invokeLLM } from "./_core/llm";
 import { sendEmail, isEmailConfigured, formatEmailHtml } from "./_core/email";
 import { processEmailReply, analyzeEmail, generateEmailReply } from "./emailReplyService";
 import { parseUploadedDocument, importPurchaseOrder, importFreightInvoice, matchLineItemsToMaterials } from "./documentImportService";
+import { processAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingActions, type AIAgentContext } from "./aiAgentService";
 import * as db from "./db";
 import { storagePut } from "./storage";
 import { nanoid } from "nanoid";
@@ -3087,6 +3088,123 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
           answer: typeof rawAnswer === 'string' ? rawAnswer : 'Unable to process your question.',
         };
       }),
+
+    // Comprehensive AI Agent Chat - handles all ERP operations
+    agentChat: protectedProcedure
+      .input(z.object({
+        message: z.string().min(1),
+        conversationHistory: z.array(z.object({
+          role: z.enum(['system', 'user', 'assistant']),
+          content: z.string(),
+        })).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const agentContext: AIAgentContext = {
+          userId: ctx.user.id,
+          userName: ctx.user.name || 'User',
+          userRole: ctx.user.role,
+          companyId: ctx.user.companyId,
+        };
+
+        const result = await processAIAgentRequest(
+          input.message,
+          input.conversationHistory || [],
+          agentContext
+        );
+
+        return result;
+      }),
+
+    // Quick analysis endpoint for data insights
+    quickAnalysis: protectedProcedure
+      .input(z.object({
+        dataType: z.enum(['sales', 'inventory', 'vendors', 'customers', 'finances', 'orders', 'procurement', 'production']),
+      }))
+      .query(async ({ input, ctx }) => {
+        const agentContext: AIAgentContext = {
+          userId: ctx.user.id,
+          userName: ctx.user.name || 'User',
+          userRole: ctx.user.role,
+          companyId: ctx.user.companyId,
+        };
+
+        return getQuickAnalysis(input.dataType, agentContext);
+      }),
+
+    // System overview for dashboard
+    systemOverview: protectedProcedure.query(async ({ ctx }) => {
+      const agentContext: AIAgentContext = {
+        userId: ctx.user.id,
+        userName: ctx.user.name || 'User',
+        userRole: ctx.user.role,
+        companyId: ctx.user.companyId,
+      };
+
+      return getSystemOverview(agentContext);
+    }),
+
+    // Pending actions that need attention
+    pendingActions: protectedProcedure.query(async ({ ctx }) => {
+      const agentContext: AIAgentContext = {
+        userId: ctx.user.id,
+        userName: ctx.user.name || 'User',
+        userRole: ctx.user.role,
+        companyId: ctx.user.companyId,
+      };
+
+      return getPendingActions(agentContext);
+    }),
+
+    // Get suggested actions based on current system state
+    suggestedActions: protectedProcedure.query(async ({ ctx }) => {
+      // Get system state
+      const metrics = await db.getDashboardMetrics();
+      const pendingTasks = await db.getPendingApprovalTasks();
+
+      const suggestions: { type: string; title: string; description: string; priority: string }[] = [];
+
+      // Check for low inventory
+      if (metrics?.lowStockItems && metrics.lowStockItems > 0) {
+        suggestions.push({
+          type: 'inventory',
+          title: 'Low Stock Alert',
+          description: `${metrics.lowStockItems} items are running low on stock`,
+          priority: 'high',
+        });
+      }
+
+      // Check for pending POs
+      if (metrics?.pendingPurchaseOrders && metrics.pendingPurchaseOrders > 0) {
+        suggestions.push({
+          type: 'procurement',
+          title: 'Pending Purchase Orders',
+          description: `${metrics.pendingPurchaseOrders} purchase orders need attention`,
+          priority: 'medium',
+        });
+      }
+
+      // Check for pending approvals
+      if (pendingTasks.length > 0) {
+        suggestions.push({
+          type: 'approvals',
+          title: 'Pending Approvals',
+          description: `${pendingTasks.length} AI tasks waiting for approval`,
+          priority: 'high',
+        });
+      }
+
+      // Check for overdue invoices
+      if (metrics?.overdueInvoices && metrics.overdueInvoices > 0) {
+        suggestions.push({
+          type: 'finance',
+          title: 'Overdue Invoices',
+          description: `${metrics.overdueInvoices} invoices are past due`,
+          priority: 'high',
+        });
+      }
+
+      return suggestions;
+    }),
   }),
 
   // ============================================
