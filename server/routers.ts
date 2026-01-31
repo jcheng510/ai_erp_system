@@ -1095,6 +1095,12 @@ export const appRouter = router({
           totalFailed: results.filter(r => !r.success).length,
         };
       }),
+    // Get pending inventory from POs (on order or in transit)
+    getPendingFromPOs: opsProcedure
+      .query(() => db.getPendingInventoryFromPOs()),
+    // Get inbound shipments from POs
+    getInboundShipments: opsProcedure
+      .query(() => db.getInboundShipmentsFromPOs()),
   }),
 
   // ============================================
@@ -1337,13 +1343,30 @@ export const appRouter = router({
         const { items, ...poData } = input;
         const poNumber = generateNumber('PO');
         const result = await db.createPurchaseOrder({ ...poData, poNumber, createdBy: ctx.user.id });
-        
+
         if (items && items.length > 0) {
           for (const item of items) {
-            await db.createPurchaseOrderItem({ ...item, purchaseOrderId: result.id });
+            const poItem = await db.createPurchaseOrderItem({ ...item, purchaseOrderId: result.id });
+
+            // Try to link to raw material if productId is provided
+            if (item.productId) {
+              const product = await db.getProductById(item.productId);
+              if (product) {
+                // Try to find matching raw material by name or SKU
+                const rawMaterial = await db.getRawMaterialByNameOrSku(product.name, product.sku || '');
+                if (rawMaterial) {
+                  await db.createPurchaseOrderRawMaterialLink({
+                    purchaseOrderItemId: poItem.id,
+                    rawMaterialId: rawMaterial.id,
+                    orderedQuantity: item.quantity,
+                    unit: rawMaterial.unit || 'EA',
+                  });
+                }
+              }
+            }
           }
         }
-        
+
         await createAuditLog(ctx.user.id, 'create', 'purchaseOrder', result.id, poNumber);
         return result;
       }),
