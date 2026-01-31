@@ -6595,6 +6595,8 @@ export async function updateAiAgentTask(id: number, data: Partial<{
   executionResult: string;
   errorMessage: string;
   retryCount: number;
+  taskData: string;
+  aiReasoning: string;
 }>) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");

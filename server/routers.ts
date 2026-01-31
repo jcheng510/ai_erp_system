@@ -3647,6 +3647,50 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
           return { success: true };
         }),
       
+      update: adminProcedure
+        .input(z.object({ 
+          id: z.number(), 
+          taskData: z.string(),
+          aiReasoning: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const task = await db.getAiAgentTaskById(input.id);
+          if (!task) throw new TRPCError({ code: 'NOT_FOUND', message: 'Task not found' });
+          
+          // Validate JSON format
+          try {
+            JSON.parse(input.taskData);
+          } catch (e) {
+            throw new TRPCError({ 
+              code: 'BAD_REQUEST', 
+              message: 'Invalid JSON format in taskData' 
+            });
+          }
+          
+          // Only allow updates on pending or approved tasks
+          if (!['pending_approval', 'approved'].includes(task.status)) {
+            throw new TRPCError({ 
+              code: 'BAD_REQUEST', 
+              message: 'Can only update pending or approved tasks' 
+            });
+          }
+          
+          await db.updateAiAgentTask(input.id, {
+            taskData: input.taskData,
+            aiReasoning: input.aiReasoning || task.aiReasoning,
+          });
+          
+          await db.createAiAgentLog({
+            taskId: input.id,
+            action: 'task_updated',
+            status: 'info',
+            message: `Task data updated by ${ctx.user.name}`,
+            details: input.taskData,
+          });
+          
+          return { success: true };
+        }),
+      
       execute: adminProcedure
         .input(z.object({ id: z.number() }))
         .mutation(async ({ input, ctx }) => {
