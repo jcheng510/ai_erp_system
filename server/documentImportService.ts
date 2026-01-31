@@ -1,12 +1,15 @@
 import { invokeLLM } from "./_core/llm";
 import * as db from "./db";
-import { writeFileSync, readFileSync, unlinkSync, mkdirSync, existsSync } from "fs";
+import { writeFileSync, readFileSync, unlinkSync, mkdirSync, existsSync, rmSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { execSync } from "child_process";
 import { fromBuffer } from "pdf2pic";
 
 // PDF.js will be imported dynamically in the function to avoid worker issues
+
+// Configuration constants
+const MIN_TEXT_LENGTH_FOR_SCANNED_DETECTION = 100; // Minimum text length to consider PDF as text-based
 
 // Types for document import
 export interface ImportedLineItem {
@@ -230,9 +233,14 @@ If document type is unknown, return both as null.`;
         }
         console.log("[DocumentImport] PDF text extracted, length:", fullText.length);
         
-        // Check if we got sufficient text (less than 100 chars suggests scanned/image PDF)
-        if (fullText.trim().length < 100) {
+        // Check if we got sufficient text (less than threshold suggests scanned/image PDF)
+        if (fullText.trim().length < MIN_TEXT_LENGTH_FOR_SCANNED_DETECTION) {
           console.log("[DocumentImport] Insufficient text extracted, PDF appears to be scanned. Falling back to OCR...");
+          
+          // Log warning for multi-page PDFs
+          if (pdf.numPages > 1) {
+            console.warn(`[DocumentImport] PDF has ${pdf.numPages} pages, but only processing first page for OCR. Additional pages will be ignored.`);
+          }
           
           // Convert PDF to images using pdf2pic for OCR
           const tempDir = join(tmpdir(), `pdf_ocr_${Date.now()}`);
@@ -269,17 +277,17 @@ If document type is unknown, return both as null.`;
               { type: "image_url", image_url: { url: dataUrl, detail: "high" } }
             ];
             
-            // Clean up temp directory
+            // Clean up temp directory using safe fs.rmSync
             try {
-              execSync(`rm -rf "${tempDir}"`, { timeout: 5000 });
+              rmSync(tempDir, { recursive: true, force: true });
             } catch (cleanupError) {
               console.warn("[DocumentImport] Failed to cleanup temp directory:", cleanupError);
             }
           } catch (ocrError) {
             console.error("[DocumentImport] OCR conversion failed:", ocrError);
-            // Clean up temp directory on error
+            // Clean up temp directory on error using safe fs.rmSync
             try {
-              execSync(`rm -rf "${tempDir}"`, { timeout: 5000 });
+              rmSync(tempDir, { recursive: true, force: true });
             } catch (cleanupError) {
               // Ignore cleanup errors
             }
