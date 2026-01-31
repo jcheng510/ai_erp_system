@@ -65,11 +65,13 @@ import {
   FolderLock,
   Target,
   MessageSquare,
+  Heart,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
 import { AICommandBar } from './AICommandBar';
+import { FloatingAIAssistant } from './FloatingAIAssistant';
 import { Button } from "./ui/button";
 import { toast } from "sonner";
 import {
@@ -92,6 +94,9 @@ const menuGroups = [
     label: "Sales & Finance",
     items: [
       { icon: ShoppingCart, label: "Sales Hub", path: "/sales/hub" },
+      { icon: Heart, label: "Fundraising CRM", path: "/crm" },
+      { icon: Users, label: "Investors", path: "/crm/investors" },
+      { icon: Target, label: "Campaigns", path: "/crm/campaigns" },
       { icon: DollarSign, label: "Accounts", path: "/finance/accounts" },
       { icon: TrendingUp, label: "Transactions", path: "/finance/transactions" },
     ],
@@ -108,6 +113,10 @@ const menuGroups = [
     label: "Operations",
     items: [
       { icon: Package, label: "Operations", path: "/operations" },
+      { icon: Package, label: "Inventory", path: "/operations/inventory-hub" },
+      { icon: ClipboardList, label: "Inventory Mgmt", path: "/operations/inventory-management" },
+      { icon: Warehouse, label: "Manufacturing", path: "/operations/manufacturing-hub" },
+      { icon: Building2, label: "Procurement", path: "/operations/procurement-hub" },
       { icon: Truck, label: "Logistics", path: "/operations/logistics-hub" },
       { icon: Mail, label: "Email Inbox", path: "/operations/email-inbox" },
       { icon: FileSpreadsheet, label: "Document Import", path: "/operations/document-import" },
@@ -488,6 +497,9 @@ function DashboardLayoutContent({
         <AICommandBar open={aiCommandOpen} onOpenChange={setAiCommandOpen} />
         <main className="flex-1 overflow-auto p-4 md:p-6">{children}</main>
       </SidebarInset>
+
+      {/* Floating AI Assistant - available throughout the app */}
+      <FloatingAIAssistant />
     </>
   );
 }

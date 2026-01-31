@@ -254,6 +254,13 @@ export async function getCustomerByHubspotId(hubspotId: string) {
   return result[0];
 }
 
+export async function getCustomerByEmail(email: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(customers).where(eq(customers.email, email)).limit(1);
+  return result[0];
+}
+
 export async function createCustomer(data: InsertCustomer) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -329,6 +336,13 @@ export async function getProductById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
   const result = await db.select().from(products).where(eq(products.id, id)).limit(1);
+  return result[0];
+}
+
+export async function getProductBySku(sku: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(products).where(eq(products.sku, sku)).limit(1);
   return result[0];
 }
 
@@ -644,6 +658,69 @@ export async function updateInventory(id: number, data: Partial<InsertInventory>
   const db = await getDb();
   if (!db) return;
   await db.update(inventory).set(data).where(eq(inventory.id, id));
+}
+
+export async function bulkUpdateInventory(
+  ids: number[],
+  data: {
+    quantityAdjustment?: number;
+    warehouseId?: number;
+    reorderLevel?: string;
+    reorderQuantity?: string;
+  }
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const results: { id: number; success: boolean; error?: string }[] = [];
+
+  for (const id of ids) {
+    try {
+      const updateData: Partial<InsertInventory> = {};
+
+      // Handle quantity adjustment (add/subtract from current quantity)
+      if (data.quantityAdjustment !== undefined) {
+        const [current] = await db.select().from(inventory).where(eq(inventory.id, id)).limit(1);
+        if (current) {
+          const currentQty = parseFloat(current.quantity || '0');
+          const newQty = Math.max(0, currentQty + data.quantityAdjustment);
+          updateData.quantity = newQty.toString();
+        }
+      }
+
+      // Handle warehouse change
+      if (data.warehouseId !== undefined) {
+        updateData.warehouseId = data.warehouseId;
+      }
+
+      // Handle reorder level update
+      if (data.reorderLevel !== undefined) {
+        updateData.reorderLevel = data.reorderLevel;
+      }
+
+      // Handle reorder quantity update
+      if (data.reorderQuantity !== undefined) {
+        updateData.reorderQuantity = data.reorderQuantity;
+      }
+
+      if (Object.keys(updateData).length > 0) {
+        await db.update(inventory).set(updateData).where(eq(inventory.id, id));
+      }
+
+      results.push({ id, success: true });
+    } catch (error) {
+      results.push({ id, success: false, error: (error as Error).message });
+    }
+  }
+
+  return results;
+}
+
+export async function getInventoryByIds(ids: number[]) {
+  const db = await getDb();
+  if (!db) return [];
+  if (ids.length === 0) return [];
+  return db.select().from(inventory).where(inArray(inventory.id, ids));
 }
 
 // ============================================
@@ -1737,8 +1814,15 @@ export async function getConsolidatedInventory() {
 export async function getInventoryByProduct(productId: number) {
   const db = await getDb();
   if (!db) return [];
-  
+
   return db.select().from(inventory).where(eq(inventory.productId, productId));
+}
+
+export async function getInventoryByProductId(productId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(inventory).where(eq(inventory.productId, productId)).limit(1);
+  return result[0];
 }
 
 export async function updateInventoryQuantity(productId: number, warehouseId: number, quantityChange: number) {
@@ -2385,9 +2469,43 @@ export async function getRawMaterials(filters?: { status?: string; category?: st
 export async function getRawMaterialById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
-  
+
   const result = await db.select().from(rawMaterials).where(eq(rawMaterials.id, id)).limit(1);
   return result[0];
+}
+
+export async function getRawMaterialByNameOrSku(name: string, sku: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+
+  const result = await db.select().from(rawMaterials)
+    .where(or(
+      eq(rawMaterials.name, name),
+      eq(rawMaterials.sku, sku)
+    ))
+    .limit(1);
+  return result[0];
+}
+
+export async function createPurchaseOrderRawMaterialLink(data: {
+  purchaseOrderItemId: number;
+  rawMaterialId: number;
+  orderedQuantity: string;
+  unit: string;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const result = await db.insert(purchaseOrderRawMaterials).values({
+    purchaseOrderItemId: data.purchaseOrderItemId,
+    rawMaterialId: data.rawMaterialId,
+    orderedQuantity: data.orderedQuantity,
+    receivedQuantity: '0',
+    unit: data.unit,
+    status: 'ordered',
+  }).$returningId();
+
+  return { id: result[0].id };
 }
 
 export async function createRawMaterial(data: Omit<InsertRawMaterial, 'id' | 'createdAt' | 'updatedAt'>) {
@@ -2785,7 +2903,41 @@ export async function receivePurchaseOrderItems(
     await db.update(purchaseOrders).set({ status: 'partial' })
       .where(eq(purchaseOrders.id, purchaseOrderId));
   }
-  
+
+  // Update linked shipment status
+  let shipmentToUpdate = shipmentId;
+  if (!shipmentToUpdate) {
+    // Find shipment linked to this PO
+    const linkedShipment = await db.select()
+      .from(shipments)
+      .where(eq(shipments.purchaseOrderId, purchaseOrderId))
+      .limit(1);
+    if (linkedShipment[0]) {
+      shipmentToUpdate = linkedShipment[0].id;
+    }
+  }
+
+  if (shipmentToUpdate) {
+    if (allReceived) {
+      // Mark shipment as delivered
+      await db.update(shipments)
+        .set({
+          status: 'delivered',
+          deliveryDate: new Date(),
+        })
+        .where(eq(shipments.id, shipmentToUpdate));
+    } else if (anyReceived) {
+      // Shipment is in progress (partial delivery)
+      const currentShipment = await db.select().from(shipments)
+        .where(eq(shipments.id, shipmentToUpdate)).limit(1);
+      if (currentShipment[0]?.status === 'pending') {
+        await db.update(shipments)
+          .set({ status: 'in_transit' })
+          .where(eq(shipments.id, shipmentToUpdate));
+      }
+    }
+  }
+
   return receiving;
 }
 
@@ -3076,26 +3228,191 @@ export async function getHistoricalSalesData(productId?: number, months?: number
 export async function getPendingOrdersForMaterial(rawMaterialId: number) {
   const db = await getDb();
   if (!db) return [];
-  
-  // Get PO items that reference products linked to this raw material
-  const pendingPOs = await db.select({
+
+  // First check purchaseOrderRawMaterials for explicit links
+  const linkedPOs = await db.select({
     poId: purchaseOrders.id,
     poNumber: purchaseOrders.poNumber,
-    quantity: purchaseOrderItems.quantity,
-    receivedQuantity: purchaseOrderItems.receivedQuantity,
+    quantity: purchaseOrderRawMaterials.orderedQuantity,
+    receivedQuantity: purchaseOrderRawMaterials.receivedQuantity,
     expectedDate: purchaseOrders.expectedDate,
+    shipmentId: shipments.id,
+    shipmentStatus: shipments.status,
+  })
+  .from(purchaseOrderRawMaterials)
+  .innerJoin(purchaseOrderItems, eq(purchaseOrderRawMaterials.purchaseOrderItemId, purchaseOrderItems.id))
+  .innerJoin(purchaseOrders, eq(purchaseOrderItems.purchaseOrderId, purchaseOrders.id))
+  .leftJoin(shipments, eq(shipments.purchaseOrderId, purchaseOrders.id))
+  .where(and(
+    eq(purchaseOrderRawMaterials.rawMaterialId, rawMaterialId),
+    or(
+      eq(purchaseOrders.status, 'sent'),
+      eq(purchaseOrders.status, 'confirmed'),
+      eq(purchaseOrders.status, 'partial')
+    ),
+    or(
+      eq(purchaseOrderRawMaterials.status, 'ordered'),
+      eq(purchaseOrderRawMaterials.status, 'partial')
+    )
+  ));
+
+  // Also check PO items linked to products that match raw material by name
+  const rm = await getRawMaterialById(rawMaterialId);
+  if (rm) {
+    const productMatches = await db.select({
+      poId: purchaseOrders.id,
+      poNumber: purchaseOrders.poNumber,
+      quantity: purchaseOrderItems.quantity,
+      receivedQuantity: purchaseOrderItems.receivedQuantity,
+      expectedDate: purchaseOrders.expectedDate,
+      shipmentId: shipments.id,
+      shipmentStatus: shipments.status,
+    })
+    .from(purchaseOrderItems)
+    .innerJoin(purchaseOrders, eq(purchaseOrderItems.purchaseOrderId, purchaseOrders.id))
+    .innerJoin(products, eq(purchaseOrderItems.productId, products.id))
+    .leftJoin(shipments, eq(shipments.purchaseOrderId, purchaseOrders.id))
+    .where(and(
+      or(
+        eq(products.name, rm.name),
+        eq(products.sku, rm.sku || '')
+      ),
+      or(
+        eq(purchaseOrders.status, 'sent'),
+        eq(purchaseOrders.status, 'confirmed'),
+        eq(purchaseOrders.status, 'partial')
+      )
+    ));
+
+    // Combine results, avoiding duplicates
+    const allPOs = [...linkedPOs];
+    for (const po of productMatches) {
+      if (!allPOs.find(p => p.poId === po.poId && p.quantity === po.quantity)) {
+        allPOs.push(po);
+      }
+    }
+    return allPOs;
+  }
+
+  return linkedPOs;
+}
+
+// Get all pending/inbound inventory from POs (for InventoryHub display)
+export async function getPendingInventoryFromPOs() {
+  const db = await getDb();
+  if (!db) return [];
+
+  // Get all pending PO items with shipment info
+  const pendingItems = await db.select({
+    purchaseOrderId: purchaseOrders.id,
+    poNumber: purchaseOrders.poNumber,
+    poStatus: purchaseOrders.status,
+    vendorId: purchaseOrders.vendorId,
+    expectedDate: purchaseOrders.expectedDate,
+    poItemId: purchaseOrderItems.id,
+    productId: purchaseOrderItems.productId,
+    description: purchaseOrderItems.description,
+    orderedQuantity: purchaseOrderItems.quantity,
+    receivedQuantity: purchaseOrderItems.receivedQuantity,
+    shipmentId: shipments.id,
+    shipmentNumber: shipments.shipmentNumber,
+    shipmentStatus: shipments.status,
+    trackingNumber: shipments.trackingNumber,
+    carrier: shipments.carrier,
+    shipDate: shipments.shipDate,
+    deliveryDate: shipments.deliveryDate,
   })
   .from(purchaseOrderItems)
   .innerJoin(purchaseOrders, eq(purchaseOrderItems.purchaseOrderId, purchaseOrders.id))
-  .where(and(
+  .leftJoin(shipments, eq(shipments.purchaseOrderId, purchaseOrders.id))
+  .where(
     or(
       eq(purchaseOrders.status, 'sent'),
       eq(purchaseOrders.status, 'confirmed'),
       eq(purchaseOrders.status, 'partial')
     )
-  ));
-  
-  return pendingPOs;
+  );
+
+  // Enhance with raw material info if linked
+  const enhancedItems = [];
+  for (const item of pendingItems) {
+    const orderedQty = parseFloat(item.orderedQuantity?.toString() || '0');
+    const receivedQty = parseFloat(item.receivedQuantity?.toString() || '0');
+    const pendingQty = orderedQty - receivedQty;
+
+    if (pendingQty <= 0) continue;
+
+    // Check for raw material link
+    const rmLink = await db.select()
+      .from(purchaseOrderRawMaterials)
+      .where(eq(purchaseOrderRawMaterials.purchaseOrderItemId, item.poItemId))
+      .limit(1);
+
+    let rawMaterialId = rmLink[0]?.rawMaterialId;
+    let rawMaterialName = null;
+
+    // If no explicit link, try matching by product
+    if (!rawMaterialId && item.productId) {
+      const product = await getProductById(item.productId);
+      if (product) {
+        const rm = await db.select().from(rawMaterials)
+          .where(or(
+            eq(rawMaterials.name, product.name),
+            eq(rawMaterials.sku, product.sku || '')
+          ))
+          .limit(1);
+        if (rm[0]) {
+          rawMaterialId = rm[0].id;
+          rawMaterialName = rm[0].name;
+        }
+      }
+    } else if (rawMaterialId) {
+      const rm = await getRawMaterialById(rawMaterialId);
+      rawMaterialName = rm?.name;
+    }
+
+    enhancedItems.push({
+      ...item,
+      rawMaterialId,
+      rawMaterialName,
+      pendingQuantity: pendingQty,
+      status: item.shipmentStatus === 'in_transit' ? 'in_transit' :
+              item.shipmentStatus === 'delivered' ? 'arrived' : 'on_order',
+    });
+  }
+
+  return enhancedItems;
+}
+
+// Get inbound shipments from POs
+export async function getInboundShipmentsFromPOs() {
+  const db = await getDb();
+  if (!db) return [];
+
+  return db.select({
+    shipmentId: shipments.id,
+    shipmentNumber: shipments.shipmentNumber,
+    status: shipments.status,
+    carrier: shipments.carrier,
+    trackingNumber: shipments.trackingNumber,
+    shipDate: shipments.shipDate,
+    deliveryDate: shipments.deliveryDate,
+    purchaseOrderId: purchaseOrders.id,
+    poNumber: purchaseOrders.poNumber,
+    poStatus: purchaseOrders.status,
+    vendorId: purchaseOrders.vendorId,
+    expectedDate: purchaseOrders.expectedDate,
+  })
+  .from(shipments)
+  .innerJoin(purchaseOrders, eq(shipments.purchaseOrderId, purchaseOrders.id))
+  .where(and(
+    eq(shipments.type, 'inbound'),
+    or(
+      eq(shipments.status, 'pending'),
+      eq(shipments.status, 'in_transit')
+    )
+  ))
+  .orderBy(desc(shipments.createdAt));
 }
 
 // Convert suggested PO to actual PO
@@ -6278,6 +6595,8 @@ export async function updateAiAgentTask(id: number, data: Partial<{
   executionResult: string;
   errorMessage: string;
   retryCount: number;
+  taskData: string;
+  aiReasoning: string;
 }>) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -7474,4 +7793,175 @@ export async function getUnifiedMessagingHistory(contactId: number, limit: numbe
   });
 
   return combined.slice(0, limit);
+}
+
+// ============================================
+// COPACKER INVENTORY AUTO-PURCHASE
+// ============================================
+
+// Get inventory by ID with product and vendor details
+export async function getInventoryByIdWithDetails(inventoryId: number) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const result = await db.select({
+    inventory: inventory,
+    product: products,
+    vendor: vendors,
+  })
+    .from(inventory)
+    .leftJoin(products, eq(inventory.productId, products.id))
+    .leftJoin(vendors, eq(products.preferredVendorId, vendors.id))
+    .where(eq(inventory.id, inventoryId))
+    .limit(1);
+
+  return result[0] || null;
+}
+
+// Check if inventory is below reorder level and trigger auto-purchase order
+export async function checkAndTriggerLowStockPurchaseOrder(
+  inventoryId: number,
+  userId: number
+): Promise<{ triggered: boolean; purchaseOrderId?: number; alertId?: number; reason?: string }> {
+  const db = await getDb();
+  if (!db) return { triggered: false, reason: "Database not available" };
+
+  // Get inventory with product and vendor details
+  const inventoryData = await getInventoryByIdWithDetails(inventoryId);
+  if (!inventoryData || !inventoryData.inventory) {
+    return { triggered: false, reason: "Inventory record not found" };
+  }
+
+  const inv = inventoryData.inventory;
+  const product = inventoryData.product;
+  const vendor = inventoryData.vendor;
+
+  // Check if reorderLevel is set
+  if (!inv.reorderLevel) {
+    return { triggered: false, reason: "No reorder level set for this inventory" };
+  }
+
+  const currentQty = parseFloat(inv.quantity as string) || 0;
+  const reorderLevel = parseFloat(inv.reorderLevel as string) || 0;
+  const reorderQty = parseFloat(inv.reorderQuantity as string) || 0;
+
+  // Check if quantity is at or below reorder level
+  if (currentQty > reorderLevel) {
+    return { triggered: false, reason: "Stock level is above reorder threshold" };
+  }
+
+  // Check if there's already an open/pending PO for this product
+  const existingPO = await db.select().from(purchaseOrders)
+    .innerJoin(purchaseOrderItems, eq(purchaseOrders.id, purchaseOrderItems.purchaseOrderId))
+    .where(and(
+      eq(purchaseOrderItems.productId, inv.productId),
+      or(
+        eq(purchaseOrders.status, 'draft'),
+        eq(purchaseOrders.status, 'sent'),
+        eq(purchaseOrders.status, 'confirmed'),
+        eq(purchaseOrders.status, 'partial')
+      )
+    ))
+    .limit(1);
+
+  if (existingPO.length > 0) {
+    return { triggered: false, reason: "An open purchase order already exists for this product" };
+  }
+
+  const productName = product?.name || `Product ID: ${inv.productId}`;
+  const productCost = product?.costPrice ? parseFloat(product.costPrice as string) : 0;
+
+  // If no preferred vendor, create an alert instead
+  if (!product?.preferredVendorId || !vendor) {
+    const { id: alertId } = await createAlert({
+      type: 'low_stock',
+      severity: currentQty === 0 ? 'critical' : 'warning',
+      title: `Low stock: ${productName} - No vendor assigned`,
+      description: `Current quantity (${currentQty}) is at or below reorder level (${reorderLevel}). Cannot auto-generate purchase order because no preferred vendor is assigned to this product. Please assign a vendor and create a purchase order manually.`,
+      entityType: 'inventory',
+      entityId: inventoryId,
+      thresholdValue: inv.reorderLevel,
+      actualValue: inv.quantity,
+      autoGenerated: true
+    });
+
+    return {
+      triggered: false,
+      alertId,
+      reason: "No preferred vendor assigned - alert created for manual action"
+    };
+  }
+
+  // Calculate order quantity
+  const orderQty = reorderQty > 0 ? reorderQty : Math.max(reorderLevel - currentQty, 1);
+  const unitPrice = productCost > 0 ? productCost : (product?.unitPrice ? parseFloat(product.unitPrice as string) : 0);
+  const totalAmount = orderQty * unitPrice;
+
+  // Generate PO number
+  const date = new Date();
+  const year = date.getFullYear().toString().slice(-2);
+  const month = (date.getMonth() + 1).toString().padStart(2, '0');
+  const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+  const poNumber = `PO-${year}${month}-${random}`;
+
+  // Create the purchase order
+  const poResult = await createPurchaseOrder({
+    vendorId: product.preferredVendorId,
+    poNumber,
+    status: 'draft',
+    orderDate: new Date(),
+    subtotal: totalAmount.toFixed(2),
+    totalAmount: totalAmount.toFixed(2),
+    currency: 'USD',
+    notes: `Auto-generated purchase order due to low stock. Inventory ID: ${inventoryId}. Current stock: ${currentQty}, Reorder level: ${reorderLevel}.`,
+    createdBy: userId,
+  });
+
+  // Create PO line item
+  await createPurchaseOrderItem({
+    purchaseOrderId: poResult.id,
+    productId: inv.productId,
+    description: productName,
+    quantity: orderQty.toString(),
+    unitPrice: unitPrice.toFixed(2),
+    totalAmount: totalAmount.toFixed(2),
+  });
+
+  // Create audit log for the auto-PO
+  await createAuditLog({
+    entityType: 'purchaseOrder',
+    entityId: poResult.id,
+    action: 'create',
+    userId,
+    newValues: {
+      poNumber,
+      vendorId: product.preferredVendorId,
+      autoGenerated: true,
+      triggerReason: 'low_stock',
+      inventoryId,
+      currentQuantity: currentQty,
+      reorderLevel,
+      orderQuantity: orderQty,
+    },
+  });
+
+  // Create alert for visibility
+  await createAlert({
+    type: 'low_stock',
+    severity: currentQty === 0 ? 'critical' : 'warning',
+    title: `Low stock: ${productName} - Auto PO created`,
+    description: `Current quantity (${currentQty}) is at or below reorder level (${reorderLevel}). Purchase order ${poNumber} has been automatically created for ${orderQty} units from ${vendor.name}.`,
+    entityType: 'purchaseOrder',
+    entityId: poResult.id,
+    thresholdValue: inv.reorderLevel,
+    actualValue: inv.quantity,
+    autoGenerated: true,
+    status: 'acknowledged', // Mark as acknowledged since action was taken
+  });
+
+  return {
+    triggered: true,
+    purchaseOrderId: poResult.id,
+    reason: `Auto-generated PO ${poNumber} for ${orderQty} units`
+  };
 }

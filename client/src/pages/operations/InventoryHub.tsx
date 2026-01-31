@@ -36,7 +36,20 @@ import {
   Loader2,
   Ship,
   Plane,
+  ShoppingBag,
+  Plug,
+  CloudUpload,
+  FileSpreadsheet,
+  Mail,
 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { QuickCreateDialog } from "@/components/QuickCreateDialog";
 import { Link } from "wouter";
@@ -48,10 +61,22 @@ interface InventoryItem {
   product?: { id: number; name: string; sku: string; type?: string };
   rawMaterial?: { id: number; name: string; sku: string };
   totalQuantity: number;
+  onOrderQuantity: number; // From pending POs
+  inTransitQuantity: number; // From PO shipments in transit
   unit: string;
   locations: LocationBreakdown[];
   inTransit: TransitItem[];
+  pendingPOs: PendingPOItem[];
   productType: "finished" | "wip" | "material" | "packaging";
+}
+
+interface PendingPOItem {
+  poId: number;
+  poNumber: string;
+  quantity: number;
+  expectedDate: Date | null;
+  shipmentStatus: string | null;
+  trackingNumber: string | null;
 }
 
 interface LocationBreakdown {
@@ -86,6 +111,7 @@ interface Exception {
 export default function InventoryHub() {
   const [activeView, setActiveView] = useState<"exceptions" | "by_item" | "by_location">("exceptions");
   const [searchTerm, setSearchTerm] = useState("");
+  const [isSyncing, setIsSyncing] = useState(false);
   const [expandedItems, setExpandedItems] = useState<Set<number>>(new Set());
   const [selectedLocation, setSelectedLocation] = useState<number | null>(null);
   const [showShipmentDialog, setShowShipmentDialog] = useState(false);
@@ -112,9 +138,43 @@ export default function InventoryHub() {
   const { data: transfers, isLoading: transfersLoading } = trpc.transfers.list.useQuery();
   const { data: alerts, isLoading: alertsLoading } = trpc.alerts.list.useQuery({ status: "open" });
   const { data: freightBookings } = trpc.freight.bookings.list.useQuery({});
+  const { data: pendingFromPOs, isLoading: pendingLoading } = trpc.inventory.getPendingFromPOs.useQuery();
+  const { data: inboundShipments, isLoading: inboundLoading } = trpc.inventory.getInboundShipments.useQuery();
   // Lots and balances will be fetched from inventory data
 
   const utils = trpc.useUtils();
+
+  // Integration status
+  const { data: integrationStatus } = trpc.integrations.getStatus.useQuery();
+
+  // Shopify sync mutations for inventory
+  const syncShopifyInventory = trpc.shopify.sync.inventory.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Synced ${data.updated} inventory records from Shopify`);
+      utils.inventory.invalidate();
+      setIsSyncing(false);
+    },
+    onError: (err: any) => { toast.error(err.message); setIsSyncing(false); },
+  });
+
+  const syncShopifyProducts = trpc.shopify.sync.products.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Synced ${data.imported} new products, updated ${data.updated}`);
+      utils.inventory.invalidate();
+      setIsSyncing(false);
+    },
+    onError: (err: any) => { toast.error(err.message); setIsSyncing(false); },
+  });
+
+  const handleSyncInventory = () => {
+    setIsSyncing(true);
+    syncShopifyInventory.mutate({});
+  };
+
+  const handleSyncProducts = () => {
+    setIsSyncing(true);
+    syncShopifyProducts.mutate({});
+  };
 
   // Mutations
   const receiveTransfer = trpc.transfers.receive.useMutation({
@@ -162,9 +222,9 @@ export default function InventoryHub() {
   // Build inventory by item view data
   const inventoryByItem = useMemo(() => {
     if (!inventory || !warehouses) return [];
-    
+
     const itemMap = new Map<number, InventoryItem>();
-    
+
     // Group inventory by product
     inventory.forEach((inv: any) => {
       const key = inv.productId;
@@ -174,18 +234,21 @@ export default function InventoryHub() {
           productId: inv.productId,
           product: inv.product,
           totalQuantity: 0,
+          onOrderQuantity: 0,
+          inTransitQuantity: 0,
           unit: inv.unit || "EA",
           locations: [],
           inTransit: [],
+          pendingPOs: [],
           productType: "finished",
         });
       }
-      
+
       const item = itemMap.get(key)!;
       const qty = parseFloat(inv.quantity) || 0;
       const reserved = parseFloat(inv.reservedQuantity) || 0;
       item.totalQuantity += qty;
-      
+
       const warehouse = warehouses.find((w: any) => w.id === inv.warehouseId);
       if (warehouse) {
         const existingLoc = item.locations.find(l => l.warehouseId === inv.warehouseId);
@@ -215,12 +278,15 @@ export default function InventoryHub() {
           productId: mat.id,
           rawMaterial: mat,
           totalQuantity: parseFloat(mat.quantityOnHand) || 0,
+          onOrderQuantity: 0,
+          inTransitQuantity: 0,
           unit: mat.unit || "LB",
           locations: [],
           inTransit: [],
+          pendingPOs: [],
           productType: "material",
         });
-        
+
         // Add location if warehouse exists
         if (mat.warehouseId) {
           const warehouse = warehouses.find((w: any) => w.id === mat.warehouseId);
@@ -236,6 +302,40 @@ export default function InventoryHub() {
             });
           }
         }
+      }
+    });
+
+    // Add pending inventory from POs (on order and in transit)
+    pendingFromPOs?.forEach((pending: any) => {
+      // Find matching item by raw material or product
+      let itemKey: number | null = null;
+
+      if (pending.rawMaterialId) {
+        itemKey = -pending.rawMaterialId;
+      } else if (pending.productId) {
+        itemKey = pending.productId;
+      }
+
+      if (itemKey && itemMap.has(itemKey)) {
+        const item = itemMap.get(itemKey)!;
+        const pendingQty = parseFloat(pending.pendingQuantity) || 0;
+
+        // Add to on-order or in-transit based on shipment status
+        if (pending.status === 'in_transit') {
+          item.inTransitQuantity += pendingQty;
+        } else {
+          item.onOrderQuantity += pendingQty;
+        }
+
+        // Add PO tracking info
+        item.pendingPOs.push({
+          poId: pending.purchaseOrderId,
+          poNumber: pending.poNumber,
+          quantity: pendingQty,
+          expectedDate: pending.expectedDate,
+          shipmentStatus: pending.shipmentStatus,
+          trackingNumber: pending.trackingNumber,
+        });
       }
     });
 
@@ -259,14 +359,14 @@ export default function InventoryHub() {
       }
     });
 
-    return Array.from(itemMap.values()).filter(item => 
-      !searchTerm || 
+    return Array.from(itemMap.values()).filter(item =>
+      !searchTerm ||
       item.product?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       item.product?.sku?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       item.rawMaterial?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       item.rawMaterial?.sku?.toLowerCase().includes(searchTerm.toLowerCase())
     );
-  }, [inventory, rawMaterials, warehouses, transfers, searchTerm]);
+  }, [inventory, rawMaterials, warehouses, transfers, pendingFromPOs, searchTerm]);
 
   // Build inventory by location view data
   const inventoryByLocation = useMemo(() => {
@@ -454,7 +554,7 @@ export default function InventoryHub() {
     }
   };
 
-  const isLoading = warehousesLoading || inventoryLoading || materialsLoading || workOrdersLoading || transfersLoading || alertsLoading;
+  const isLoading = warehousesLoading || inventoryLoading || materialsLoading || workOrdersLoading || transfersLoading || alertsLoading || pendingLoading || inboundLoading;
 
   return (
     <div className="p-6 space-y-6 max-w-[1600px] mx-auto">
@@ -474,6 +574,84 @@ export default function InventoryHub() {
               className="pl-9 w-[280px]"
             />
           </div>
+
+          {/* Shopify Inventory Sync */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" disabled={isSyncing}>
+                {isSyncing ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <ShoppingBag className="h-4 w-4 mr-2" />
+                )}
+                Sync
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuLabel className="flex items-center gap-2">
+                <ShoppingBag className="h-4 w-4 text-green-600" />
+                Shopify Sync
+                {integrationStatus?.shopify?.configured ? (
+                  <Badge variant="outline" className="ml-auto text-xs bg-green-50 text-green-700">Connected</Badge>
+                ) : (
+                  <Badge variant="outline" className="ml-auto text-xs">Not Set Up</Badge>
+                )}
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              {integrationStatus?.shopify?.configured ? (
+                <>
+                  <DropdownMenuItem onClick={handleSyncInventory}>
+                    <Package className="h-4 w-4 mr-2" />
+                    Sync Inventory Levels
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleSyncProducts}>
+                    <Layers className="h-4 w-4 mr-2" />
+                    Sync Products
+                  </DropdownMenuItem>
+                </>
+              ) : (
+                <DropdownMenuItem asChild>
+                  <Link href="/settings/integrations">
+                    <Plug className="h-4 w-4 mr-2" />
+                    Configure Shopify
+                  </Link>
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          {/* More Integrations */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="icon">
+                <Plug className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuLabel>Integrations</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem asChild>
+                <Link href="/import">
+                  <CloudUpload className="h-4 w-4 mr-2" />
+                  Import from Google Sheets
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem asChild>
+                <Link href="/settings/integrations">
+                  <FileSpreadsheet className="h-4 w-4 mr-2" />
+                  Export to Sheets
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem asChild>
+                <Link href="/settings/integrations">
+                  <Plug className="h-4 w-4 mr-2" />
+                  All Integrations
+                </Link>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
           <Button variant="outline" onClick={() => utils.inventory.invalidate()}>
             <RefreshCw className="h-4 w-4 mr-2" />
             Refresh
@@ -877,8 +1055,32 @@ export default function InventoryHub() {
                           <p className="text-2xl font-bold">
                             {item.totalQuantity.toLocaleString()} <span className="text-sm font-normal text-muted-foreground">{item.unit}</span>
                           </p>
-                          <p className="text-sm text-muted-foreground">Total Owned</p>
+                          <p className="text-sm text-muted-foreground">On Hand</p>
                         </div>
+                        {(item.onOrderQuantity > 0 || item.inTransitQuantity > 0) && (
+                          <>
+                            {item.onOrderQuantity > 0 && (
+                              <div className="text-right border-l pl-4">
+                                <p className="text-lg font-semibold text-blue-600">
+                                  +{item.onOrderQuantity.toLocaleString()} <span className="text-sm font-normal">{item.unit}</span>
+                                </p>
+                                <p className="text-sm text-muted-foreground flex items-center gap-1">
+                                  <Clock className="h-3 w-3" /> On Order
+                                </p>
+                              </div>
+                            )}
+                            {item.inTransitQuantity > 0 && (
+                              <div className="text-right border-l pl-4">
+                                <p className="text-lg font-semibold text-green-600">
+                                  +{item.inTransitQuantity.toLocaleString()} <span className="text-sm font-normal">{item.unit}</span>
+                                </p>
+                                <p className="text-sm text-muted-foreground flex items-center gap-1">
+                                  <Truck className="h-3 w-3" /> In Transit
+                                </p>
+                              </div>
+                            )}
+                          </>
+                        )}
                         <div className="flex gap-2">
                           <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); setSelectedItem(item); setShowShipmentDialog(true); }}>
                             <Send className="h-4 w-4 mr-1" />
@@ -942,11 +1144,11 @@ export default function InventoryHub() {
                           ))}
                         </div>
 
-                        {/* In Transit */}
+                        {/* In Transit & On Order */}
                         <div className="space-y-3">
-                          <p className="font-medium text-muted-foreground">In Transit</p>
+                          <p className="font-medium text-muted-foreground">Internal Transfers</p>
                           {item.inTransit.length === 0 ? (
-                            <p className="text-sm text-muted-foreground">No shipments in transit</p>
+                            <p className="text-sm text-muted-foreground">No internal transfers in transit</p>
                           ) : (
                             item.inTransit.map((transit, idx) => (
                               <div key={idx} className="flex items-center gap-3 p-3 bg-blue-50 rounded-lg border border-blue-200">
@@ -969,6 +1171,68 @@ export default function InventoryHub() {
                                 </Button>
                               </div>
                             ))
+                          )}
+
+                          {/* Pending Purchase Orders */}
+                          {item.pendingPOs.length > 0 && (
+                            <>
+                              <p className="font-medium text-muted-foreground mt-4">Pending Purchase Orders</p>
+                              {item.pendingPOs.map((po, idx) => (
+                                <div
+                                  key={idx}
+                                  className={cn(
+                                    "flex items-center gap-3 p-3 rounded-lg border",
+                                    po.shipmentStatus === 'in_transit'
+                                      ? "bg-green-50 border-green-200"
+                                      : "bg-yellow-50 border-yellow-200"
+                                  )}
+                                >
+                                  {po.shipmentStatus === 'in_transit' ? (
+                                    <Truck className="h-5 w-5 text-green-600" />
+                                  ) : (
+                                    <Clock className="h-5 w-5 text-yellow-600" />
+                                  )}
+                                  <div className="flex-1">
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-medium">{po.quantity.toLocaleString()} {item.unit}</span>
+                                      <Badge
+                                        variant="outline"
+                                        className={cn(
+                                          "text-xs",
+                                          po.shipmentStatus === 'in_transit'
+                                            ? "bg-green-100 text-green-700 border-green-300"
+                                            : "bg-yellow-100 text-yellow-700 border-yellow-300"
+                                        )}
+                                      >
+                                        {po.shipmentStatus === 'in_transit' ? 'In Transit' : 'On Order'}
+                                      </Badge>
+                                    </div>
+                                    <p className="text-sm text-muted-foreground mt-1">
+                                      PO: {po.poNumber}
+                                      {po.trackingNumber && (
+                                        <span className="ml-2">Tracking: {po.trackingNumber}</span>
+                                      )}
+                                    </p>
+                                    {po.expectedDate && (
+                                      <p className="text-sm text-muted-foreground flex items-center gap-1">
+                                        <Clock className="h-3 w-3" />
+                                        Expected: {new Date(po.expectedDate).toLocaleDateString()}
+                                      </p>
+                                    )}
+                                  </div>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      window.location.href = `/operations/po-receiving?poId=${po.poId}`;
+                                    }}
+                                  >
+                                    Receive
+                                  </Button>
+                                </div>
+                              ))}
+                            </>
                           )}
                         </div>
                       </div>

@@ -38,6 +38,8 @@ import {
   Users,
   Building2,
   Boxes,
+  Edit,
+  Info,
 } from "lucide-react";
 import { Link } from "wouter";
 import { toast } from "sonner";
@@ -107,6 +109,8 @@ export default function ApprovalQueue() {
   const [selectedTask, setSelectedTask] = useState<any>(null);
   const [rejectReason, setRejectReason] = useState("");
   const [isRejectDialogOpen, setIsRejectDialogOpen] = useState(false);
+  const [isDetailDialogOpen, setIsDetailDialogOpen] = useState(false);
+  const [editedTaskData, setEditedTaskData] = useState("");
   const [activeTab, setActiveTab] = useState("pending");
   
   const utils = trpc.useUtils();
@@ -141,6 +145,15 @@ export default function ApprovalQueue() {
     onError: (err) => toast.error(err.message),
   });
   
+  const updateMutation = trpc.aiAgent.tasks.update.useMutation({
+    onSuccess: () => {
+      toast.success("Task updated successfully");
+      utils.aiAgent.tasks.invalidate();
+      setIsDetailDialogOpen(false);
+    },
+    onError: (err) => toast.error(err.message),
+  });
+  
   const handleApprove = (taskId: number) => {
     approveMutation.mutate({ id: taskId });
   };
@@ -158,6 +171,27 @@ export default function ApprovalQueue() {
   
   const handleExecute = (taskId: number) => {
     executeMutation.mutate({ id: taskId });
+  };
+  
+  const handleViewTask = (task: any) => {
+    setSelectedTask(task);
+    setEditedTaskData(task.taskData || "{}");
+    setIsDetailDialogOpen(true);
+  };
+  
+  const handleSaveTaskData = () => {
+    if (selectedTask) {
+      try {
+        // Validate JSON
+        JSON.parse(editedTaskData);
+        updateMutation.mutate({ 
+          id: selectedTask.id, 
+          taskData: editedTaskData 
+        });
+      } catch (e) {
+        toast.error("Invalid JSON format");
+      }
+    }
   };
   
   const renderTaskCard = (task: any, showActions = true) => {
@@ -336,6 +370,14 @@ export default function ApprovalQueue() {
                 <Button
                   size="sm"
                   variant="outline"
+                  onClick={() => handleViewTask(task)}
+                >
+                  <Eye className="h-4 w-4 mr-1" />
+                  Details
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
                   onClick={() => handleReject(task)}
                   disabled={rejectMutation.isPending}
                 >
@@ -375,17 +417,38 @@ export default function ApprovalQueue() {
             )}
             
             {showActions && task.status === "approved" && (
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => handleViewTask(task)}
+                >
+                  <Eye className="h-4 w-4 mr-1" />
+                  Details
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={() => handleExecute(task.id)}
+                  disabled={executeMutation.isPending}
+                >
+                  {executeMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                  ) : (
+                    <Play className="h-4 w-4 mr-1" />
+                  )}
+                  Execute
+                </Button>
+              </div>
+            )}
+            
+            {showActions && !["pending_approval", "approved"].includes(task.status) && (
               <Button
                 size="sm"
-                onClick={() => handleExecute(task.id)}
-                disabled={executeMutation.isPending}
+                variant="outline"
+                onClick={() => handleViewTask(task)}
               >
-                {executeMutation.isPending ? (
-                  <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                ) : (
-                  <Play className="h-4 w-4 mr-1" />
-                )}
-                Execute
+                <Eye className="h-4 w-4 mr-1" />
+                View Details
               </Button>
             )}
           </div>
@@ -587,6 +650,194 @@ export default function ApprovalQueue() {
               )}
               Reject
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      
+      {/* Task Detail Dialog */}
+      <Dialog open={isDetailDialogOpen} onOpenChange={(open) => {
+        setIsDetailDialogOpen(open);
+        if (!open) {
+          // Reset state when dialog closes
+          setSelectedTask(null);
+          setEditedTaskData("");
+        }
+      }}>
+        <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Info className="h-5 w-5" />
+              Task Details
+            </DialogTitle>
+            <DialogDescription>
+              {selectedTask && (
+                <div className="flex items-center gap-2 mt-2">
+                  <Badge className={priorityColors[selectedTask.priority]}>
+                    {selectedTask.priority}
+                  </Badge>
+                  <Badge className={statusColors[selectedTask.status]}>
+                    {selectedTask.status.replace(/_/g, " ")}
+                  </Badge>
+                  <span className="text-xs text-muted-foreground">
+                    ID: #{selectedTask.id}
+                  </span>
+                </div>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          
+          {selectedTask && (
+            <div className="space-y-4">
+              {/* Basic Info */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm font-medium">Task Type</label>
+                  <p className="text-sm text-muted-foreground">
+                    {taskTypeLabels[selectedTask.taskType] || selectedTask.taskType}
+                  </p>
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Created</label>
+                  <p className="text-sm text-muted-foreground">
+                    {formatDate(selectedTask.createdAt)}
+                  </p>
+                </div>
+              </div>
+              
+              {/* AI Reasoning */}
+              {selectedTask.aiReasoning && (
+                <div>
+                  <label className="text-sm font-medium flex items-center gap-2">
+                    <Bot className="h-4 w-4" />
+                    AI Reasoning
+                    {selectedTask.aiConfidence && (
+                      <Badge variant="outline" className="text-xs">
+                        {parseFloat(selectedTask.aiConfidence).toFixed(1)}% confidence
+                      </Badge>
+                    )}
+                  </label>
+                  <p className="text-sm text-muted-foreground mt-1 p-3 bg-muted/50 rounded">
+                    {selectedTask.aiReasoning}
+                  </p>
+                </div>
+              )}
+              
+              {/* Task Data - Editable for pending/approved tasks */}
+              <div>
+                <label className="text-sm font-medium flex items-center gap-2 mb-2">
+                  <FileText className="h-4 w-4" />
+                  Task Data
+                  {['pending_approval', 'approved'].includes(selectedTask.status) && (
+                    <Badge variant="outline" className="text-xs">
+                      Editable
+                    </Badge>
+                  )}
+                </label>
+                {['pending_approval', 'approved'].includes(selectedTask.status) ? (
+                  <Textarea
+                    value={editedTaskData}
+                    onChange={(e) => setEditedTaskData(e.target.value)}
+                    className="font-mono text-xs"
+                    rows={10}
+                    placeholder='{"key": "value"}'
+                  />
+                ) : (
+                  <pre className="text-xs bg-muted p-3 rounded overflow-x-auto">
+                    {(() => {
+                      try {
+                        return JSON.stringify(JSON.parse(selectedTask.taskData || "{}"), null, 2);
+                      } catch {
+                        return selectedTask.taskData || "{}";
+                      }
+                    })()}
+                  </pre>
+                )}
+              </div>
+              
+              {/* Execution Result - shown for completed tasks */}
+              {selectedTask.executionResult && (
+                <div>
+                  <label className="text-sm font-medium flex items-center gap-2 mb-2">
+                    <CheckCircle className="h-4 w-4 text-green-600" />
+                    Execution Result
+                  </label>
+                  <pre className="text-xs bg-green-50 p-3 rounded border border-green-200 overflow-x-auto">
+                    {(() => {
+                      try {
+                        return JSON.stringify(JSON.parse(selectedTask.executionResult), null, 2);
+                      } catch {
+                        return selectedTask.executionResult;
+                      }
+                    })()}
+                  </pre>
+                </div>
+              )}
+              
+              {/* Error Message - shown for failed tasks */}
+              {selectedTask.errorMessage && (
+                <div>
+                  <label className="text-sm font-medium flex items-center gap-2 mb-2">
+                    <XCircle className="h-4 w-4 text-red-600" />
+                    Error Message
+                  </label>
+                  <p className="text-sm text-red-600 p-3 bg-red-50 rounded border border-red-200">
+                    {selectedTask.errorMessage}
+                  </p>
+                </div>
+              )}
+              
+              {/* Approval/Rejection Info */}
+              {selectedTask.approvedAt && (
+                <div className="p-3 bg-green-50 rounded border border-green-200">
+                  <p className="text-sm text-green-700">
+                    <strong>Approved:</strong> {formatDate(selectedTask.approvedAt)}
+                  </p>
+                </div>
+              )}
+              
+              {selectedTask.rejectedAt && (
+                <div className="p-3 bg-red-50 rounded border border-red-200">
+                  <p className="text-sm text-red-700">
+                    <strong>Rejected:</strong> {formatDate(selectedTask.rejectedAt)}
+                  </p>
+                  {selectedTask.rejectionReason && (
+                    <p className="text-sm text-red-600 mt-1">
+                      <strong>Reason:</strong> {selectedTask.rejectionReason}
+                    </p>
+                  )}
+                </div>
+              )}
+              
+              {selectedTask.executedAt && (
+                <div className="p-3 bg-blue-50 rounded border border-blue-200">
+                  <p className="text-sm text-blue-700">
+                    <strong>Executed:</strong> {formatDate(selectedTask.executedAt)}
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+          
+          <DialogFooter>
+            <Button 
+              variant="outline" 
+              onClick={() => setIsDetailDialogOpen(false)}
+            >
+              Close
+            </Button>
+            {selectedTask && ['pending_approval', 'approved'].includes(selectedTask.status) && (
+              <Button
+                onClick={handleSaveTaskData}
+                disabled={updateMutation.isPending}
+              >
+                {updateMutation.isPending ? (
+                  <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                ) : (
+                  <Edit className="h-4 w-4 mr-1" />
+                )}
+                Save Changes
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
