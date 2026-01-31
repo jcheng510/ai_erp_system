@@ -1554,7 +1554,7 @@ function GoogleDriveSyncSettings({ dataRoomId }: { dataRoomId: number }) {
   };
 
   const navigateToFolder = (folderId: string, folderName: string) => {
-    setFolderPath([...folderPath, { id: currentParentId || 'root', name: currentParentId ? folderPath[folderPath.length - 1]?.name || 'Root' : 'My Drive' }]);
+    setFolderPath([...folderPath, { id: folderId, name: folderName }]);
     setCurrentParentId(folderId);
   };
 
