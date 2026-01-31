@@ -105,3 +105,6 @@ temp/
 *.db
 *.sqlite
 *.sqlite3
+
+# Test files (temporary)
+test_ocr_fallback.mjs
