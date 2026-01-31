@@ -3149,3 +3149,356 @@ export type InsertVendorRfqEmail = typeof vendorRfqEmails.$inferInsert;
 
 export type VendorRfqInvitation = typeof vendorRfqInvitations.$inferSelect;
 export type InsertVendorRfqInvitation = typeof vendorRfqInvitations.$inferInsert;
+
+// ============================================
+// CRM MODULE - Contacts, Messaging & Tracking
+// ============================================
+
+// CRM Contacts - Individual contact persons (separate from customer accounts)
+export const crmContacts = mysqlTable("crm_contacts", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+
+  // Basic info
+  firstName: varchar("firstName", { length: 128 }).notNull(),
+  lastName: varchar("lastName", { length: 128 }),
+  fullName: varchar("fullName", { length: 255 }).notNull(),
+  email: varchar("email", { length: 320 }),
+  phone: varchar("phone", { length: 32 }),
+  whatsappNumber: varchar("whatsappNumber", { length: 32 }),
+  linkedinUrl: varchar("linkedinUrl", { length: 512 }),
+
+  // Organization info
+  organization: varchar("organization", { length: 255 }),
+  jobTitle: varchar("jobTitle", { length: 255 }),
+  department: varchar("department", { length: 128 }),
+
+  // Address
+  address: text("address"),
+  city: varchar("city", { length: 128 }),
+  state: varchar("state", { length: 64 }),
+  country: varchar("country", { length: 64 }),
+  postalCode: varchar("postalCode", { length: 20 }),
+
+  // CRM classification
+  contactType: mysqlEnum("contactType", ["lead", "prospect", "customer", "partner", "investor", "donor", "vendor", "other"]).default("lead").notNull(),
+  source: mysqlEnum("source", ["iphone_bump", "whatsapp", "linkedin_scan", "business_card", "website", "referral", "event", "cold_outreach", "import", "manual"]).default("manual").notNull(),
+  status: mysqlEnum("status", ["active", "inactive", "unsubscribed", "bounced"]).default("active").notNull(),
+
+  // Sales/Fundraising context
+  pipelineStage: mysqlEnum("pipelineStage", ["new", "contacted", "qualified", "proposal", "negotiation", "won", "lost"]).default("new"),
+  dealValue: decimal("dealValue", { precision: 15, scale: 2 }),
+  dealCurrency: varchar("dealCurrency", { length: 3 }).default("USD"),
+
+  // Engagement tracking
+  leadScore: int("leadScore").default(0),
+  lastContactedAt: timestamp("lastContactedAt"),
+  lastRepliedAt: timestamp("lastRepliedAt"),
+  nextFollowUpAt: timestamp("nextFollowUpAt"),
+  totalInteractions: int("totalInteractions").default(0),
+
+  // Communication preferences
+  preferredChannel: mysqlEnum("preferredChannel", ["email", "whatsapp", "phone", "sms", "linkedin"]).default("email"),
+  optedOutEmail: boolean("optedOutEmail").default(false),
+  optedOutSms: boolean("optedOutSms").default(false),
+  optedOutWhatsapp: boolean("optedOutWhatsapp").default(false),
+
+  // External integrations
+  customerId: int("customerId"), // Link to customer if converted
+  hubspotContactId: varchar("hubspotContactId", { length: 64 }),
+  salesforceContactId: varchar("salesforceContactId", { length: 64 }),
+
+  // Capture metadata
+  captureDeviceId: varchar("captureDeviceId", { length: 128 }),
+  captureSessionId: varchar("captureSessionId", { length: 128 }),
+  capturedBy: int("capturedBy"),
+  captureData: text("captureData"), // JSON - raw data from capture source
+
+  // Additional info
+  notes: text("notes"),
+  tags: text("tags"), // JSON array of tag names
+  customFields: text("customFields"), // JSON object for custom fields
+  avatarUrl: text("avatarUrl"),
+
+  assignedTo: int("assignedTo"), // User responsible for this contact
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type CrmContact = typeof crmContacts.$inferSelect;
+export type InsertCrmContact = typeof crmContacts.$inferInsert;
+
+// CRM Contact Tags for categorization
+export const crmTags = mysqlTable("crm_tags", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 64 }).notNull(),
+  color: varchar("color", { length: 7 }).default("#3B82F6"), // Hex color
+  category: mysqlEnum("category", ["contact", "deal", "general"]).default("general"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type CrmTag = typeof crmTags.$inferSelect;
+export type InsertCrmTag = typeof crmTags.$inferInsert;
+
+// Contact-Tag associations
+export const crmContactTags = mysqlTable("crm_contact_tags", {
+  id: int("id").autoincrement().primaryKey(),
+  contactId: int("contactId").notNull(),
+  tagId: int("tagId").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+// WhatsApp Messages - Track WhatsApp conversations
+export const whatsappMessages = mysqlTable("whatsapp_messages", {
+  id: int("id").autoincrement().primaryKey(),
+  contactId: int("contactId"),
+
+  // Message identifiers
+  messageId: varchar("messageId", { length: 128 }), // WhatsApp message ID
+  conversationId: varchar("conversationId", { length: 128 }), // Conversation thread
+
+  // Contact info
+  whatsappNumber: varchar("whatsappNumber", { length: 32 }).notNull(),
+  contactName: varchar("contactName", { length: 255 }),
+
+  // Message details
+  direction: mysqlEnum("direction", ["inbound", "outbound"]).notNull(),
+  messageType: mysqlEnum("messageType", ["text", "image", "video", "audio", "document", "location", "contact", "template"]).default("text"),
+  content: text("content"),
+  mediaUrl: text("mediaUrl"),
+  mediaType: varchar("mediaType", { length: 128 }),
+
+  // Status tracking
+  status: mysqlEnum("status", ["pending", "sent", "delivered", "read", "failed"]).default("pending"),
+  sentAt: timestamp("sentAt"),
+  deliveredAt: timestamp("deliveredAt"),
+  readAt: timestamp("readAt"),
+  failedReason: text("failedReason"),
+
+  // Template tracking (for business API)
+  templateName: varchar("templateName", { length: 128 }),
+  templateParams: text("templateParams"), // JSON
+
+  // AI processing
+  aiProcessed: boolean("aiProcessed").default(false),
+  sentiment: mysqlEnum("sentiment", ["positive", "neutral", "negative"]),
+  aiSummary: text("aiSummary"),
+  aiSuggestedReply: text("aiSuggestedReply"),
+
+  // Context
+  relatedEntityType: varchar("relatedEntityType", { length: 50 }),
+  relatedEntityId: int("relatedEntityId"),
+
+  sentBy: int("sentBy"),
+  metadata: text("metadata"), // JSON
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type WhatsappMessage = typeof whatsappMessages.$inferSelect;
+export type InsertWhatsappMessage = typeof whatsappMessages.$inferInsert;
+
+// CRM Interactions - Unified activity log across all channels
+export const crmInteractions = mysqlTable("crm_interactions", {
+  id: int("id").autoincrement().primaryKey(),
+  contactId: int("contactId").notNull(),
+
+  // Interaction type
+  channel: mysqlEnum("channel", ["email", "whatsapp", "sms", "phone", "meeting", "linkedin", "note", "task"]).notNull(),
+  interactionType: mysqlEnum("interactionType", ["sent", "received", "call_made", "call_received", "meeting_scheduled", "meeting_completed", "note_added", "task_completed"]).notNull(),
+
+  // Content
+  subject: varchar("subject", { length: 500 }),
+  content: text("content"),
+  summary: text("summary"),
+
+  // Linked records
+  emailId: int("emailId"), // Link to sentEmails or inboundEmails
+  whatsappMessageId: int("whatsappMessageId"),
+
+  // Call details (if phone)
+  callDuration: int("callDuration"), // seconds
+  callOutcome: mysqlEnum("callOutcome", ["answered", "voicemail", "no_answer", "busy", "wrong_number"]),
+
+  // Meeting details
+  meetingStartTime: timestamp("meetingStartTime"),
+  meetingEndTime: timestamp("meetingEndTime"),
+  meetingLocation: varchar("meetingLocation", { length: 255 }),
+  meetingLink: varchar("meetingLink", { length: 512 }),
+
+  // Engagement metrics
+  opened: boolean("opened").default(false),
+  clicked: boolean("clicked").default(false),
+  replied: boolean("replied").default(false),
+
+  // AI analysis
+  sentiment: mysqlEnum("sentiment", ["positive", "neutral", "negative"]),
+  aiNotes: text("aiNotes"),
+
+  // Context
+  relatedDealId: int("relatedDealId"),
+  performedBy: int("performedBy"),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type CrmInteraction = typeof crmInteractions.$inferSelect;
+export type InsertCrmInteraction = typeof crmInteractions.$inferInsert;
+
+// CRM Pipelines - For sales and fundraising
+export const crmPipelines = mysqlTable("crm_pipelines", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 128 }).notNull(),
+  type: mysqlEnum("type", ["sales", "fundraising", "partnerships", "other"]).default("sales").notNull(),
+  stages: text("stages").notNull(), // JSON array of stage names and order
+  isDefault: boolean("isDefault").default(false),
+  isActive: boolean("isActive").default(true),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type CrmPipeline = typeof crmPipelines.$inferSelect;
+export type InsertCrmPipeline = typeof crmPipelines.$inferInsert;
+
+// CRM Deals - Track opportunities/deals
+export const crmDeals = mysqlTable("crm_deals", {
+  id: int("id").autoincrement().primaryKey(),
+  pipelineId: int("pipelineId").notNull(),
+  contactId: int("contactId").notNull(),
+
+  // Deal info
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  stage: varchar("stage", { length: 64 }).notNull(),
+
+  // Value
+  amount: decimal("amount", { precision: 15, scale: 2 }),
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  probability: int("probability").default(0), // 0-100%
+  expectedCloseDate: timestamp("expectedCloseDate"),
+
+  // Status
+  status: mysqlEnum("status", ["open", "won", "lost", "stalled"]).default("open").notNull(),
+  lostReason: varchar("lostReason", { length: 255 }),
+  wonAt: timestamp("wonAt"),
+  lostAt: timestamp("lostAt"),
+
+  // Assignment
+  assignedTo: int("assignedTo"),
+
+  // Source tracking
+  source: varchar("source", { length: 128 }),
+  campaign: varchar("campaign", { length: 128 }),
+
+  notes: text("notes"),
+  customFields: text("customFields"), // JSON
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type CrmDeal = typeof crmDeals.$inferSelect;
+export type InsertCrmDeal = typeof crmDeals.$inferInsert;
+
+// Contact Captures - Track how contacts were captured
+export const contactCaptures = mysqlTable("contact_captures", {
+  id: int("id").autoincrement().primaryKey(),
+  contactId: int("contactId"),
+
+  // Capture method
+  captureMethod: mysqlEnum("captureMethod", ["iphone_bump", "airdrop", "nfc", "qr_code", "whatsapp_scan", "linkedin_scan", "business_card_scan", "manual"]).notNull(),
+
+  // Raw captured data
+  rawData: text("rawData").notNull(), // JSON - vCard, LinkedIn profile data, etc.
+  parsedData: text("parsedData"), // JSON - Parsed/normalized data
+
+  // vCard specific fields
+  vcardData: text("vcardData"),
+
+  // LinkedIn specific fields
+  linkedinProfileUrl: varchar("linkedinProfileUrl", { length: 512 }),
+  linkedinProfileData: text("linkedinProfileData"), // JSON
+
+  // Business card scan
+  imageUrl: text("imageUrl"),
+  ocrText: text("ocrText"),
+
+  // Processing status
+  status: mysqlEnum("status", ["pending", "parsed", "contact_created", "merged", "failed"]).default("pending").notNull(),
+  errorMessage: text("errorMessage"),
+
+  // Context
+  capturedAt: timestamp("capturedAt").defaultNow().notNull(),
+  capturedBy: int("capturedBy"),
+  eventName: varchar("eventName", { length: 255 }), // Name of event where captured
+  eventLocation: varchar("eventLocation", { length: 255 }),
+
+  // Device info
+  deviceType: varchar("deviceType", { length: 64 }),
+  deviceId: varchar("deviceId", { length: 128 }),
+
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ContactCapture = typeof contactCaptures.$inferSelect;
+export type InsertContactCapture = typeof contactCaptures.$inferInsert;
+
+// Email Campaigns for CRM
+export const crmEmailCampaigns = mysqlTable("crm_email_campaigns", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  subject: varchar("subject", { length: 500 }).notNull(),
+  bodyHtml: text("bodyHtml").notNull(),
+  bodyText: text("bodyText"),
+
+  // Campaign type
+  type: mysqlEnum("type", ["newsletter", "drip", "announcement", "follow_up", "custom"]).default("custom"),
+
+  // Status
+  status: mysqlEnum("status", ["draft", "scheduled", "sending", "sent", "paused", "cancelled"]).default("draft"),
+  scheduledAt: timestamp("scheduledAt"),
+  sentAt: timestamp("sentAt"),
+
+  // Targeting
+  targetTags: text("targetTags"), // JSON array of tag IDs
+  targetContactTypes: text("targetContactTypes"), // JSON array
+  targetPipelineStages: text("targetPipelineStages"), // JSON array
+
+  // Stats
+  totalRecipients: int("totalRecipients").default(0),
+  sentCount: int("sentCount").default(0),
+  deliveredCount: int("deliveredCount").default(0),
+  openedCount: int("openedCount").default(0),
+  clickedCount: int("clickedCount").default(0),
+  bouncedCount: int("bouncedCount").default(0),
+  unsubscribedCount: int("unsubscribedCount").default(0),
+
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type CrmEmailCampaign = typeof crmEmailCampaigns.$inferSelect;
+export type InsertCrmEmailCampaign = typeof crmEmailCampaigns.$inferInsert;
+
+// Campaign recipients tracking
+export const crmCampaignRecipients = mysqlTable("crm_campaign_recipients", {
+  id: int("id").autoincrement().primaryKey(),
+  campaignId: int("campaignId").notNull(),
+  contactId: int("contactId").notNull(),
+  email: varchar("email", { length: 320 }).notNull(),
+
+  status: mysqlEnum("status", ["pending", "sent", "delivered", "opened", "clicked", "bounced", "unsubscribed"]).default("pending"),
+  sentAt: timestamp("sentAt"),
+  deliveredAt: timestamp("deliveredAt"),
+  openedAt: timestamp("openedAt"),
+  clickedAt: timestamp("clickedAt"),
+
+  messageId: varchar("messageId", { length: 255 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type CrmCampaignRecipient = typeof crmCampaignRecipients.$inferSelect;
+export type InsertCrmCampaignRecipient = typeof crmCampaignRecipients.$inferInsert;

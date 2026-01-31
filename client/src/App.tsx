@@ -24,6 +24,9 @@ import Orders from "./pages/sales/Orders";
 import Customers from "./pages/sales/Customers";
 import SalesHub from "./pages/sales/SalesHub";
 
+// CRM
+import CRMHub from "./pages/crm/CRMHub";
+
 // Operations
 import Products from "./pages/operations/Products";
 import Inventory from "./pages/operations/Inventory";
@@ -118,6 +121,10 @@ function Router() {
         <Route path="/sales/orders" component={Orders} />
         <Route path="/sales/customers" component={Customers} />
         <Route path="/sales/hub" component={SalesHub} />
+
+        {/* CRM */}
+        <Route path="/crm" component={CRMHub} />
+        <Route path="/crm/hub" component={CRMHub} />
 
         {/* Operations */}
         <Route path="/operations" component={OperationsHub} />
