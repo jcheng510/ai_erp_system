@@ -16,7 +16,7 @@ import { storagePut } from "./storage";
 import { nanoid } from "nanoid";
 import { sendGmailMessage, createGmailDraft, listGmailMessages, getGmailMessage, replyToGmailMessage, getGmailProfile } from "./_core/gmail";
 import { createGoogleDoc, insertTextInDoc, getGoogleDoc, updateGoogleDoc, createGoogleSheet, updateGoogleSheet, appendToGoogleSheet, getGoogleSheetValues, shareGoogleFile, getFileShareableLink } from "./_core/googleWorkspace";
-import { getGoogleFullAccessAuthUrl } from "./_core/googleDrive";
+import { getGoogleFullAccessAuthUrl, syncDriveFolder, listDriveFolders, getFolderInfo, getSimpleFileType } from "./_core/googleDrive";
 
 // Role-based access middleware
 const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
@@ -8749,6 +8749,7 @@ Ask if they received the original request and if they can provide a quote.`;
         allowPrint: z.boolean().optional(),
         welcomeMessage: z.string().optional(),
         status: z.enum(['active', 'archived', 'draft']).optional(),
+        googleDriveFolderId: z.string().nullable().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const room = await db.getDataRoomById(input.id);
@@ -9125,6 +9126,175 @@ Ask if they received the original request and if they can provide a quote.`;
         .mutation(async ({ input }) => {
           // TODO: Resend invitation email
           return { success: true };
+        }),
+    }),
+
+    // Google Drive sync
+    googleDrive: router({
+      // List available Google Drive folders
+      listFolders: protectedProcedure
+        .input(z.object({ 
+          parentFolderId: z.string().optional() 
+        }))
+        .query(async ({ ctx, input }) => {
+          const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+          if (error) {
+            throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
+          }
+
+          const result = await listDriveFolders(accessToken, input.parentFolderId);
+          if (result.error) {
+            throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error });
+          }
+
+          return { folders: result.folders };
+        }),
+
+      // Sync a Google Drive folder to a data room
+      syncFolder: protectedProcedure
+        .input(z.object({
+          dataRoomId: z.number(),
+          googleDriveFolderId: z.string(),
+        }))
+        .mutation(async ({ ctx, input }) => {
+          // Verify data room ownership
+          const room = await db.getDataRoomById(input.dataRoomId);
+          if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
+          if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
+          }
+
+          // Get valid Google OAuth token
+          const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+          if (error) {
+            throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
+          }
+
+          // Verify folder exists and get info
+          const folderInfo = await getFolderInfo(accessToken, input.googleDriveFolderId);
+          if (folderInfo.error || !folderInfo.folder) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: folderInfo.error || 'Folder not found' });
+          }
+
+          // Sync folder structure and files
+          const syncResult = await syncDriveFolder(accessToken, input.googleDriveFolderId);
+          if (!syncResult.success) {
+            throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: syncResult.error || 'Sync failed' });
+          }
+
+          // Get existing folders and documents to avoid duplicates
+          const existingFolders = await db.getDataRoomFolders(input.dataRoomId, null);
+          const existingDocs = await db.getDataRoomDocuments(input.dataRoomId, null);
+          const existingFoldersByDriveId = new Map(
+            existingFolders
+              .filter(f => f.googleDriveFolderId)
+              .map(f => [f.googleDriveFolderId!, f.id])
+          );
+          const existingDocsByDriveId = new Map(
+            existingDocs
+              .filter(d => d.googleDriveFileId)
+              .map(d => [d.googleDriveFileId!, d.id])
+          );
+
+          // Create folder hierarchy in data room
+          const folderMap = new Map<string, number>(); // Google Drive folder ID -> data room folder ID
+          
+          // Sort folders by depth to ensure parents are created before children
+          const sortedFolders = [...syncResult.folders].sort((a, b) => {
+            const aDepth = a.parents?.length || 0;
+            const bDepth = b.parents?.length || 0;
+            return aDepth - bDepth;
+          });
+          
+          // Process folders
+          let foldersCreated = 0;
+          for (const driveFolder of sortedFolders) {
+            // Check if folder already exists
+            if (existingFoldersByDriveId.has(driveFolder.id)) {
+              folderMap.set(driveFolder.id, existingFoldersByDriveId.get(driveFolder.id)!);
+              continue;
+            }
+
+            const parentDriveId = driveFolder.parents?.[0];
+            const parentDataRoomId = parentDriveId && parentDriveId !== input.googleDriveFolderId 
+              ? folderMap.get(parentDriveId) 
+              : null;
+
+            // Log warning if parent folder is missing
+            if (parentDriveId && parentDriveId !== input.googleDriveFolderId && !parentDataRoomId) {
+              console.warn(`[GoogleDrive Sync] Parent folder ${parentDriveId} not found for folder ${driveFolder.name}`);
+            }
+
+            const { id } = await db.createDataRoomFolder({
+              dataRoomId: input.dataRoomId,
+              parentId: parentDataRoomId,
+              name: driveFolder.name,
+              googleDriveFolderId: driveFolder.id,
+            });
+
+            folderMap.set(driveFolder.id, id);
+            foldersCreated++;
+          }
+
+          // Process files
+          let filesCreated = 0;
+          for (const driveFile of syncResult.files) {
+            // Check if file already exists
+            if (existingDocsByDriveId.has(driveFile.id)) {
+              continue;
+            }
+
+            const parentDriveId = driveFile.parents?.[0];
+            let folderId: number | null = null;
+
+            // Determine which folder this file belongs to
+            if (parentDriveId === input.googleDriveFolderId) {
+              // Root level file
+              folderId = null;
+            } else if (parentDriveId) {
+              folderId = folderMap.get(parentDriveId) || existingFoldersByDriveId.get(parentDriveId) || null;
+              
+              // Log warning if parent folder is missing
+              if (!folderId) {
+                console.warn(`[GoogleDrive Sync] Parent folder ${parentDriveId} not found for file ${driveFile.name}`);
+              }
+            }
+
+            const fileType = getSimpleFileType(driveFile.mimeType);
+            const fileSize = driveFile.size && !isNaN(parseInt(driveFile.size)) 
+              ? parseInt(driveFile.size) 
+              : undefined;
+
+            await db.createDataRoomDocument({
+              dataRoomId: input.dataRoomId,
+              folderId,
+              name: driveFile.name,
+              fileType,
+              mimeType: driveFile.mimeType,
+              fileSize,
+              storageType: 'google_drive',
+              googleDriveFileId: driveFile.id,
+              googleDriveWebViewLink: driveFile.webViewLink,
+              thumbnailUrl: driveFile.thumbnailLink,
+              uploadedBy: ctx.user.id,
+            });
+
+            filesCreated++;
+          }
+
+          // Update data room with Google Drive folder ID and last sync time
+          await db.updateDataRoom(input.dataRoomId, {
+            googleDriveFolderId: input.googleDriveFolderId,
+            lastSyncedAt: new Date(),
+          });
+
+          return {
+            success: true,
+            foldersCreated,
+            filesCreated,
+            totalFolders: syncResult.folders.length,
+            totalFiles: syncResult.files.length,
+          };
         }),
     }),
 
