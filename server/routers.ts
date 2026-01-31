@@ -987,17 +987,17 @@ export const appRouter = router({
         const [oldInventory] = await db.getInventory({ id } as any) || [];
         await db.updateInventory(id, data);
         await createAuditLog(ctx.user.id, 'update', 'inventory', id);
-        
+
         // Check for low stock and create notification
         if (data.quantity && oldInventory) {
           const newQty = parseFloat(data.quantity);
           const reorderLevel = parseFloat(oldInventory.reorderLevel || '0');
-          
+
           if (newQty <= reorderLevel && newQty > 0) {
             const allUsers = await db.getAllUsers();
             const opsUsers = allUsers.filter(u => ['admin', 'ops', 'exec'].includes(u.role));
             const product = await db.getProductById(oldInventory.productId);
-            
+
             await db.notifyUsersOfEvent({
               type: 'inventory_low',
               title: `Low Stock Alert: ${product?.name || 'Product'}`,
@@ -1010,8 +1010,89 @@ export const appRouter = router({
             }, opsUsers.map(u => u.id));
           }
         }
-        
+
         return { success: true };
+      }),
+    bulkUpdate: opsProcedure
+      .input(z.object({
+        ids: z.array(z.number()),
+        action: z.enum(['adjust_quantity', 'change_location', 'update_reorder_point']),
+        quantityAdjustment: z.number().optional(),
+        warehouseId: z.number().optional(),
+        reorderLevel: z.string().optional(),
+        reorderQuantity: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { ids, action, ...data } = input;
+
+        // Build the update data based on action
+        const updateData: {
+          quantityAdjustment?: number;
+          warehouseId?: number;
+          reorderLevel?: string;
+          reorderQuantity?: string;
+        } = {};
+
+        switch (action) {
+          case 'adjust_quantity':
+            if (data.quantityAdjustment !== undefined) {
+              updateData.quantityAdjustment = data.quantityAdjustment;
+            }
+            break;
+          case 'change_location':
+            if (data.warehouseId !== undefined) {
+              updateData.warehouseId = data.warehouseId;
+            }
+            break;
+          case 'update_reorder_point':
+            if (data.reorderLevel !== undefined) {
+              updateData.reorderLevel = data.reorderLevel;
+            }
+            if (data.reorderQuantity !== undefined) {
+              updateData.reorderQuantity = data.reorderQuantity;
+            }
+            break;
+        }
+
+        const results = await db.bulkUpdateInventory(ids, updateData);
+
+        // Create audit logs for each updated item
+        for (const result of results.filter(r => r.success)) {
+          await createAuditLog(ctx.user.id, 'bulk_update', 'inventory', result.id);
+        }
+
+        // Check for low stock alerts on quantity adjustments
+        if (action === 'adjust_quantity' && data.quantityAdjustment !== undefined) {
+          const updatedItems = await db.getInventoryByIds(ids);
+          const allUsers = await db.getAllUsers();
+          const opsUsers = allUsers.filter(u => ['admin', 'ops', 'exec'].includes(u.role));
+
+          for (const item of updatedItems) {
+            const qty = parseFloat(item.quantity || '0');
+            const reorderLevel = parseFloat(item.reorderLevel || '0');
+
+            if (qty <= reorderLevel && qty > 0) {
+              const product = await db.getProductById(item.productId);
+              await db.notifyUsersOfEvent({
+                type: 'inventory_low',
+                title: `Low Stock Alert: ${product?.name || 'Product'}`,
+                message: `Inventory for ${product?.name} is at ${qty} units, below reorder level of ${reorderLevel}`,
+                entityType: 'inventory',
+                entityId: item.id,
+                severity: 'warning',
+                link: `/operations/inventory`,
+                metadata: { productId: item.productId, quantity: qty, reorderLevel },
+              }, opsUsers.map(u => u.id));
+            }
+          }
+        }
+
+        return {
+          success: true,
+          results,
+          totalUpdated: results.filter(r => r.success).length,
+          totalFailed: results.filter(r => !r.success).length,
+        };
       }),
   }),
 

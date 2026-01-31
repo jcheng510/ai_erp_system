@@ -646,6 +646,69 @@ export async function updateInventory(id: number, data: Partial<InsertInventory>
   await db.update(inventory).set(data).where(eq(inventory.id, id));
 }
 
+export async function bulkUpdateInventory(
+  ids: number[],
+  data: {
+    quantityAdjustment?: number;
+    warehouseId?: number;
+    reorderLevel?: string;
+    reorderQuantity?: string;
+  }
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const results: { id: number; success: boolean; error?: string }[] = [];
+
+  for (const id of ids) {
+    try {
+      const updateData: Partial<InsertInventory> = {};
+
+      // Handle quantity adjustment (add/subtract from current quantity)
+      if (data.quantityAdjustment !== undefined) {
+        const [current] = await db.select().from(inventory).where(eq(inventory.id, id)).limit(1);
+        if (current) {
+          const currentQty = parseFloat(current.quantity || '0');
+          const newQty = Math.max(0, currentQty + data.quantityAdjustment);
+          updateData.quantity = newQty.toString();
+        }
+      }
+
+      // Handle warehouse change
+      if (data.warehouseId !== undefined) {
+        updateData.warehouseId = data.warehouseId;
+      }
+
+      // Handle reorder level update
+      if (data.reorderLevel !== undefined) {
+        updateData.reorderLevel = data.reorderLevel;
+      }
+
+      // Handle reorder quantity update
+      if (data.reorderQuantity !== undefined) {
+        updateData.reorderQuantity = data.reorderQuantity;
+      }
+
+      if (Object.keys(updateData).length > 0) {
+        await db.update(inventory).set(updateData).where(eq(inventory.id, id));
+      }
+
+      results.push({ id, success: true });
+    } catch (error) {
+      results.push({ id, success: false, error: (error as Error).message });
+    }
+  }
+
+  return results;
+}
+
+export async function getInventoryByIds(ids: number[]) {
+  const db = await getDb();
+  if (!db) return [];
+  if (ids.length === 0) return [];
+  return db.select().from(inventory).where(inArray(inventory.id, ids));
+}
+
 // ============================================
 // OPERATIONS - WAREHOUSES / LOCATIONS
 // ============================================
