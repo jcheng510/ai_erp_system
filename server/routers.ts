@@ -9279,7 +9279,7 @@ Ask if they received the original request and if they can provide a quote.`;
           utmCampaign: z.string().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
-          const sessionToken = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
+          const sessionToken = `sess_${nanoid()}`;
           const ipAddress = (ctx.req.headers['x-forwarded-for'] as string)?.split(',')[0] || ctx.req.socket.remoteAddress || '';
 
           const id = await db.createVisitorSession({
