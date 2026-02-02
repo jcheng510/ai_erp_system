@@ -3503,3 +3503,581 @@ export const crmCampaignRecipients = mysqlTable("crm_campaign_recipients", {
 
 export type CrmCampaignRecipient = typeof crmCampaignRecipients.$inferSelect;
 export type InsertCrmCampaignRecipient = typeof crmCampaignRecipients.$inferInsert;
+
+// ============================================
+// RFP MANAGEMENT (Request for Proposal)
+// ============================================
+
+// Incoming RFPs that need to be parsed and responded to
+export const rfpDocuments = mysqlTable("rfp_documents", {
+  id: int("id").autoincrement().primaryKey(),
+  rfpNumber: varchar("rfpNumber", { length: 64 }).notNull(),
+  title: varchar("title", { length: 500 }).notNull(),
+  status: mysqlEnum("status", ["uploaded", "parsing", "parsed", "analyzing", "ready", "responded", "won", "lost", "cancelled"]).default("uploaded").notNull(),
+
+  // Document source
+  sourceType: mysqlEnum("sourceType", ["upload", "email", "portal", "api"]).default("upload").notNull(),
+  originalFileName: varchar("originalFileName", { length: 255 }),
+  fileType: varchar("fileType", { length: 64 }),
+  fileSize: bigint("fileSize", { mode: "number" }),
+  storageUrl: varchar("storageUrl", { length: 512 }),
+  storageKey: varchar("storageKey", { length: 255 }),
+
+  // Issuing organization
+  issuingOrganization: varchar("issuingOrganization", { length: 255 }),
+  contactName: varchar("contactName", { length: 255 }),
+  contactEmail: varchar("contactEmail", { length: 320 }),
+  contactPhone: varchar("contactPhone", { length: 32 }),
+
+  // Key dates (parsed from document)
+  issueDate: timestamp("issueDate"),
+  questionsDueDate: timestamp("questionsDueDate"),
+  proposalDueDate: timestamp("proposalDueDate"),
+  awardDate: timestamp("awardDate"),
+  contractStartDate: timestamp("contractStartDate"),
+  contractEndDate: timestamp("contractEndDate"),
+
+  // Parsed content
+  executiveSummary: text("executiveSummary"),
+  scopeOfWork: text("scopeOfWork"),
+  requirements: text("requirements"), // JSON array of requirements
+  evaluationCriteria: text("evaluationCriteria"), // JSON array with weights
+  deliverables: text("deliverables"), // JSON array
+  pricingStructure: text("pricingStructure"), // JSON
+  termsAndConditions: text("termsAndConditions"),
+
+  // Parsed values
+  estimatedBudget: decimal("estimatedBudget", { precision: 15, scale: 2 }),
+  estimatedBudgetCurrency: varchar("estimatedBudgetCurrency", { length: 3 }).default("USD"),
+  contractDuration: int("contractDuration"), // in months
+  contractType: mysqlEnum("contractType", ["fixed_price", "time_materials", "cost_plus", "hybrid", "other"]),
+
+  // AI analysis
+  aiParseStatus: mysqlEnum("aiParseStatus", ["pending", "processing", "completed", "failed"]).default("pending"),
+  aiParsedAt: timestamp("aiParsedAt"),
+  aiConfidenceScore: decimal("aiConfidenceScore", { precision: 5, scale: 2 }), // 0-100
+  aiSummary: text("aiSummary"),
+  aiKeyInsights: text("aiKeyInsights"), // JSON array
+  aiRecommendedActions: text("aiRecommendedActions"), // JSON array
+  aiCompetitiveFit: text("aiCompetitiveFit"), // JSON assessment
+
+  // Our response
+  responseStatus: mysqlEnum("responseStatus", ["not_started", "in_progress", "review", "submitted", "accepted", "rejected"]).default("not_started"),
+  responseDocumentUrl: varchar("responseDocumentUrl", { length: 512 }),
+  responseSubmittedAt: timestamp("responseSubmittedAt"),
+  proposedAmount: decimal("proposedAmount", { precision: 15, scale: 2 }),
+
+  // Linking
+  customerId: int("customerId"),
+  projectId: int("projectId"),
+
+  // Metadata
+  priority: mysqlEnum("priority", ["low", "normal", "high", "critical"]).default("normal"),
+  assignedTo: int("assignedTo"),
+  notes: text("notes"),
+  tags: text("tags"), // JSON array
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type RfpDocument = typeof rfpDocuments.$inferSelect;
+export type InsertRfpDocument = typeof rfpDocuments.$inferInsert;
+
+// RFP Requirements extracted from parsed documents
+export const rfpRequirements = mysqlTable("rfp_requirements", {
+  id: int("id").autoincrement().primaryKey(),
+  rfpId: int("rfpId").notNull(),
+
+  requirementNumber: varchar("requirementNumber", { length: 32 }),
+  category: varchar("category", { length: 128 }), // Technical, Compliance, Experience, etc.
+  description: text("description").notNull(),
+  isMandatory: boolean("isMandatory").default(false),
+  weight: decimal("weight", { precision: 5, scale: 2 }), // Evaluation weight
+
+  // Our compliance
+  complianceStatus: mysqlEnum("complianceStatus", ["unknown", "fully_compliant", "partially_compliant", "non_compliant", "not_applicable"]).default("unknown"),
+  complianceNotes: text("complianceNotes"),
+  evidenceRequired: boolean("evidenceRequired").default(false),
+  evidenceProvided: text("evidenceProvided"),
+
+  // AI assessment
+  aiAssessment: text("aiAssessment"),
+  aiSuggestedResponse: text("aiSuggestedResponse"),
+
+  sortOrder: int("sortOrder").default(0),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type RfpRequirement = typeof rfpRequirements.$inferSelect;
+export type InsertRfpRequirement = typeof rfpRequirements.$inferInsert;
+
+// RFP Generation templates for creating our own RFPs
+export const rfpTemplates = mysqlTable("rfp_templates", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  category: varchar("category", { length: 128 }), // Procurement type
+
+  // Template structure
+  sections: text("sections").notNull(), // JSON array of section configs
+  standardRequirements: text("standardRequirements"), // JSON array
+  evaluationTemplate: text("evaluationTemplate"), // JSON criteria template
+  termsTemplate: text("termsTemplate"),
+
+  isDefault: boolean("isDefault").default(false),
+  isActive: boolean("isActive").default(true),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type RfpTemplate = typeof rfpTemplates.$inferSelect;
+export type InsertRfpTemplate = typeof rfpTemplates.$inferInsert;
+
+// Generated RFPs we issue to vendors
+export const generatedRfps = mysqlTable("generated_rfps", {
+  id: int("id").autoincrement().primaryKey(),
+  rfpNumber: varchar("rfpNumber", { length: 64 }).notNull(),
+  title: varchar("title", { length: 500 }).notNull(),
+  status: mysqlEnum("status", ["draft", "review", "approved", "published", "closed", "awarded", "cancelled"]).default("draft").notNull(),
+
+  // Template used
+  templateId: int("templateId"),
+
+  // Content
+  introduction: text("introduction"),
+  companyBackground: text("companyBackground"),
+  projectOverview: text("projectOverview"),
+  scopeOfWork: text("scopeOfWork"),
+  requirements: text("requirements"), // JSON array
+  deliverables: text("deliverables"), // JSON array
+  timeline: text("timeline"), // JSON
+  evaluationCriteria: text("evaluationCriteria"), // JSON with weights
+  submissionInstructions: text("submissionInstructions"),
+  termsAndConditions: text("termsAndConditions"),
+
+  // Budget
+  budgetRange: text("budgetRange"), // JSON with min/max
+  budgetCurrency: varchar("budgetCurrency", { length: 3 }).default("USD"),
+
+  // Dates
+  issueDate: timestamp("issueDate"),
+  questionsDueDate: timestamp("questionsDueDate"),
+  proposalDueDate: timestamp("proposalDueDate"),
+  expectedAwardDate: timestamp("expectedAwardDate"),
+  projectStartDate: timestamp("projectStartDate"),
+
+  // Distribution
+  targetVendorCount: int("targetVendorCount").default(0),
+  invitedVendorCount: int("invitedVendorCount").default(0),
+  receivedProposalCount: int("receivedProposalCount").default(0),
+
+  // AI generation
+  aiGenerated: boolean("aiGenerated").default(false),
+  aiPrompt: text("aiPrompt"),
+
+  // Document
+  documentUrl: varchar("documentUrl", { length: 512 }),
+
+  // Linking
+  projectId: int("projectId"),
+  purchaseRequestId: int("purchaseRequestId"),
+
+  // Metadata
+  createdBy: int("createdBy"),
+  approvedBy: int("approvedBy"),
+  approvedAt: timestamp("approvedAt"),
+  publishedAt: timestamp("publishedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type GeneratedRfp = typeof generatedRfps.$inferSelect;
+export type InsertGeneratedRfp = typeof generatedRfps.$inferInsert;
+
+// ============================================
+// RAW MATERIAL PRICE IMPACT SIMULATION
+// ============================================
+
+// Price simulation scenarios
+export const priceSimulations = mysqlTable("price_simulations", {
+  id: int("id").autoincrement().primaryKey(),
+  simulationNumber: varchar("simulationNumber", { length: 64 }).notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  status: mysqlEnum("status", ["draft", "running", "completed", "archived"]).default("draft").notNull(),
+
+  // Simulation type
+  simulationType: mysqlEnum("simulationType", ["single_material", "multi_material", "category", "scenario", "monte_carlo"]).default("single_material").notNull(),
+
+  // Base configuration
+  baselineDate: timestamp("baselineDate"),
+  simulationPeriodMonths: int("simulationPeriodMonths").default(12),
+
+  // Results summary
+  totalProductsImpacted: int("totalProductsImpacted").default(0),
+  averageMarginImpact: decimal("averageMarginImpact", { precision: 10, scale: 2 }),
+  worstCaseMarginImpact: decimal("worstCaseMarginImpact", { precision: 10, scale: 2 }),
+  bestCaseMarginImpact: decimal("bestCaseMarginImpact", { precision: 10, scale: 2 }),
+  totalCogsImpact: decimal("totalCogsImpact", { precision: 15, scale: 2 }),
+
+  // AI analysis
+  aiAnalysis: text("aiAnalysis"),
+  aiRecommendations: text("aiRecommendations"), // JSON array
+
+  // Metadata
+  createdBy: int("createdBy"),
+  runAt: timestamp("runAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type PriceSimulation = typeof priceSimulations.$inferSelect;
+export type InsertPriceSimulation = typeof priceSimulations.$inferInsert;
+
+// Price changes to simulate
+export const priceSimulationInputs = mysqlTable("price_simulation_inputs", {
+  id: int("id").autoincrement().primaryKey(),
+  simulationId: int("simulationId").notNull(),
+
+  // What's changing
+  inputType: mysqlEnum("inputType", ["raw_material", "category", "vendor", "freight", "labor", "overhead"]).notNull(),
+  rawMaterialId: int("rawMaterialId"),
+  category: varchar("category", { length: 128 }),
+  vendorId: int("vendorId"),
+
+  // Price change
+  changeType: mysqlEnum("changeType", ["percentage", "absolute", "new_price"]).default("percentage").notNull(),
+  changeValue: decimal("changeValue", { precision: 15, scale: 4 }).notNull(),
+  changeDirection: mysqlEnum("changeDirection", ["increase", "decrease"]).default("increase"),
+
+  // For range/monte carlo simulations
+  minChange: decimal("minChange", { precision: 15, scale: 4 }),
+  maxChange: decimal("maxChange", { precision: 15, scale: 4 }),
+  probabilityDistribution: mysqlEnum("probabilityDistribution", ["uniform", "normal", "triangular"]).default("uniform"),
+
+  // Current baseline values
+  currentPrice: decimal("currentPrice", { precision: 15, scale: 4 }),
+  simulatedPrice: decimal("simulatedPrice", { precision: 15, scale: 4 }),
+
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type PriceSimulationInput = typeof priceSimulationInputs.$inferSelect;
+export type InsertPriceSimulationInput = typeof priceSimulationInputs.$inferInsert;
+
+// Simulation results per product
+export const priceSimulationResults = mysqlTable("price_simulation_results", {
+  id: int("id").autoincrement().primaryKey(),
+  simulationId: int("simulationId").notNull(),
+  productId: int("productId").notNull(),
+
+  // Current state
+  currentCogs: decimal("currentCogs", { precision: 15, scale: 4 }),
+  currentPrice: decimal("currentPrice", { precision: 15, scale: 4 }),
+  currentMargin: decimal("currentMargin", { precision: 10, scale: 2 }),
+  currentMarginPercent: decimal("currentMarginPercent", { precision: 8, scale: 2 }),
+
+  // Simulated state
+  simulatedCogs: decimal("simulatedCogs", { precision: 15, scale: 4 }),
+  simulatedMargin: decimal("simulatedMargin", { precision: 10, scale: 2 }),
+  simulatedMarginPercent: decimal("simulatedMarginPercent", { precision: 8, scale: 2 }),
+
+  // Impact
+  cogsChange: decimal("cogsChange", { precision: 15, scale: 4 }),
+  cogsChangePercent: decimal("cogsChangePercent", { precision: 8, scale: 2 }),
+  marginChange: decimal("marginChange", { precision: 10, scale: 2 }),
+  marginChangePercent: decimal("marginChangePercent", { precision: 8, scale: 2 }),
+
+  // Break-even analysis
+  breakEvenPriceIncrease: decimal("breakEvenPriceIncrease", { precision: 15, scale: 4 }),
+  suggestedNewPrice: decimal("suggestedNewPrice", { precision: 15, scale: 4 }),
+
+  // Monte carlo results
+  marginPercentile5: decimal("marginPercentile5", { precision: 8, scale: 2 }),
+  marginPercentile50: decimal("marginPercentile50", { precision: 8, scale: 2 }),
+  marginPercentile95: decimal("marginPercentile95", { precision: 8, scale: 2 }),
+
+  // Affected components detail
+  affectedComponents: text("affectedComponents"), // JSON array of affected BOM items
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type PriceSimulationResult = typeof priceSimulationResults.$inferSelect;
+export type InsertPriceSimulationResult = typeof priceSimulationResults.$inferInsert;
+
+// ============================================
+// COGS TRACKING
+// ============================================
+
+// COGS calculation records
+export const cogsRecords = mysqlTable("cogs_records", {
+  id: int("id").autoincrement().primaryKey(),
+  recordNumber: varchar("recordNumber", { length: 64 }).notNull(),
+  productId: int("productId").notNull(),
+
+  // Period
+  periodType: mysqlEnum("periodType", ["daily", "weekly", "monthly", "quarterly", "annual", "per_batch"]).default("monthly").notNull(),
+  periodStart: timestamp("periodStart").notNull(),
+  periodEnd: timestamp("periodEnd").notNull(),
+
+  // Quantities
+  unitsProduced: decimal("unitsProduced", { precision: 15, scale: 4 }).default("0"),
+  unitsSold: decimal("unitsSold", { precision: 15, scale: 4 }).default("0"),
+
+  // Direct Costs
+  directMaterialsCost: decimal("directMaterialsCost", { precision: 15, scale: 4 }).default("0"),
+  directLaborCost: decimal("directLaborCost", { precision: 15, scale: 4 }).default("0"),
+  packagingCost: decimal("packagingCost", { precision: 15, scale: 4 }).default("0"),
+
+  // Indirect/Overhead Costs
+  manufacturingOverhead: decimal("manufacturingOverhead", { precision: 15, scale: 4 }).default("0"),
+  freightInbound: decimal("freightInbound", { precision: 15, scale: 4 }).default("0"),
+  warehouseCost: decimal("warehouseCost", { precision: 15, scale: 4 }).default("0"),
+  qualityControlCost: decimal("qualityControlCost", { precision: 15, scale: 4 }).default("0"),
+
+  // Additional costs
+  dutiesAndTariffs: decimal("dutiesAndTariffs", { precision: 15, scale: 4 }).default("0"),
+  otherDirectCosts: decimal("otherDirectCosts", { precision: 15, scale: 4 }).default("0"),
+
+  // Totals
+  totalCogs: decimal("totalCogs", { precision: 15, scale: 4 }).notNull(),
+  cogsPerUnit: decimal("cogsPerUnit", { precision: 15, scale: 4 }),
+
+  // Revenue & Margin
+  revenue: decimal("revenue", { precision: 15, scale: 2 }),
+  grossProfit: decimal("grossProfit", { precision: 15, scale: 2 }),
+  grossMarginPercent: decimal("grossMarginPercent", { precision: 8, scale: 2 }),
+
+  // Comparison
+  previousPeriodCogs: decimal("previousPeriodCogs", { precision: 15, scale: 4 }),
+  cogsVariance: decimal("cogsVariance", { precision: 15, scale: 4 }),
+  cogsVariancePercent: decimal("cogsVariancePercent", { precision: 8, scale: 2 }),
+
+  // BOM reference
+  bomId: int("bomId"),
+  bomVersion: int("bomVersion"),
+
+  // Status
+  status: mysqlEnum("status", ["draft", "calculated", "verified", "locked"]).default("draft").notNull(),
+  calculatedAt: timestamp("calculatedAt"),
+  verifiedBy: int("verifiedBy"),
+  verifiedAt: timestamp("verifiedAt"),
+
+  // Breakdown detail
+  costBreakdown: text("costBreakdown"), // JSON detailed breakdown
+
+  notes: text("notes"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type CogsRecord = typeof cogsRecords.$inferSelect;
+export type InsertCogsRecord = typeof cogsRecords.$inferInsert;
+
+// COGS line items (detailed component costs)
+export const cogsLineItems = mysqlTable("cogs_line_items", {
+  id: int("id").autoincrement().primaryKey(),
+  cogsRecordId: int("cogsRecordId").notNull(),
+
+  // Component reference
+  componentType: mysqlEnum("componentType", ["raw_material", "packaging", "labor", "overhead", "freight", "duty", "other"]).notNull(),
+  rawMaterialId: int("rawMaterialId"),
+  bomComponentId: int("bomComponentId"),
+  description: varchar("description", { length: 255 }),
+
+  // Quantities
+  quantity: decimal("quantity", { precision: 15, scale: 4 }).notNull(),
+  unit: varchar("unit", { length: 32 }).default("EA"),
+
+  // Pricing
+  unitCost: decimal("unitCost", { precision: 15, scale: 4 }).notNull(),
+  totalCost: decimal("totalCost", { precision: 15, scale: 4 }).notNull(),
+
+  // Allocation
+  allocationMethod: mysqlEnum("allocationMethod", ["direct", "per_unit", "percentage", "activity_based"]).default("direct"),
+  allocationBasis: varchar("allocationBasis", { length: 128 }),
+
+  // Source tracking
+  purchaseOrderId: int("purchaseOrderId"),
+  workOrderId: int("workOrderId"),
+  vendorId: int("vendorId"),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type CogsLineItem = typeof cogsLineItems.$inferSelect;
+export type InsertCogsLineItem = typeof cogsLineItems.$inferInsert;
+
+// Standard costs for comparison
+export const standardCosts = mysqlTable("standard_costs", {
+  id: int("id").autoincrement().primaryKey(),
+  productId: int("productId").notNull(),
+  effectiveDate: timestamp("effectiveDate").notNull(),
+
+  // Standard costs per unit
+  standardMaterialCost: decimal("standardMaterialCost", { precision: 15, scale: 4 }),
+  standardLaborCost: decimal("standardLaborCost", { precision: 15, scale: 4 }),
+  standardOverheadCost: decimal("standardOverheadCost", { precision: 15, scale: 4 }),
+  standardTotalCost: decimal("standardTotalCost", { precision: 15, scale: 4 }).notNull(),
+
+  // Standard pricing
+  standardSellingPrice: decimal("standardSellingPrice", { precision: 15, scale: 4 }),
+  targetMarginPercent: decimal("targetMarginPercent", { precision: 8, scale: 2 }),
+
+  // Source
+  bomId: int("bomId"),
+  calculationMethod: varchar("calculationMethod", { length: 64 }),
+  assumptions: text("assumptions"), // JSON
+
+  isActive: boolean("isActive").default(true),
+  createdBy: int("createdBy"),
+  approvedBy: int("approvedBy"),
+  approvedAt: timestamp("approvedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type StandardCost = typeof standardCosts.$inferSelect;
+export type InsertStandardCost = typeof standardCosts.$inferInsert;
+
+// ============================================
+// MEETING NOTES & NOTION INTEGRATION
+// ============================================
+
+// Meeting recordings and transcriptions
+export const meetingRecordings = mysqlTable("meeting_recordings", {
+  id: int("id").autoincrement().primaryKey(),
+  meetingId: varchar("meetingId", { length: 128 }), // External meeting ID (Zoom, Meet, etc.)
+  title: varchar("title", { length: 500 }).notNull(),
+  status: mysqlEnum("status", ["scheduled", "recording", "processing", "transcribed", "analyzed", "synced", "failed"]).default("scheduled").notNull(),
+
+  // Meeting details
+  platform: mysqlEnum("platform", ["zoom", "google_meet", "teams", "webex", "manual_upload", "other"]).default("manual_upload").notNull(),
+  meetingUrl: varchar("meetingUrl", { length: 512 }),
+  scheduledStart: timestamp("scheduledStart"),
+  scheduledEnd: timestamp("scheduledEnd"),
+  actualStart: timestamp("actualStart"),
+  actualEnd: timestamp("actualEnd"),
+  duration: int("duration"), // in seconds
+
+  // Participants
+  organizerId: int("organizerId"),
+  participants: text("participants"), // JSON array of participant info
+  participantCount: int("participantCount"),
+
+  // Recording
+  recordingUrl: varchar("recordingUrl", { length: 512 }),
+  recordingStorageKey: varchar("recordingStorageKey", { length: 255 }),
+  recordingFileSize: bigint("recordingFileSize", { mode: "number" }),
+
+  // Transcription
+  transcriptStatus: mysqlEnum("transcriptStatus", ["pending", "processing", "completed", "failed"]).default("pending"),
+  transcriptText: text("transcriptText"),
+  transcriptWithSpeakers: text("transcriptWithSpeakers"), // JSON with speaker attribution
+  transcriptLanguage: varchar("transcriptLanguage", { length: 10 }).default("en"),
+  transcriptConfidence: decimal("transcriptConfidence", { precision: 5, scale: 2 }),
+
+  // AI Analysis
+  aiSummary: text("aiSummary"),
+  aiKeyPoints: text("aiKeyPoints"), // JSON array
+  aiActionItems: text("aiActionItems"), // JSON array
+  aiDecisions: text("aiDecisions"), // JSON array
+  aiFollowUps: text("aiFollowUps"), // JSON array
+  aiSentiment: varchar("aiSentiment", { length: 32 }),
+  aiTopics: text("aiTopics"), // JSON array of discussed topics
+
+  // Notion sync
+  notionPageId: varchar("notionPageId", { length: 128 }),
+  notionSyncStatus: mysqlEnum("notionSyncStatus", ["not_synced", "pending", "synced", "failed"]).default("not_synced"),
+  notionSyncedAt: timestamp("notionSyncedAt"),
+  notionSyncError: text("notionSyncError"),
+
+  // Project linking
+  projectId: int("projectId"),
+  customerId: int("customerId"),
+
+  // Metadata
+  tags: text("tags"), // JSON array
+  notes: text("notes"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type MeetingRecording = typeof meetingRecordings.$inferSelect;
+export type InsertMeetingRecording = typeof meetingRecordings.$inferInsert;
+
+// Action items extracted from meetings
+export const meetingActionItems = mysqlTable("meeting_action_items", {
+  id: int("id").autoincrement().primaryKey(),
+  meetingId: int("meetingId").notNull(),
+
+  // Action item details
+  description: text("description").notNull(),
+  assignee: varchar("assignee", { length: 255 }), // Name from transcript
+  assignedUserId: int("assignedUserId"), // Matched to system user
+  dueDate: timestamp("dueDate"),
+  priority: mysqlEnum("priority", ["low", "medium", "high", "urgent"]).default("medium"),
+
+  // Status
+  status: mysqlEnum("status", ["pending", "in_progress", "completed", "cancelled"]).default("pending").notNull(),
+  completedAt: timestamp("completedAt"),
+  completedBy: int("completedBy"),
+
+  // AI extraction
+  aiExtracted: boolean("aiExtracted").default(true),
+  aiConfidence: decimal("aiConfidence", { precision: 5, scale: 2 }),
+  transcriptTimestamp: varchar("transcriptTimestamp", { length: 32 }), // Where in recording
+
+  // Notion sync
+  notionTaskId: varchar("notionTaskId", { length: 128 }),
+  notionSynced: boolean("notionSynced").default(false),
+
+  // Project task linking
+  projectTaskId: int("projectTaskId"),
+
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type MeetingActionItem = typeof meetingActionItems.$inferSelect;
+export type InsertMeetingActionItem = typeof meetingActionItems.$inferInsert;
+
+// Notion integration configuration
+export const notionIntegrations = mysqlTable("notion_integrations", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+
+  // OAuth
+  accessToken: text("accessToken").notNull(),
+  tokenType: varchar("tokenType", { length: 32 }).default("bearer"),
+  botId: varchar("botId", { length: 128 }),
+  workspaceId: varchar("workspaceId", { length: 128 }),
+  workspaceName: varchar("workspaceName", { length: 255 }),
+  workspaceIcon: varchar("workspaceIcon", { length: 512 }),
+
+  // Sync settings
+  defaultDatabaseId: varchar("defaultDatabaseId", { length: 128 }), // Where to create meeting notes
+  tasksDatabaseId: varchar("tasksDatabaseId", { length: 128 }), // Where to create tasks
+  syncMeetingNotes: boolean("syncMeetingNotes").default(true),
+  syncActionItems: boolean("syncActionItems").default(true),
+  autoSync: boolean("autoSync").default(true),
+
+  // Status
+  isActive: boolean("isActive").default(true),
+  lastSyncAt: timestamp("lastSyncAt"),
+  lastError: text("lastError"),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type NotionIntegration = typeof notionIntegrations.$inferSelect;
+export type InsertNotionIntegration = typeof notionIntegrations.$inferInsert;

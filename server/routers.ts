@@ -12155,6 +12155,1278 @@ Ask if they received the original request and if they can provide a quote.`;
         }),
     }),
   }),
+
+  // ============================================
+  // RFP MANAGEMENT (Parsing & Generation)
+  // ============================================
+  rfp: router({
+    // --- INCOMING RFPs (Parsing) ---
+    documents: router({
+      list: protectedProcedure
+        .input(z.object({
+          status: z.string().optional(),
+          limit: z.number().optional(),
+        }).optional())
+        .query(({ input }) => db.getRfpDocuments(input)),
+
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(async ({ input }) => {
+          const rfp = await db.getRfpDocumentById(input.id);
+          if (!rfp) return null;
+          const requirements = await db.getRfpRequirements(input.id);
+          return { ...rfp, requirements };
+        }),
+
+      create: opsProcedure
+        .input(z.object({
+          rfpNumber: z.string(),
+          title: z.string().min(1),
+          sourceType: z.enum(["upload", "email", "portal", "api"]).optional(),
+          originalFileName: z.string().optional(),
+          fileType: z.string().optional(),
+          storageUrl: z.string().optional(),
+          storageKey: z.string().optional(),
+          issuingOrganization: z.string().optional(),
+          contactName: z.string().optional(),
+          contactEmail: z.string().optional(),
+          proposalDueDate: z.date().optional(),
+          priority: z.enum(["low", "normal", "high", "critical"]).optional(),
+          customerId: z.number().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createRfpDocument({
+            ...input,
+            createdBy: ctx.user.id,
+          });
+          await createAuditLog(ctx.user.id, 'create', 'rfp_document', result.id, input.title);
+          return result;
+        }),
+
+      update: opsProcedure
+        .input(z.object({
+          id: z.number(),
+          title: z.string().optional(),
+          status: z.enum(["uploaded", "parsing", "parsed", "analyzing", "ready", "responded", "won", "lost", "cancelled"]).optional(),
+          issuingOrganization: z.string().optional(),
+          contactName: z.string().optional(),
+          contactEmail: z.string().optional(),
+          proposalDueDate: z.date().optional(),
+          priority: z.enum(["low", "normal", "high", "critical"]).optional(),
+          assignedTo: z.number().optional(),
+          responseStatus: z.enum(["not_started", "in_progress", "review", "submitted", "accepted", "rejected"]).optional(),
+          proposedAmount: z.string().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateRfpDocument(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'rfp_document', id);
+          return { success: true };
+        }),
+
+      delete: opsProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteRfpRequirementsByRfpId(input.id);
+          await db.deleteRfpDocument(input.id);
+          await createAuditLog(ctx.user.id, 'delete', 'rfp_document', input.id);
+          return { success: true };
+        }),
+
+      // AI Parse RFP document
+      parseWithAI: opsProcedure
+        .input(z.object({ id: z.number(), documentContent: z.string() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.updateRfpDocument(input.id, { status: 'parsing', aiParseStatus: 'processing' });
+
+          const prompt = `Analyze this RFP (Request for Proposal) document and extract structured information.
+
+Document Content:
+${input.documentContent}
+
+Extract and return JSON with:
+{
+  "title": "RFP title",
+  "issuingOrganization": "Organization name",
+  "executiveSummary": "Brief summary of the RFP",
+  "scopeOfWork": "Description of work required",
+  "requirements": [
+    { "category": "Technical|Compliance|Experience|Other", "description": "requirement text", "isMandatory": true/false }
+  ],
+  "evaluationCriteria": [
+    { "criterion": "name", "weight": number, "description": "details" }
+  ],
+  "deliverables": ["list of deliverables"],
+  "keyDates": {
+    "issueDate": "YYYY-MM-DD or null",
+    "questionsDueDate": "YYYY-MM-DD or null",
+    "proposalDueDate": "YYYY-MM-DD or null",
+    "awardDate": "YYYY-MM-DD or null"
+  },
+  "estimatedBudget": number or null,
+  "contractDuration": number (months) or null,
+  "contractType": "fixed_price|time_materials|cost_plus|hybrid|other",
+  "keyInsights": ["important points to note"],
+  "recommendedActions": ["suggested next steps"],
+  "competitiveFit": { "score": 1-100, "strengths": [], "weaknesses": [], "recommendations": [] }
+}`;
+
+          try {
+            const response = await invokeLLM({ prompt, responseFormat: 'json' });
+            const parsed = JSON.parse(response);
+
+            // Update the RFP document with parsed data
+            await db.updateRfpDocument(input.id, {
+              status: 'parsed',
+              aiParseStatus: 'completed',
+              aiParsedAt: new Date(),
+              executiveSummary: parsed.executiveSummary,
+              scopeOfWork: parsed.scopeOfWork,
+              requirements: JSON.stringify(parsed.requirements),
+              evaluationCriteria: JSON.stringify(parsed.evaluationCriteria),
+              deliverables: JSON.stringify(parsed.deliverables),
+              issueDate: parsed.keyDates?.issueDate ? new Date(parsed.keyDates.issueDate) : undefined,
+              questionsDueDate: parsed.keyDates?.questionsDueDate ? new Date(parsed.keyDates.questionsDueDate) : undefined,
+              proposalDueDate: parsed.keyDates?.proposalDueDate ? new Date(parsed.keyDates.proposalDueDate) : undefined,
+              awardDate: parsed.keyDates?.awardDate ? new Date(parsed.keyDates.awardDate) : undefined,
+              estimatedBudget: parsed.estimatedBudget?.toString(),
+              contractDuration: parsed.contractDuration,
+              contractType: parsed.contractType,
+              aiKeyInsights: JSON.stringify(parsed.keyInsights),
+              aiRecommendedActions: JSON.stringify(parsed.recommendedActions),
+              aiCompetitiveFit: JSON.stringify(parsed.competitiveFit),
+              aiConfidenceScore: parsed.competitiveFit?.score?.toString() || '75',
+            });
+
+            // Create individual requirement records
+            if (parsed.requirements?.length) {
+              await db.deleteRfpRequirementsByRfpId(input.id);
+              for (let i = 0; i < parsed.requirements.length; i++) {
+                const req = parsed.requirements[i];
+                await db.createRfpRequirement({
+                  rfpId: input.id,
+                  requirementNumber: `REQ-${(i + 1).toString().padStart(3, '0')}`,
+                  category: req.category,
+                  description: req.description,
+                  isMandatory: req.isMandatory,
+                  sortOrder: i,
+                });
+              }
+            }
+
+            await createAuditLog(ctx.user.id, 'update', 'rfp_document', input.id, 'AI parsing completed');
+            return { success: true, parsed };
+          } catch (error: any) {
+            await db.updateRfpDocument(input.id, { aiParseStatus: 'failed' });
+            throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: error.message });
+          }
+        }),
+    }),
+
+    // --- RFP REQUIREMENTS ---
+    requirements: router({
+      list: protectedProcedure
+        .input(z.object({ rfpId: z.number() }))
+        .query(({ input }) => db.getRfpRequirements(input.rfpId)),
+
+      update: opsProcedure
+        .input(z.object({
+          id: z.number(),
+          complianceStatus: z.enum(["unknown", "fully_compliant", "partially_compliant", "non_compliant", "not_applicable"]).optional(),
+          complianceNotes: z.string().optional(),
+          evidenceProvided: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateRfpRequirement(id, data);
+          return { success: true };
+        }),
+    }),
+
+    // --- RFP TEMPLATES ---
+    templates: router({
+      list: protectedProcedure.query(() => db.getRfpTemplates()),
+
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getRfpTemplateById(input.id)),
+
+      create: adminProcedure
+        .input(z.object({
+          name: z.string().min(1),
+          description: z.string().optional(),
+          category: z.string().optional(),
+          sections: z.string(),
+          standardRequirements: z.string().optional(),
+          evaluationTemplate: z.string().optional(),
+          termsTemplate: z.string().optional(),
+          isDefault: z.boolean().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createRfpTemplate({
+            ...input,
+            createdBy: ctx.user.id,
+          });
+          await createAuditLog(ctx.user.id, 'create', 'rfp_template', result.id, input.name);
+          return result;
+        }),
+
+      update: adminProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          description: z.string().optional(),
+          sections: z.string().optional(),
+          isActive: z.boolean().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateRfpTemplate(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'rfp_template', id);
+          return { success: true };
+        }),
+    }),
+
+    // --- GENERATED RFPs ---
+    generated: router({
+      list: protectedProcedure
+        .input(z.object({
+          status: z.string().optional(),
+          limit: z.number().optional(),
+        }).optional())
+        .query(({ input }) => db.getGeneratedRfps(input)),
+
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getGeneratedRfpById(input.id)),
+
+      create: opsProcedure
+        .input(z.object({
+          rfpNumber: z.string(),
+          title: z.string().min(1),
+          templateId: z.number().optional(),
+          projectOverview: z.string().optional(),
+          scopeOfWork: z.string().optional(),
+          requirements: z.string().optional(),
+          deliverables: z.string().optional(),
+          evaluationCriteria: z.string().optional(),
+          budgetRange: z.string().optional(),
+          proposalDueDate: z.date().optional(),
+          projectId: z.number().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createGeneratedRfp({
+            ...input,
+            createdBy: ctx.user.id,
+          });
+          await createAuditLog(ctx.user.id, 'create', 'generated_rfp', result.id, input.title);
+          return result;
+        }),
+
+      update: opsProcedure
+        .input(z.object({
+          id: z.number(),
+          title: z.string().optional(),
+          status: z.enum(["draft", "review", "approved", "published", "closed", "awarded", "cancelled"]).optional(),
+          projectOverview: z.string().optional(),
+          scopeOfWork: z.string().optional(),
+          requirements: z.string().optional(),
+          proposalDueDate: z.date().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateGeneratedRfp(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'generated_rfp', id);
+          return { success: true };
+        }),
+
+      // AI Generate RFP content
+      generateWithAI: opsProcedure
+        .input(z.object({
+          title: z.string(),
+          projectDescription: z.string(),
+          requirements: z.array(z.string()).optional(),
+          budget: z.string().optional(),
+          timeline: z.string().optional(),
+          templateId: z.number().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const prompt = `Generate a professional Request for Proposal (RFP) document.
+
+Project Title: ${input.title}
+Project Description: ${input.projectDescription}
+${input.requirements?.length ? `Key Requirements:\n${input.requirements.map(r => `- ${r}`).join('\n')}` : ''}
+${input.budget ? `Budget Range: ${input.budget}` : ''}
+${input.timeline ? `Timeline: ${input.timeline}` : ''}
+
+Generate a comprehensive RFP with the following sections as JSON:
+{
+  "introduction": "Professional introduction and purpose",
+  "companyBackground": "Brief company background section",
+  "projectOverview": "Detailed project overview",
+  "scopeOfWork": "Complete scope of work description",
+  "requirements": [
+    { "category": "Technical", "items": ["requirement 1", "requirement 2"] },
+    { "category": "Compliance", "items": [] },
+    { "category": "Experience", "items": [] }
+  ],
+  "deliverables": ["deliverable 1", "deliverable 2"],
+  "timeline": { "milestones": [{ "name": "", "deadline": "" }] },
+  "evaluationCriteria": [
+    { "criterion": "Technical Approach", "weight": 30 },
+    { "criterion": "Experience & Qualifications", "weight": 25 },
+    { "criterion": "Cost", "weight": 25 },
+    { "criterion": "Timeline", "weight": 20 }
+  ],
+  "submissionInstructions": "How to submit proposals",
+  "termsAndConditions": "Standard terms"
+}`;
+
+          try {
+            const response = await invokeLLM({ prompt, responseFormat: 'json' });
+            const generated = JSON.parse(response);
+
+            // Create the generated RFP
+            const rfpNumber = generateNumber('RFP');
+            const result = await db.createGeneratedRfp({
+              rfpNumber,
+              title: input.title,
+              templateId: input.templateId,
+              introduction: generated.introduction,
+              companyBackground: generated.companyBackground,
+              projectOverview: generated.projectOverview,
+              scopeOfWork: generated.scopeOfWork,
+              requirements: JSON.stringify(generated.requirements),
+              deliverables: JSON.stringify(generated.deliverables),
+              timeline: JSON.stringify(generated.timeline),
+              evaluationCriteria: JSON.stringify(generated.evaluationCriteria),
+              submissionInstructions: generated.submissionInstructions,
+              termsAndConditions: generated.termsAndConditions,
+              budgetRange: input.budget,
+              aiGenerated: true,
+              aiPrompt: input.projectDescription,
+              createdBy: ctx.user.id,
+            });
+
+            await createAuditLog(ctx.user.id, 'create', 'generated_rfp', result.id, `AI generated: ${input.title}`);
+            return { id: result.id, rfpNumber, generated };
+          } catch (error: any) {
+            throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: error.message });
+          }
+        }),
+    }),
+  }),
+
+  // ============================================
+  // PRICE IMPACT SIMULATION
+  // ============================================
+  priceSimulation: router({
+    list: protectedProcedure
+      .input(z.object({
+        status: z.string().optional(),
+        limit: z.number().optional(),
+      }).optional())
+      .query(({ input }) => db.getPriceSimulations(input)),
+
+    get: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const simulation = await db.getPriceSimulationById(input.id);
+        if (!simulation) return null;
+        const inputs = await db.getPriceSimulationInputs(input.id);
+        const results = await db.getPriceSimulationResults(input.id);
+        return { ...simulation, inputs, results };
+      }),
+
+    create: opsProcedure
+      .input(z.object({
+        name: z.string().min(1),
+        description: z.string().optional(),
+        simulationType: z.enum(["single_material", "multi_material", "category", "scenario", "monte_carlo"]).optional(),
+        simulationPeriodMonths: z.number().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const simulationNumber = generateNumber('SIM');
+        const result = await db.createPriceSimulation({
+          ...input,
+          simulationNumber,
+          createdBy: ctx.user.id,
+        });
+        await createAuditLog(ctx.user.id, 'create', 'price_simulation', result.id, input.name);
+        return { id: result.id, simulationNumber };
+      }),
+
+    addInput: opsProcedure
+      .input(z.object({
+        simulationId: z.number(),
+        inputType: z.enum(["raw_material", "category", "vendor", "freight", "labor", "overhead"]),
+        rawMaterialId: z.number().optional(),
+        category: z.string().optional(),
+        vendorId: z.number().optional(),
+        changeType: z.enum(["percentage", "absolute", "new_price"]),
+        changeValue: z.string(),
+        changeDirection: z.enum(["increase", "decrease"]).optional(),
+        currentPrice: z.string().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const result = await db.createPriceSimulationInput(input);
+        return result;
+      }),
+
+    // Run the simulation
+    runSimulation: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.updatePriceSimulation(input.id, { status: 'running' });
+
+        try {
+          const simulation = await db.getPriceSimulationById(input.id);
+          const inputs = await db.getPriceSimulationInputs(input.id);
+          const productsList = await db.getProducts();
+          const rawMaterialsList = await db.getRawMaterials();
+          const bomsList = await db.getBillOfMaterials();
+
+          // Delete previous results
+          await db.deletePriceSimulationResults(input.id);
+
+          // Build material price changes map
+          const priceChanges = new Map<number, { changePercent: number; changeAbsolute: number }>();
+          for (const inp of inputs) {
+            if (inp.inputType === 'raw_material' && inp.rawMaterialId) {
+              const currentPrice = parseFloat(inp.currentPrice as string) || 0;
+              let changePercent = 0;
+              let changeAbsolute = 0;
+
+              if (inp.changeType === 'percentage') {
+                changePercent = parseFloat(inp.changeValue as string);
+                if (inp.changeDirection === 'decrease') changePercent = -changePercent;
+                changeAbsolute = currentPrice * (changePercent / 100);
+              } else if (inp.changeType === 'absolute') {
+                changeAbsolute = parseFloat(inp.changeValue as string);
+                if (inp.changeDirection === 'decrease') changeAbsolute = -changeAbsolute;
+                changePercent = currentPrice > 0 ? (changeAbsolute / currentPrice) * 100 : 0;
+              }
+
+              priceChanges.set(inp.rawMaterialId, { changePercent, changeAbsolute });
+            }
+          }
+
+          let totalProductsImpacted = 0;
+          let totalMarginImpact = 0;
+          let worstMarginImpact = 0;
+          let bestMarginImpact = 0;
+          let totalCogsImpact = 0;
+
+          // Calculate impact for each product with a BOM
+          for (const product of productsList) {
+            const bom = bomsList.find(b => b.productId === product.id && b.status === 'active');
+            if (!bom) continue;
+
+            const currentPrice = parseFloat(product.unitPrice as string) || 0;
+            const currentCost = parseFloat(product.costPrice as string) || 0;
+            const currentMargin = currentPrice - currentCost;
+            const currentMarginPercent = currentPrice > 0 ? (currentMargin / currentPrice) * 100 : 0;
+
+            // Calculate COGS change based on BOM components
+            let cogsChange = 0;
+            const affectedComponents: any[] = [];
+
+            const components = await db.getBomComponents(bom.id);
+            for (const comp of components) {
+              if (comp.componentType === 'raw_material' && comp.rawMaterialId) {
+                const change = priceChanges.get(comp.rawMaterialId);
+                if (change) {
+                  const quantity = parseFloat(comp.quantity as string) || 0;
+                  const componentImpact = change.changeAbsolute * quantity;
+                  cogsChange += componentImpact;
+                  affectedComponents.push({
+                    rawMaterialId: comp.rawMaterialId,
+                    name: rawMaterialsList.find(m => m.id === comp.rawMaterialId)?.name,
+                    quantity,
+                    priceChange: change.changeAbsolute,
+                    impact: componentImpact,
+                  });
+                }
+              }
+            }
+
+            if (cogsChange !== 0 || affectedComponents.length > 0) {
+              totalProductsImpacted++;
+
+              const simulatedCogs = currentCost + cogsChange;
+              const simulatedMargin = currentPrice - simulatedCogs;
+              const simulatedMarginPercent = currentPrice > 0 ? (simulatedMargin / currentPrice) * 100 : 0;
+              const marginChange = simulatedMargin - currentMargin;
+              const marginChangePercent = simulatedMarginPercent - currentMarginPercent;
+
+              totalMarginImpact += marginChangePercent;
+              totalCogsImpact += cogsChange;
+
+              if (marginChangePercent < worstMarginImpact) worstMarginImpact = marginChangePercent;
+              if (marginChangePercent > bestMarginImpact) bestMarginImpact = marginChangePercent;
+
+              // Calculate break-even price increase
+              const breakEvenPriceIncrease = cogsChange;
+              const suggestedNewPrice = currentPrice + breakEvenPriceIncrease;
+
+              await db.createPriceSimulationResult({
+                simulationId: input.id,
+                productId: product.id,
+                currentCogs: currentCost.toFixed(4),
+                currentPrice: currentPrice.toFixed(4),
+                currentMargin: currentMargin.toFixed(2),
+                currentMarginPercent: currentMarginPercent.toFixed(2),
+                simulatedCogs: simulatedCogs.toFixed(4),
+                simulatedMargin: simulatedMargin.toFixed(2),
+                simulatedMarginPercent: simulatedMarginPercent.toFixed(2),
+                cogsChange: cogsChange.toFixed(4),
+                cogsChangePercent: (currentCost > 0 ? (cogsChange / currentCost) * 100 : 0).toFixed(2),
+                marginChange: marginChange.toFixed(2),
+                marginChangePercent: marginChangePercent.toFixed(2),
+                breakEvenPriceIncrease: breakEvenPriceIncrease.toFixed(4),
+                suggestedNewPrice: suggestedNewPrice.toFixed(4),
+                affectedComponents: JSON.stringify(affectedComponents),
+              });
+            }
+          }
+
+          const averageMarginImpact = totalProductsImpacted > 0 ? totalMarginImpact / totalProductsImpacted : 0;
+
+          // Generate AI analysis
+          const aiPrompt = `Analyze this price simulation result:
+- Total products impacted: ${totalProductsImpacted}
+- Average margin impact: ${averageMarginImpact.toFixed(2)}%
+- Worst case margin impact: ${worstMarginImpact.toFixed(2)}%
+- Best case margin impact: ${bestMarginImpact.toFixed(2)}%
+- Total COGS impact: $${totalCogsImpact.toFixed(2)}
+
+Provide a brief analysis and 3-5 actionable recommendations in JSON format:
+{ "analysis": "...", "recommendations": ["...", "..."] }`;
+
+          let aiAnalysis = '';
+          let aiRecommendations = '[]';
+          try {
+            const aiResponse = await invokeLLM({ prompt: aiPrompt, responseFormat: 'json' });
+            const aiParsed = JSON.parse(aiResponse);
+            aiAnalysis = aiParsed.analysis || '';
+            aiRecommendations = JSON.stringify(aiParsed.recommendations || []);
+          } catch (e) {
+            // AI analysis failed, continue without it
+          }
+
+          await db.updatePriceSimulation(input.id, {
+            status: 'completed',
+            runAt: new Date(),
+            totalProductsImpacted,
+            averageMarginImpact: averageMarginImpact.toFixed(2),
+            worstCaseMarginImpact: worstMarginImpact.toFixed(2),
+            bestCaseMarginImpact: bestMarginImpact.toFixed(2),
+            totalCogsImpact: totalCogsImpact.toFixed(2),
+            aiAnalysis,
+            aiRecommendations,
+          });
+
+          await createAuditLog(ctx.user.id, 'update', 'price_simulation', input.id, 'Simulation completed');
+
+          return {
+            success: true,
+            totalProductsImpacted,
+            averageMarginImpact,
+            worstCaseMarginImpact: worstMarginImpact,
+            bestCaseMarginImpact: bestMarginImpact,
+            totalCogsImpact,
+          };
+        } catch (error: any) {
+          await db.updatePriceSimulation(input.id, { status: 'draft' });
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: error.message });
+        }
+      }),
+
+    delete: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deletePriceSimulation(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'price_simulation', input.id);
+        return { success: true };
+      }),
+  }),
+
+  // ============================================
+  // COGS TRACKING
+  // ============================================
+  cogs: router({
+    // Dashboard summary
+    getDashboardSummary: protectedProcedure.query(() => db.getCogsDashboardSummary()),
+
+    // COGS Records
+    records: router({
+      list: protectedProcedure
+        .input(z.object({
+          productId: z.number().optional(),
+          periodType: z.string().optional(),
+          status: z.string().optional(),
+          limit: z.number().optional(),
+        }).optional())
+        .query(({ input }) => db.getCogsRecords(input)),
+
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(async ({ input }) => {
+          const record = await db.getCogsRecordById(input.id);
+          if (!record) return null;
+          const lineItems = await db.getCogsLineItems(input.id);
+          return { ...record, lineItems };
+        }),
+
+      create: financeProcedure
+        .input(z.object({
+          productId: z.number(),
+          periodType: z.enum(["daily", "weekly", "monthly", "quarterly", "annual", "per_batch"]),
+          periodStart: z.date(),
+          periodEnd: z.date(),
+          unitsProduced: z.string().optional(),
+          unitsSold: z.string().optional(),
+          directMaterialsCost: z.string().optional(),
+          directLaborCost: z.string().optional(),
+          packagingCost: z.string().optional(),
+          manufacturingOverhead: z.string().optional(),
+          freightInbound: z.string().optional(),
+          warehouseCost: z.string().optional(),
+          dutiesAndTariffs: z.string().optional(),
+          otherDirectCosts: z.string().optional(),
+          revenue: z.string().optional(),
+          bomId: z.number().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const recordNumber = generateNumber('COGS');
+
+          // Calculate totals
+          const directMaterials = parseFloat(input.directMaterialsCost || '0');
+          const directLabor = parseFloat(input.directLaborCost || '0');
+          const packaging = parseFloat(input.packagingCost || '0');
+          const overhead = parseFloat(input.manufacturingOverhead || '0');
+          const freight = parseFloat(input.freightInbound || '0');
+          const warehouse = parseFloat(input.warehouseCost || '0');
+          const duties = parseFloat(input.dutiesAndTariffs || '0');
+          const other = parseFloat(input.otherDirectCosts || '0');
+
+          const totalCogs = directMaterials + directLabor + packaging + overhead + freight + warehouse + duties + other;
+          const unitsSold = parseFloat(input.unitsSold || '0');
+          const cogsPerUnit = unitsSold > 0 ? totalCogs / unitsSold : 0;
+
+          const revenue = parseFloat(input.revenue || '0');
+          const grossProfit = revenue - totalCogs;
+          const grossMarginPercent = revenue > 0 ? (grossProfit / revenue) * 100 : 0;
+
+          const result = await db.createCogsRecord({
+            ...input,
+            recordNumber,
+            totalCogs: totalCogs.toFixed(4),
+            cogsPerUnit: cogsPerUnit.toFixed(4),
+            grossProfit: grossProfit.toFixed(2),
+            grossMarginPercent: grossMarginPercent.toFixed(2),
+            calculatedAt: new Date(),
+            createdBy: ctx.user.id,
+          });
+
+          await createAuditLog(ctx.user.id, 'create', 'cogs_record', result.id, recordNumber);
+          return { id: result.id, recordNumber, totalCogs, cogsPerUnit, grossProfit, grossMarginPercent };
+        }),
+
+      update: financeProcedure
+        .input(z.object({
+          id: z.number(),
+          directMaterialsCost: z.string().optional(),
+          directLaborCost: z.string().optional(),
+          packagingCost: z.string().optional(),
+          manufacturingOverhead: z.string().optional(),
+          revenue: z.string().optional(),
+          status: z.enum(["draft", "calculated", "verified", "locked"]).optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+
+          // Recalculate if cost fields changed
+          if (data.directMaterialsCost || data.directLaborCost || data.packagingCost || data.manufacturingOverhead) {
+            const existing = await db.getCogsRecordById(id);
+            if (existing?.cogs) {
+              const directMaterials = parseFloat(data.directMaterialsCost || existing.cogs.directMaterialsCost as string || '0');
+              const directLabor = parseFloat(data.directLaborCost || existing.cogs.directLaborCost as string || '0');
+              const packaging = parseFloat(data.packagingCost || existing.cogs.packagingCost as string || '0');
+              const overhead = parseFloat(data.manufacturingOverhead || existing.cogs.manufacturingOverhead as string || '0');
+              const freight = parseFloat(existing.cogs.freightInbound as string || '0');
+              const warehouse = parseFloat(existing.cogs.warehouseCost as string || '0');
+              const duties = parseFloat(existing.cogs.dutiesAndTariffs as string || '0');
+              const other = parseFloat(existing.cogs.otherDirectCosts as string || '0');
+
+              const totalCogs = directMaterials + directLabor + packaging + overhead + freight + warehouse + duties + other;
+              const unitsSold = parseFloat(existing.cogs.unitsSold as string || '0');
+              const cogsPerUnit = unitsSold > 0 ? totalCogs / unitsSold : 0;
+
+              const revenue = parseFloat(data.revenue || existing.cogs.revenue as string || '0');
+              const grossProfit = revenue - totalCogs;
+              const grossMarginPercent = revenue > 0 ? (grossProfit / revenue) * 100 : 0;
+
+              (data as any).totalCogs = totalCogs.toFixed(4);
+              (data as any).cogsPerUnit = cogsPerUnit.toFixed(4);
+              (data as any).grossProfit = grossProfit.toFixed(2);
+              (data as any).grossMarginPercent = grossMarginPercent.toFixed(2);
+            }
+          }
+
+          await db.updateCogsRecord(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'cogs_record', id);
+          return { success: true };
+        }),
+
+      verify: financeProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.updateCogsRecord(input.id, {
+            status: 'verified',
+            verifiedBy: ctx.user.id,
+            verifiedAt: new Date(),
+          });
+          await createAuditLog(ctx.user.id, 'approve', 'cogs_record', input.id);
+          return { success: true };
+        }),
+
+      delete: financeProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteCogsRecord(input.id);
+          await createAuditLog(ctx.user.id, 'delete', 'cogs_record', input.id);
+          return { success: true };
+        }),
+
+      // Calculate COGS from BOM
+      calculateFromBOM: financeProcedure
+        .input(z.object({
+          productId: z.number(),
+          periodStart: z.date(),
+          periodEnd: z.date(),
+          unitsProduced: z.string(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const product = await db.getProductById(input.productId);
+          if (!product) throw new TRPCError({ code: 'NOT_FOUND', message: 'Product not found' });
+
+          const boms = await db.getBillOfMaterials(input.productId);
+          const activeBom = boms.find(b => b.status === 'active');
+          if (!activeBom) throw new TRPCError({ code: 'NOT_FOUND', message: 'No active BOM found' });
+
+          const components = await db.getBomComponents(activeBom.id);
+          const rawMaterials = await db.getRawMaterials();
+
+          let directMaterialsCost = 0;
+          let directLaborCost = 0;
+          let packagingCost = 0;
+          const unitsProduced = parseFloat(input.unitsProduced);
+
+          for (const comp of components) {
+            const quantity = parseFloat(comp.quantity as string) * unitsProduced;
+            const unitCost = parseFloat(comp.unitCost as string || '0');
+            const wastage = parseFloat(comp.wastagePercent as string || '0') / 100;
+            const totalCost = quantity * unitCost * (1 + wastage);
+
+            if (comp.componentType === 'raw_material') {
+              directMaterialsCost += totalCost;
+            } else if (comp.componentType === 'labor') {
+              directLaborCost += totalCost;
+            } else if (comp.componentType === 'packaging') {
+              packagingCost += totalCost;
+            }
+          }
+
+          const recordNumber = generateNumber('COGS');
+          const totalCogs = directMaterialsCost + directLaborCost + packagingCost;
+          const cogsPerUnit = unitsProduced > 0 ? totalCogs / unitsProduced : 0;
+
+          const result = await db.createCogsRecord({
+            recordNumber,
+            productId: input.productId,
+            periodType: 'per_batch',
+            periodStart: input.periodStart,
+            periodEnd: input.periodEnd,
+            unitsProduced: input.unitsProduced,
+            directMaterialsCost: directMaterialsCost.toFixed(4),
+            directLaborCost: directLaborCost.toFixed(4),
+            packagingCost: packagingCost.toFixed(4),
+            totalCogs: totalCogs.toFixed(4),
+            cogsPerUnit: cogsPerUnit.toFixed(4),
+            bomId: activeBom.id,
+            bomVersion: activeBom.version,
+            status: 'calculated',
+            calculatedAt: new Date(),
+            createdBy: ctx.user.id,
+          });
+
+          await createAuditLog(ctx.user.id, 'create', 'cogs_record', result.id, `Calculated from BOM: ${recordNumber}`);
+          return { id: result.id, recordNumber, totalCogs, cogsPerUnit };
+        }),
+    }),
+
+    // Standard Costs
+    standardCosts: router({
+      list: protectedProcedure
+        .input(z.object({ productId: z.number().optional() }).optional())
+        .query(({ input }) => db.getStandardCosts(input?.productId)),
+
+      getActive: protectedProcedure
+        .input(z.object({ productId: z.number() }))
+        .query(({ input }) => db.getActiveStandardCost(input.productId)),
+
+      create: financeProcedure
+        .input(z.object({
+          productId: z.number(),
+          effectiveDate: z.date(),
+          standardMaterialCost: z.string().optional(),
+          standardLaborCost: z.string().optional(),
+          standardOverheadCost: z.string().optional(),
+          standardTotalCost: z.string(),
+          standardSellingPrice: z.string().optional(),
+          targetMarginPercent: z.string().optional(),
+          bomId: z.number().optional(),
+          calculationMethod: z.string().optional(),
+          assumptions: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createStandardCost({
+            ...input,
+            createdBy: ctx.user.id,
+          });
+          await createAuditLog(ctx.user.id, 'create', 'standard_cost', result.id);
+          return result;
+        }),
+
+      update: financeProcedure
+        .input(z.object({
+          id: z.number(),
+          standardMaterialCost: z.string().optional(),
+          standardLaborCost: z.string().optional(),
+          standardOverheadCost: z.string().optional(),
+          standardTotalCost: z.string().optional(),
+          isActive: z.boolean().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateStandardCost(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'standard_cost', id);
+          return { success: true };
+        }),
+    }),
+  }),
+
+  // ============================================
+  // MEETING NOTES & NOTION INTEGRATION
+  // ============================================
+  meetings: router({
+    // Meeting Recordings
+    recordings: router({
+      list: protectedProcedure
+        .input(z.object({
+          status: z.string().optional(),
+          projectId: z.number().optional(),
+          limit: z.number().optional(),
+        }).optional())
+        .query(({ input }) => db.getMeetingRecordings(input)),
+
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(async ({ input }) => {
+          const recording = await db.getMeetingRecordingById(input.id);
+          if (!recording) return null;
+          const actionItems = await db.getMeetingActionItems(input.id);
+          return { ...recording, actionItems };
+        }),
+
+      create: protectedProcedure
+        .input(z.object({
+          title: z.string().min(1),
+          platform: z.enum(["zoom", "google_meet", "teams", "webex", "manual_upload", "other"]).optional(),
+          meetingUrl: z.string().optional(),
+          scheduledStart: z.date().optional(),
+          scheduledEnd: z.date().optional(),
+          participants: z.string().optional(),
+          projectId: z.number().optional(),
+          customerId: z.number().optional(),
+          tags: z.string().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createMeetingRecording({
+            ...input,
+            organizerId: ctx.user.id,
+            createdBy: ctx.user.id,
+          });
+          await createAuditLog(ctx.user.id, 'create', 'meeting_recording', result.id, input.title);
+          return result;
+        }),
+
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          title: z.string().optional(),
+          status: z.enum(["scheduled", "recording", "processing", "transcribed", "analyzed", "synced", "failed"]).optional(),
+          recordingUrl: z.string().optional(),
+          transcriptText: z.string().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateMeetingRecording(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'meeting_recording', id);
+          return { success: true };
+        }),
+
+      delete: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteMeetingRecording(input.id);
+          await createAuditLog(ctx.user.id, 'delete', 'meeting_recording', input.id);
+          return { success: true };
+        }),
+
+      // AI Transcribe and analyze
+      transcribeAndAnalyze: protectedProcedure
+        .input(z.object({ id: z.number(), audioContent: z.string().optional(), transcriptText: z.string().optional() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.updateMeetingRecording(input.id, { status: 'processing', transcriptStatus: 'processing' });
+
+          try {
+            let transcript = input.transcriptText || '';
+
+            // If no transcript provided, we'd normally transcribe audio here
+            // For now, assume transcript is provided
+            if (!transcript) {
+              throw new TRPCError({ code: 'BAD_REQUEST', message: 'Transcript text required' });
+            }
+
+            // Update with transcript
+            await db.updateMeetingRecording(input.id, {
+              transcriptText: transcript,
+              transcriptStatus: 'completed',
+              status: 'transcribed',
+            });
+
+            // AI Analysis
+            const analysisPrompt = `Analyze this meeting transcript and extract key information.
+
+Transcript:
+${transcript.substring(0, 8000)}
+
+Extract and return JSON with:
+{
+  "summary": "Brief 2-3 sentence summary of the meeting",
+  "keyPoints": ["key point 1", "key point 2", ...],
+  "actionItems": [
+    { "description": "what needs to be done", "assignee": "person name if mentioned", "dueDate": "YYYY-MM-DD if mentioned", "priority": "low|medium|high|urgent" }
+  ],
+  "decisions": ["decision 1", "decision 2", ...],
+  "followUps": ["follow up item 1", ...],
+  "topics": ["topic 1", "topic 2", ...],
+  "sentiment": "positive|neutral|negative|mixed"
+}`;
+
+            const aiResponse = await invokeLLM({ prompt: analysisPrompt, responseFormat: 'json' });
+            const analysis = JSON.parse(aiResponse);
+
+            // Update meeting with AI analysis
+            await db.updateMeetingRecording(input.id, {
+              status: 'analyzed',
+              aiSummary: analysis.summary,
+              aiKeyPoints: JSON.stringify(analysis.keyPoints),
+              aiActionItems: JSON.stringify(analysis.actionItems),
+              aiDecisions: JSON.stringify(analysis.decisions),
+              aiFollowUps: JSON.stringify(analysis.followUps),
+              aiTopics: JSON.stringify(analysis.topics),
+              aiSentiment: analysis.sentiment,
+            });
+
+            // Create action item records
+            if (analysis.actionItems?.length) {
+              for (const item of analysis.actionItems) {
+                await db.createMeetingActionItem({
+                  meetingId: input.id,
+                  description: item.description,
+                  assignee: item.assignee,
+                  dueDate: item.dueDate ? new Date(item.dueDate) : undefined,
+                  priority: item.priority || 'medium',
+                  aiExtracted: true,
+                  aiConfidence: '85',
+                });
+              }
+            }
+
+            await createAuditLog(ctx.user.id, 'update', 'meeting_recording', input.id, 'AI analysis completed');
+
+            return { success: true, analysis };
+          } catch (error: any) {
+            await db.updateMeetingRecording(input.id, { status: 'failed', transcriptStatus: 'failed' });
+            throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: error.message });
+          }
+        }),
+
+      // Sync to Notion
+      syncToNotion: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const meeting = await db.getMeetingRecordingById(input.id);
+          if (!meeting) throw new TRPCError({ code: 'NOT_FOUND', message: 'Meeting not found' });
+
+          const notionIntegration = await db.getNotionIntegration(ctx.user.id);
+          if (!notionIntegration) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'Notion integration not configured' });
+          }
+
+          await db.updateMeetingRecording(input.id, { notionSyncStatus: 'pending' });
+
+          try {
+            // Create page in Notion
+            const notionResponse = await fetch('https://api.notion.com/v1/pages', {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${notionIntegration.accessToken}`,
+                'Content-Type': 'application/json',
+                'Notion-Version': '2022-06-28',
+              },
+              body: JSON.stringify({
+                parent: { database_id: notionIntegration.defaultDatabaseId },
+                properties: {
+                  'Name': { title: [{ text: { content: meeting.title } }] },
+                  'Date': { date: { start: meeting.scheduledStart?.toISOString().split('T')[0] || new Date().toISOString().split('T')[0] } },
+                },
+                children: [
+                  {
+                    object: 'block',
+                    type: 'heading_2',
+                    heading_2: { rich_text: [{ text: { content: 'Summary' } }] },
+                  },
+                  {
+                    object: 'block',
+                    type: 'paragraph',
+                    paragraph: { rich_text: [{ text: { content: meeting.aiSummary || 'No summary available' } }] },
+                  },
+                  {
+                    object: 'block',
+                    type: 'heading_2',
+                    heading_2: { rich_text: [{ text: { content: 'Key Points' } }] },
+                  },
+                  {
+                    object: 'block',
+                    type: 'paragraph',
+                    paragraph: { rich_text: [{ text: { content: meeting.aiKeyPoints || '[]' } }] },
+                  },
+                  {
+                    object: 'block',
+                    type: 'heading_2',
+                    heading_2: { rich_text: [{ text: { content: 'Action Items' } }] },
+                  },
+                  {
+                    object: 'block',
+                    type: 'paragraph',
+                    paragraph: { rich_text: [{ text: { content: meeting.aiActionItems || '[]' } }] },
+                  },
+                  {
+                    object: 'block',
+                    type: 'heading_2',
+                    heading_2: { rich_text: [{ text: { content: 'Full Transcript' } }] },
+                  },
+                  {
+                    object: 'block',
+                    type: 'paragraph',
+                    paragraph: { rich_text: [{ text: { content: (meeting.transcriptText || '').substring(0, 2000) } }] },
+                  },
+                ],
+              }),
+            });
+
+            if (!notionResponse.ok) {
+              const error = await notionResponse.text();
+              throw new Error(`Notion API error: ${error}`);
+            }
+
+            const notionPage = await notionResponse.json();
+
+            await db.updateMeetingRecording(input.id, {
+              status: 'synced',
+              notionPageId: notionPage.id,
+              notionSyncStatus: 'synced',
+              notionSyncedAt: new Date(),
+            });
+
+            // Sync action items to Notion tasks database if configured
+            if (notionIntegration.tasksDatabaseId && notionIntegration.syncActionItems) {
+              const actionItems = await db.getMeetingActionItems(input.id);
+              for (const item of actionItems) {
+                const taskResponse = await fetch('https://api.notion.com/v1/pages', {
+                  method: 'POST',
+                  headers: {
+                    'Authorization': `Bearer ${notionIntegration.accessToken}`,
+                    'Content-Type': 'application/json',
+                    'Notion-Version': '2022-06-28',
+                  },
+                  body: JSON.stringify({
+                    parent: { database_id: notionIntegration.tasksDatabaseId },
+                    properties: {
+                      'Name': { title: [{ text: { content: item.description } }] },
+                      'Status': { select: { name: 'To Do' } },
+                    },
+                  }),
+                });
+
+                if (taskResponse.ok) {
+                  const task = await taskResponse.json();
+                  await db.updateMeetingActionItem(item.id, {
+                    notionTaskId: task.id,
+                    notionSynced: true,
+                  });
+                }
+              }
+            }
+
+            await db.updateNotionIntegration(notionIntegration.id, { lastSyncAt: new Date() });
+            await createAuditLog(ctx.user.id, 'update', 'meeting_recording', input.id, 'Synced to Notion');
+
+            return { success: true, notionPageId: notionPage.id };
+          } catch (error: any) {
+            await db.updateMeetingRecording(input.id, {
+              notionSyncStatus: 'failed',
+              notionSyncError: error.message,
+            });
+            throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: error.message });
+          }
+        }),
+    }),
+
+    // Action Items
+    actionItems: router({
+      list: protectedProcedure
+        .input(z.object({ meetingId: z.number().optional() }).optional())
+        .query(async ({ input, ctx }) => {
+          if (input?.meetingId) {
+            return db.getMeetingActionItems(input.meetingId);
+          }
+          return db.getAllPendingActionItems(ctx.user.id);
+        }),
+
+      create: protectedProcedure
+        .input(z.object({
+          meetingId: z.number(),
+          description: z.string(),
+          assignee: z.string().optional(),
+          assignedUserId: z.number().optional(),
+          dueDate: z.date().optional(),
+          priority: z.enum(["low", "medium", "high", "urgent"]).optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const result = await db.createMeetingActionItem({
+            ...input,
+            aiExtracted: false,
+          });
+          return result;
+        }),
+
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          status: z.enum(["pending", "in_progress", "completed", "cancelled"]).optional(),
+          assignedUserId: z.number().optional(),
+          dueDate: z.date().optional(),
+          priority: z.enum(["low", "medium", "high", "urgent"]).optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          if (data.status === 'completed') {
+            (data as any).completedAt = new Date();
+            (data as any).completedBy = ctx.user.id;
+          }
+          await db.updateMeetingActionItem(id, data);
+          return { success: true };
+        }),
+    }),
+
+    // Notion Integration
+    notion: router({
+      getIntegration: protectedProcedure.query(({ ctx }) => db.getNotionIntegration(ctx.user.id)),
+
+      connect: protectedProcedure
+        .input(z.object({
+          accessToken: z.string(),
+          botId: z.string().optional(),
+          workspaceId: z.string().optional(),
+          workspaceName: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createNotionIntegration({
+            ...input,
+            userId: ctx.user.id,
+          });
+          await createAuditLog(ctx.user.id, 'create', 'notion_integration', result.id);
+          return result;
+        }),
+
+      updateSettings: protectedProcedure
+        .input(z.object({
+          defaultDatabaseId: z.string().optional(),
+          tasksDatabaseId: z.string().optional(),
+          syncMeetingNotes: z.boolean().optional(),
+          syncActionItems: z.boolean().optional(),
+          autoSync: z.boolean().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const integration = await db.getNotionIntegration(ctx.user.id);
+          if (!integration) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'Notion integration not found' });
+          }
+          await db.updateNotionIntegration(integration.id, input);
+          return { success: true };
+        }),
+
+      disconnect: protectedProcedure.mutation(async ({ ctx }) => {
+        await db.deleteNotionIntegration(ctx.user.id);
+        await createAuditLog(ctx.user.id, 'delete', 'notion_integration', 0);
+        return { success: true };
+      }),
+
+      // List databases from Notion
+      listDatabases: protectedProcedure.query(async ({ ctx }) => {
+        const integration = await db.getNotionIntegration(ctx.user.id);
+        if (!integration) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'Notion integration not configured' });
+        }
+
+        const response = await fetch('https://api.notion.com/v1/search', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${integration.accessToken}`,
+            'Content-Type': 'application/json',
+            'Notion-Version': '2022-06-28',
+          },
+          body: JSON.stringify({
+            filter: { property: 'object', value: 'database' },
+          }),
+        });
+
+        if (!response.ok) {
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to fetch Notion databases' });
+        }
+
+        const data = await response.json();
+        return data.results.map((db: any) => ({
+          id: db.id,
+          title: db.title?.[0]?.plain_text || 'Untitled',
+          icon: db.icon,
+        }));
+      }),
+    }),
+  }),
 });
 
 // Helper function to calculate next generation date for recurring invoices

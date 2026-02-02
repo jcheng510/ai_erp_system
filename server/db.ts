@@ -7965,3 +7965,553 @@ export async function checkAndTriggerLowStockPurchaseOrder(
     reason: `Auto-generated PO ${poNumber} for ${orderQty} units`
   };
 }
+
+// ============================================
+// RFP MANAGEMENT
+// ============================================
+
+import {
+  rfpDocuments, rfpRequirements, rfpTemplates, generatedRfps,
+  priceSimulations, priceSimulationInputs, priceSimulationResults,
+  cogsRecords, cogsLineItems, standardCosts,
+  meetingRecordings, meetingActionItems, notionIntegrations,
+  InsertRfpDocument, InsertRfpRequirement, InsertRfpTemplate, InsertGeneratedRfp,
+  InsertPriceSimulation, InsertPriceSimulationInput, InsertPriceSimulationResult,
+  InsertCogsRecord, InsertCogsLineItem, InsertStandardCost,
+  InsertMeetingRecording, InsertMeetingActionItem, InsertNotionIntegration
+} from "../drizzle/schema";
+
+// RFP Documents
+export async function getRfpDocuments(filters?: { status?: string; limit?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  let query = db.select().from(rfpDocuments).orderBy(desc(rfpDocuments.createdAt));
+  if (filters?.status) {
+    query = query.where(eq(rfpDocuments.status, filters.status as any)) as any;
+  }
+  if (filters?.limit) {
+    query = query.limit(filters.limit) as any;
+  }
+  return query;
+}
+
+export async function getRfpDocumentById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(rfpDocuments).where(eq(rfpDocuments.id, id)).limit(1);
+  return result[0];
+}
+
+export async function createRfpDocument(data: InsertRfpDocument) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(rfpDocuments).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateRfpDocument(id: number, data: Partial<InsertRfpDocument>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(rfpDocuments).set(data).where(eq(rfpDocuments.id, id));
+}
+
+export async function deleteRfpDocument(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(rfpDocuments).where(eq(rfpDocuments.id, id));
+}
+
+// RFP Requirements
+export async function getRfpRequirements(rfpId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(rfpRequirements).where(eq(rfpRequirements.rfpId, rfpId)).orderBy(rfpRequirements.sortOrder);
+}
+
+export async function createRfpRequirement(data: InsertRfpRequirement) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(rfpRequirements).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateRfpRequirement(id: number, data: Partial<InsertRfpRequirement>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(rfpRequirements).set(data).where(eq(rfpRequirements.id, id));
+}
+
+export async function deleteRfpRequirementsByRfpId(rfpId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(rfpRequirements).where(eq(rfpRequirements.rfpId, rfpId));
+}
+
+// RFP Templates
+export async function getRfpTemplates(activeOnly = true) {
+  const db = await getDb();
+  if (!db) return [];
+  if (activeOnly) {
+    return db.select().from(rfpTemplates).where(eq(rfpTemplates.isActive, true)).orderBy(rfpTemplates.name);
+  }
+  return db.select().from(rfpTemplates).orderBy(rfpTemplates.name);
+}
+
+export async function getRfpTemplateById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(rfpTemplates).where(eq(rfpTemplates.id, id)).limit(1);
+  return result[0];
+}
+
+export async function createRfpTemplate(data: InsertRfpTemplate) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(rfpTemplates).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateRfpTemplate(id: number, data: Partial<InsertRfpTemplate>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(rfpTemplates).set(data).where(eq(rfpTemplates.id, id));
+}
+
+// Generated RFPs
+export async function getGeneratedRfps(filters?: { status?: string; limit?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  let query = db.select().from(generatedRfps).orderBy(desc(generatedRfps.createdAt));
+  if (filters?.status) {
+    query = query.where(eq(generatedRfps.status, filters.status as any)) as any;
+  }
+  if (filters?.limit) {
+    query = query.limit(filters.limit) as any;
+  }
+  return query;
+}
+
+export async function getGeneratedRfpById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(generatedRfps).where(eq(generatedRfps.id, id)).limit(1);
+  return result[0];
+}
+
+export async function createGeneratedRfp(data: InsertGeneratedRfp) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(generatedRfps).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateGeneratedRfp(id: number, data: Partial<InsertGeneratedRfp>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(generatedRfps).set(data).where(eq(generatedRfps.id, id));
+}
+
+// ============================================
+// PRICE SIMULATION
+// ============================================
+
+export async function getPriceSimulations(filters?: { status?: string; limit?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  let query = db.select().from(priceSimulations).orderBy(desc(priceSimulations.createdAt));
+  if (filters?.status) {
+    query = query.where(eq(priceSimulations.status, filters.status as any)) as any;
+  }
+  if (filters?.limit) {
+    query = query.limit(filters.limit) as any;
+  }
+  return query;
+}
+
+export async function getPriceSimulationById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(priceSimulations).where(eq(priceSimulations.id, id)).limit(1);
+  return result[0];
+}
+
+export async function createPriceSimulation(data: InsertPriceSimulation) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(priceSimulations).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updatePriceSimulation(id: number, data: Partial<InsertPriceSimulation>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(priceSimulations).set(data).where(eq(priceSimulations.id, id));
+}
+
+export async function deletePriceSimulation(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  // Delete related records first
+  await db.delete(priceSimulationResults).where(eq(priceSimulationResults.simulationId, id));
+  await db.delete(priceSimulationInputs).where(eq(priceSimulationInputs.simulationId, id));
+  await db.delete(priceSimulations).where(eq(priceSimulations.id, id));
+}
+
+// Price Simulation Inputs
+export async function getPriceSimulationInputs(simulationId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(priceSimulationInputs).where(eq(priceSimulationInputs.simulationId, simulationId));
+}
+
+export async function createPriceSimulationInput(data: InsertPriceSimulationInput) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(priceSimulationInputs).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function deletePriceSimulationInputs(simulationId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(priceSimulationInputs).where(eq(priceSimulationInputs.simulationId, simulationId));
+}
+
+// Price Simulation Results
+export async function getPriceSimulationResults(simulationId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select({
+    result: priceSimulationResults,
+    product: products,
+  })
+    .from(priceSimulationResults)
+    .leftJoin(products, eq(priceSimulationResults.productId, products.id))
+    .where(eq(priceSimulationResults.simulationId, simulationId))
+    .orderBy(desc(priceSimulationResults.marginChangePercent));
+}
+
+export async function createPriceSimulationResult(data: InsertPriceSimulationResult) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(priceSimulationResults).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function deletePriceSimulationResults(simulationId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(priceSimulationResults).where(eq(priceSimulationResults.simulationId, simulationId));
+}
+
+// ============================================
+// COGS TRACKING
+// ============================================
+
+export async function getCogsRecords(filters?: { productId?: number; periodType?: string; status?: string; limit?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+
+  let query = db.select({
+    cogs: cogsRecords,
+    product: products,
+  })
+    .from(cogsRecords)
+    .leftJoin(products, eq(cogsRecords.productId, products.id))
+    .orderBy(desc(cogsRecords.periodStart));
+
+  const conditions = [];
+  if (filters?.productId) conditions.push(eq(cogsRecords.productId, filters.productId));
+  if (filters?.periodType) conditions.push(eq(cogsRecords.periodType, filters.periodType as any));
+  if (filters?.status) conditions.push(eq(cogsRecords.status, filters.status as any));
+
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as any;
+  }
+  if (filters?.limit) {
+    query = query.limit(filters.limit) as any;
+  }
+  return query;
+}
+
+export async function getCogsRecordById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select({
+    cogs: cogsRecords,
+    product: products,
+  })
+    .from(cogsRecords)
+    .leftJoin(products, eq(cogsRecords.productId, products.id))
+    .where(eq(cogsRecords.id, id))
+    .limit(1);
+  return result[0];
+}
+
+export async function createCogsRecord(data: InsertCogsRecord) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(cogsRecords).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateCogsRecord(id: number, data: Partial<InsertCogsRecord>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(cogsRecords).set(data).where(eq(cogsRecords.id, id));
+}
+
+export async function deleteCogsRecord(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(cogsLineItems).where(eq(cogsLineItems.cogsRecordId, id));
+  await db.delete(cogsRecords).where(eq(cogsRecords.id, id));
+}
+
+// COGS Line Items
+export async function getCogsLineItems(cogsRecordId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(cogsLineItems).where(eq(cogsLineItems.cogsRecordId, cogsRecordId));
+}
+
+export async function createCogsLineItem(data: InsertCogsLineItem) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(cogsLineItems).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function deleteCogsLineItems(cogsRecordId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(cogsLineItems).where(eq(cogsLineItems.cogsRecordId, cogsRecordId));
+}
+
+// Standard Costs
+export async function getStandardCosts(productId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  if (productId) {
+    return db.select().from(standardCosts)
+      .where(and(eq(standardCosts.productId, productId), eq(standardCosts.isActive, true)))
+      .orderBy(desc(standardCosts.effectiveDate));
+  }
+  return db.select({
+    standardCost: standardCosts,
+    product: products,
+  })
+    .from(standardCosts)
+    .leftJoin(products, eq(standardCosts.productId, products.id))
+    .where(eq(standardCosts.isActive, true))
+    .orderBy(desc(standardCosts.effectiveDate));
+}
+
+export async function getActiveStandardCost(productId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(standardCosts)
+    .where(and(
+      eq(standardCosts.productId, productId),
+      eq(standardCosts.isActive, true),
+      lte(standardCosts.effectiveDate, new Date())
+    ))
+    .orderBy(desc(standardCosts.effectiveDate))
+    .limit(1);
+  return result[0];
+}
+
+export async function createStandardCost(data: InsertStandardCost) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  // Deactivate previous standard costs for this product
+  await db.update(standardCosts)
+    .set({ isActive: false })
+    .where(eq(standardCosts.productId, data.productId));
+  const result = await db.insert(standardCosts).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateStandardCost(id: number, data: Partial<InsertStandardCost>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(standardCosts).set(data).where(eq(standardCosts.id, id));
+}
+
+// COGS Dashboard Summary
+export async function getCogsDashboardSummary() {
+  const db = await getDb();
+  if (!db) return null;
+
+  const now = new Date();
+  const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);
+
+  // Get current month COGS
+  const currentMonthCogs = await db.select({
+    totalCogs: sum(cogsRecords.totalCogs),
+    totalRevenue: sum(cogsRecords.revenue),
+  })
+    .from(cogsRecords)
+    .where(and(
+      gte(cogsRecords.periodStart, currentMonthStart),
+      eq(cogsRecords.status, 'verified')
+    ));
+
+  // Get last month COGS
+  const lastMonthCogs = await db.select({
+    totalCogs: sum(cogsRecords.totalCogs),
+    totalRevenue: sum(cogsRecords.revenue),
+  })
+    .from(cogsRecords)
+    .where(and(
+      gte(cogsRecords.periodStart, lastMonthStart),
+      lte(cogsRecords.periodEnd, lastMonthEnd),
+      eq(cogsRecords.status, 'verified')
+    ));
+
+  // Get products without standard costs
+  const productsWithoutStandardCosts = await db.select({ count: count() })
+    .from(products)
+    .leftJoin(standardCosts, and(
+      eq(products.id, standardCosts.productId),
+      eq(standardCosts.isActive, true)
+    ))
+    .where(isNull(standardCosts.id));
+
+  return {
+    currentMonthTotalCogs: currentMonthCogs[0]?.totalCogs || '0',
+    currentMonthRevenue: currentMonthCogs[0]?.totalRevenue || '0',
+    lastMonthTotalCogs: lastMonthCogs[0]?.totalCogs || '0',
+    lastMonthRevenue: lastMonthCogs[0]?.totalRevenue || '0',
+    productsWithoutStandardCosts: productsWithoutStandardCosts[0]?.count || 0,
+  };
+}
+
+// ============================================
+// MEETING NOTES & NOTION INTEGRATION
+// ============================================
+
+export async function getMeetingRecordings(filters?: { status?: string; projectId?: number; limit?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+
+  let query = db.select().from(meetingRecordings).orderBy(desc(meetingRecordings.scheduledStart));
+
+  const conditions = [];
+  if (filters?.status) conditions.push(eq(meetingRecordings.status, filters.status as any));
+  if (filters?.projectId) conditions.push(eq(meetingRecordings.projectId, filters.projectId));
+
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as any;
+  }
+  if (filters?.limit) {
+    query = query.limit(filters.limit) as any;
+  }
+  return query;
+}
+
+export async function getMeetingRecordingById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(meetingRecordings).where(eq(meetingRecordings.id, id)).limit(1);
+  return result[0];
+}
+
+export async function createMeetingRecording(data: InsertMeetingRecording) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(meetingRecordings).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateMeetingRecording(id: number, data: Partial<InsertMeetingRecording>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(meetingRecordings).set(data).where(eq(meetingRecordings.id, id));
+}
+
+export async function deleteMeetingRecording(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(meetingActionItems).where(eq(meetingActionItems.meetingId, id));
+  await db.delete(meetingRecordings).where(eq(meetingRecordings.id, id));
+}
+
+// Meeting Action Items
+export async function getMeetingActionItems(meetingId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(meetingActionItems)
+    .where(eq(meetingActionItems.meetingId, meetingId))
+    .orderBy(meetingActionItems.priority);
+}
+
+export async function getAllPendingActionItems(userId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  let query = db.select({
+    actionItem: meetingActionItems,
+    meeting: meetingRecordings,
+  })
+    .from(meetingActionItems)
+    .leftJoin(meetingRecordings, eq(meetingActionItems.meetingId, meetingRecordings.id))
+    .where(or(
+      eq(meetingActionItems.status, 'pending'),
+      eq(meetingActionItems.status, 'in_progress')
+    ))
+    .orderBy(desc(meetingActionItems.dueDate));
+
+  if (userId) {
+    query = query.where(eq(meetingActionItems.assignedUserId, userId)) as any;
+  }
+  return query;
+}
+
+export async function createMeetingActionItem(data: InsertMeetingActionItem) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(meetingActionItems).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateMeetingActionItem(id: number, data: Partial<InsertMeetingActionItem>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(meetingActionItems).set(data).where(eq(meetingActionItems.id, id));
+}
+
+// Notion Integration
+export async function getNotionIntegration(userId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(notionIntegrations)
+    .where(and(eq(notionIntegrations.userId, userId), eq(notionIntegrations.isActive, true)))
+    .limit(1);
+  return result[0];
+}
+
+export async function createNotionIntegration(data: InsertNotionIntegration) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  // Deactivate existing integrations for this user
+  await db.update(notionIntegrations)
+    .set({ isActive: false })
+    .where(eq(notionIntegrations.userId, data.userId));
+  const result = await db.insert(notionIntegrations).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateNotionIntegration(id: number, data: Partial<InsertNotionIntegration>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(notionIntegrations).set(data).where(eq(notionIntegrations.id, id));
+}
+
+export async function deleteNotionIntegration(userId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(notionIntegrations).where(eq(notionIntegrations.userId, userId));
+}
