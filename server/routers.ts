@@ -9,7 +9,7 @@ import { sendEmail, isEmailConfigured, formatEmailHtml } from "./_core/email";
 import { processEmailReply, analyzeEmail, generateEmailReply } from "./emailReplyService";
 import * as emailService from "./_core/emailService";
 import * as sendgridProvider from "./_core/sendgridProvider";
-import { parseUploadedDocument, importPurchaseOrder, importFreightInvoice, importVendorInvoice, matchLineItemsToMaterials } from "./documentImportService";
+import { parseUploadedDocument, importPurchaseOrder, importFreightInvoice, importVendorInvoice, importCustomsDocument, matchLineItemsToMaterials } from "./documentImportService";
 import { processAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingActions, type AIAgentContext } from "./aiAgentService";
 import * as db from "./db";
 import { storagePut } from "./storage";
@@ -11032,6 +11032,50 @@ Ask if they received the original request and if they can provide a quote.`;
       }))
       .mutation(async ({ input, ctx }) => {
         return importVendorInvoice(input.invoiceData as any, ctx.user.id, input.markAsReceived);
+      }),
+
+    // Import a customs document
+    importCustomsDocument: protectedProcedure
+      .input(z.object({
+        documentData: z.object({
+          documentNumber: z.string(),
+          documentType: z.enum(["bill_of_lading", "customs_entry", "commercial_invoice", "packing_list", "certificate_of_origin", "import_permit", "other"]),
+          entryDate: z.string(),
+          shipperName: z.string(),
+          shipperCountry: z.string().optional(),
+          consigneeName: z.string(),
+          consigneeCountry: z.string().optional(),
+          countryOfOrigin: z.string(),
+          portOfEntry: z.string().optional(),
+          portOfExit: z.string().optional(),
+          vesselName: z.string().optional(),
+          voyageNumber: z.string().optional(),
+          containerNumber: z.string().optional(),
+          lineItems: z.array(z.object({
+            description: z.string(),
+            hsCode: z.string().optional(),
+            quantity: z.number(),
+            unit: z.string().optional(),
+            declaredValue: z.number(),
+            dutyRate: z.number().optional(),
+            dutyAmount: z.number().optional(),
+            countryOfOrigin: z.string().optional(),
+          })),
+          totalDeclaredValue: z.number(),
+          totalDuties: z.number().optional(),
+          totalTaxes: z.number().optional(),
+          totalCharges: z.number(),
+          currency: z.string().optional(),
+          brokerName: z.string().optional(),
+          brokerReference: z.string().optional(),
+          relatedPoNumber: z.string().optional(),
+          trackingNumber: z.string().optional(),
+          notes: z.string().optional(),
+        }),
+        linkToPO: z.boolean().default(true),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return importCustomsDocument(input.documentData as any, ctx.user.id);
       }),
 
     // Get import history

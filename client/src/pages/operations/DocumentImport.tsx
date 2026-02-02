@@ -80,6 +80,45 @@ interface ParsedVendorInvoice {
   confidence: number;
 }
 
+interface ParsedCustomsLineItem {
+  description: string;
+  hsCode?: string;
+  quantity: number;
+  unit?: string;
+  declaredValue: number;
+  dutyRate?: number;
+  dutyAmount?: number;
+  countryOfOrigin?: string;
+}
+
+interface ParsedCustomsDocument {
+  documentNumber: string;
+  documentType: "bill_of_lading" | "customs_entry" | "commercial_invoice" | "packing_list" | "certificate_of_origin" | "import_permit" | "other";
+  entryDate: string;
+  shipperName: string;
+  shipperCountry?: string;
+  consigneeName: string;
+  consigneeCountry?: string;
+  countryOfOrigin: string;
+  portOfEntry?: string;
+  portOfExit?: string;
+  vesselName?: string;
+  voyageNumber?: string;
+  containerNumber?: string;
+  lineItems: ParsedCustomsLineItem[];
+  totalDeclaredValue: number;
+  totalDuties?: number;
+  totalTaxes?: number;
+  totalCharges: number;
+  currency?: string;
+  brokerName?: string;
+  brokerReference?: string;
+  relatedPoNumber?: string;
+  trackingNumber?: string;
+  notes?: string;
+  confidence: number;
+}
+
 interface DriveFile {
   id: string;
   name: string;
@@ -97,11 +136,12 @@ interface DriveFolder {
 
 export default function DocumentImport() {
   const [activeTab, setActiveTab] = useState("upload");
-  const [uploadType, setUploadType] = useState<"po" | "freight" | "vendor_invoice">("po");
+  const [uploadType, setUploadType] = useState<"po" | "freight" | "vendor_invoice" | "customs">("po");
   const [isUploading, setIsUploading] = useState(false);
   const [parsedPO, setParsedPO] = useState<ParsedPO | null>(null);
   const [parsedFreight, setParsedFreight] = useState<ParsedFreightInvoice | null>(null);
   const [parsedVendorInvoice, setParsedVendorInvoice] = useState<ParsedVendorInvoice | null>(null);
+  const [parsedCustoms, setParsedCustoms] = useState<ParsedCustomsDocument | null>(null);
   const [showPreview, setShowPreview] = useState(false);
   const [markAsReceived, setMarkAsReceived] = useState(true);
   const [updateInventory, setUpdateInventory] = useState(true);
@@ -120,6 +160,7 @@ export default function DocumentImport() {
   const importPOMutation = trpc.documentImport.importPO.useMutation();
   const importFreightMutation = trpc.documentImport.importFreightInvoice.useMutation();
   const importVendorInvoiceMutation = trpc.documentImport.importVendorInvoice.useMutation();
+  const importCustomsMutation = trpc.documentImport.importCustomsDocument.useMutation();
   const matchMaterialsMutation = trpc.documentImport.matchMaterials.useMutation();
   const historyQuery = trpc.documentImport.getHistory.useQuery({ limit: 50 });
   
@@ -220,11 +261,16 @@ export default function DocumentImport() {
           setParsedFreight(result.freightInvoice);
           setUploadType("freight");
           setShowPreview(true);
+        } else if (result.documentType === "customs_document" && result.customsDocument) {
+          setParsedCustoms(result.customsDocument);
+          setUploadType("customs");
+          setShowPreview(true);
         } else {
           console.error("[DocumentImport] Unknown document type or missing data:", {
             documentType: result.documentType,
             hasPurchaseOrder: !!result.purchaseOrder,
             hasFreightInvoice: !!result.freightInvoice,
+            hasCustomsDocument: !!result.customsDocument,
             success: result.success,
             error: result.error,
             fullResult: result
@@ -316,6 +362,25 @@ export default function DocumentImport() {
     } catch (error) {
       console.error("Import error:", error);
       toast.error("Failed to import vendor invoice. Please try again.");
+    }
+  };
+
+  const handleImportCustoms = async () => {
+    if (!parsedCustoms) return;
+
+    try {
+      const result = await importCustomsMutation.mutateAsync({
+        documentData: parsedCustoms,
+        linkToPO,
+      });
+
+      toast.success(`Customs document ${parsedCustoms.documentNumber} imported successfully!`);
+      setParsedCustoms(null);
+      setShowPreview(false);
+      historyQuery.refetch();
+    } catch (error) {
+      console.error("Import error:", error);
+      toast.error("Failed to import customs document. Please try again.");
     }
   };
 
@@ -436,7 +501,7 @@ export default function DocumentImport() {
               <CardTitle>Supported Document Types</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid gap-4 md:grid-cols-3">
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
                 <div className="flex items-start gap-3 p-4 rounded-lg border">
                   <Package className="h-8 w-8 text-blue-500" />
                   <div>
@@ -473,6 +538,19 @@ export default function DocumentImport() {
                     <div className="flex gap-2 mt-2 flex-wrap">
                       <Badge variant="secondary">Auto-link to PO</Badge>
                       <Badge variant="secondary">Cost tracking</Badge>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3 p-4 rounded-lg border">
+                  <FileText className="h-8 w-8 text-orange-500" />
+                  <div>
+                    <h3 className="font-medium">Customs Documents</h3>
+                    <p className="text-sm text-muted-foreground">
+                      Import bills of lading, customs entries, certificates of origin, and other import/export docs
+                    </p>
+                    <div className="flex gap-2 mt-2 flex-wrap">
+                      <Badge variant="secondary">HS codes</Badge>
+                      <Badge variant="secondary">Duties tracking</Badge>
                     </div>
                   </div>
                 </div>
@@ -516,8 +594,8 @@ export default function DocumentImport() {
                           {log.fileName}
                         </TableCell>
                         <TableCell>
-                          <Badge variant={log.documentType === "purchase_order" ? "default" : log.documentType === "vendor_invoice" ? "default" : "secondary"}>
-                            {log.documentType === "purchase_order" ? "Purchase Order" : log.documentType === "vendor_invoice" ? "Vendor Invoice" : "Freight Invoice"}
+                          <Badge variant={log.documentType === "purchase_order" ? "default" : log.documentType === "vendor_invoice" ? "default" : log.documentType === "customs_document" ? "default" : "secondary"}>
+                            {log.documentType === "purchase_order" ? "Purchase Order" : log.documentType === "vendor_invoice" ? "Vendor Invoice" : log.documentType === "customs_document" ? "Customs Doc" : "Freight Invoice"}
                           </Badge>
                         </TableCell>
                         <TableCell>
@@ -811,6 +889,10 @@ export default function DocumentImport() {
                                 } else if (result.data.documentType === 'freight_invoice' && result.data.freightInvoice) {
                                   setParsedFreight(result.data.freightInvoice);
                                   setUploadType('freight');
+                                  setShowPreview(true);
+                                } else if (result.data.documentType === 'customs_document' && result.data.customsDocument) {
+                                  setParsedCustoms(result.data.customsDocument);
+                                  setUploadType('customs');
                                   setShowPreview(true);
                                 }
                               }}
@@ -1389,6 +1471,232 @@ export default function DocumentImport() {
             <Button onClick={handleImportVendorInvoice} disabled={importVendorInvoiceMutation.isPending}>
               {importVendorInvoiceMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Import Vendor Invoice
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Customs Document Preview Dialog */}
+      <Dialog open={showPreview && uploadType === "customs" && !!parsedCustoms} onOpenChange={(open) => !open && setShowPreview(false)}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Review Customs Document</DialogTitle>
+            <DialogDescription>
+              Review and edit the extracted customs data before importing
+            </DialogDescription>
+          </DialogHeader>
+
+          {parsedCustoms && (
+            <div className="space-y-6">
+              {/* Confidence Score */}
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-muted-foreground">Extraction Confidence:</span>
+                <Badge variant={parsedCustoms.confidence > 0.8 ? "default" : parsedCustoms.confidence > 0.6 ? "secondary" : "destructive"}>
+                  {Math.round(parsedCustoms.confidence * 100)}%
+                </Badge>
+                <Badge variant="outline" className="ml-2">
+                  {parsedCustoms.documentType.replace(/_/g, ' ').toUpperCase()}
+                </Badge>
+              </div>
+
+              {/* Document Details */}
+              <div className="grid gap-4 md:grid-cols-3">
+                <div>
+                  <Label>Document Number</Label>
+                  <Input
+                    value={parsedCustoms.documentNumber}
+                    onChange={(e) => setParsedCustoms({ ...parsedCustoms, documentNumber: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <Label>Entry Date</Label>
+                  <Input
+                    type="date"
+                    value={parsedCustoms.entryDate}
+                    onChange={(e) => setParsedCustoms({ ...parsedCustoms, entryDate: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <Label>Country of Origin</Label>
+                  <Input
+                    value={parsedCustoms.countryOfOrigin}
+                    onChange={(e) => setParsedCustoms({ ...parsedCustoms, countryOfOrigin: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              {/* Shipper/Consignee Info */}
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2 p-3 border rounded">
+                  <h4 className="font-medium text-sm">Shipper</h4>
+                  <div>
+                    <Label className="text-xs">Name</Label>
+                    <Input
+                      value={parsedCustoms.shipperName}
+                      onChange={(e) => setParsedCustoms({ ...parsedCustoms, shipperName: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Country</Label>
+                    <Input
+                      value={parsedCustoms.shipperCountry || ""}
+                      onChange={(e) => setParsedCustoms({ ...parsedCustoms, shipperCountry: e.target.value })}
+                    />
+                  </div>
+                </div>
+                <div className="space-y-2 p-3 border rounded">
+                  <h4 className="font-medium text-sm">Consignee</h4>
+                  <div>
+                    <Label className="text-xs">Name</Label>
+                    <Input
+                      value={parsedCustoms.consigneeName}
+                      onChange={(e) => setParsedCustoms({ ...parsedCustoms, consigneeName: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Country</Label>
+                    <Input
+                      value={parsedCustoms.consigneeCountry || ""}
+                      onChange={(e) => setParsedCustoms({ ...parsedCustoms, consigneeCountry: e.target.value })}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Shipping Details */}
+              <div className="grid gap-4 md:grid-cols-4">
+                <div>
+                  <Label className="text-xs">Port of Entry</Label>
+                  <Input
+                    value={parsedCustoms.portOfEntry || ""}
+                    onChange={(e) => setParsedCustoms({ ...parsedCustoms, portOfEntry: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs">Port of Exit</Label>
+                  <Input
+                    value={parsedCustoms.portOfExit || ""}
+                    onChange={(e) => setParsedCustoms({ ...parsedCustoms, portOfExit: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs">Vessel Name</Label>
+                  <Input
+                    value={parsedCustoms.vesselName || ""}
+                    onChange={(e) => setParsedCustoms({ ...parsedCustoms, vesselName: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs">Container #</Label>
+                  <Input
+                    value={parsedCustoms.containerNumber || ""}
+                    onChange={(e) => setParsedCustoms({ ...parsedCustoms, containerNumber: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              {/* Line Items */}
+              <div>
+                <Label className="mb-2 block">Line Items</Label>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Description</TableHead>
+                      <TableHead>HS Code</TableHead>
+                      <TableHead>Qty</TableHead>
+                      <TableHead>Declared Value</TableHead>
+                      <TableHead>Duty Rate</TableHead>
+                      <TableHead>Duty Amount</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {parsedCustoms.lineItems.map((item, index) => (
+                      <TableRow key={index}>
+                        <TableCell>{item.description}</TableCell>
+                        <TableCell>
+                          <code className="text-xs bg-muted px-1 py-0.5 rounded">
+                            {item.hsCode || "N/A"}
+                          </code>
+                        </TableCell>
+                        <TableCell>{item.quantity} {item.unit || ""}</TableCell>
+                        <TableCell>${(item.declaredValue ?? 0).toFixed(2)}</TableCell>
+                        <TableCell>{item.dutyRate ? `${(item.dutyRate * 100).toFixed(1)}%` : "N/A"}</TableCell>
+                        <TableCell>${(item.dutyAmount ?? 0).toFixed(2)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+
+              {/* Totals */}
+              <div className="flex justify-end">
+                <div className="space-y-1 text-right">
+                  <div className="text-sm">
+                    Declared Value: <span className="font-medium">${(parsedCustoms.totalDeclaredValue ?? 0).toFixed(2)}</span>
+                  </div>
+                  <div className="text-sm">
+                    Total Duties: <span className="font-medium">${(parsedCustoms.totalDuties ?? 0).toFixed(2)}</span>
+                  </div>
+                  <div className="text-sm">
+                    Total Taxes: <span className="font-medium">${(parsedCustoms.totalTaxes ?? 0).toFixed(2)}</span>
+                  </div>
+                  <div className="text-lg font-bold">
+                    Total Charges: ${(parsedCustoms.totalCharges ?? 0).toFixed(2)}
+                  </div>
+                </div>
+              </div>
+
+              {/* Broker Info */}
+              {(parsedCustoms.brokerName || parsedCustoms.relatedPoNumber) && (
+                <div className="grid gap-4 md:grid-cols-3 border-t pt-4">
+                  <div>
+                    <Label className="text-xs">Customs Broker</Label>
+                    <Input
+                      value={parsedCustoms.brokerName || ""}
+                      onChange={(e) => setParsedCustoms({ ...parsedCustoms, brokerName: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Broker Reference</Label>
+                    <Input
+                      value={parsedCustoms.brokerReference || ""}
+                      onChange={(e) => setParsedCustoms({ ...parsedCustoms, brokerReference: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Related PO Number</Label>
+                    <Input
+                      value={parsedCustoms.relatedPoNumber || ""}
+                      onChange={(e) => setParsedCustoms({ ...parsedCustoms, relatedPoNumber: e.target.value })}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Import Options */}
+              <div className="space-y-3 border-t pt-4">
+                <Label>Import Options</Label>
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="linkToPOCustoms"
+                    checked={linkToPO}
+                    onCheckedChange={(checked) => setLinkToPO(!!checked)}
+                  />
+                  <label htmlFor="linkToPOCustoms" className="text-sm">
+                    Link to related purchase order (if found)
+                  </label>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowPreview(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleImportCustoms} disabled={importCustomsMutation.isPending}>
+              {importCustomsMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Import Customs Document
             </Button>
           </DialogFooter>
         </DialogContent>
