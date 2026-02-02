@@ -72,6 +72,7 @@ import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
 import { AICommandBar } from './AICommandBar';
 import { FloatingAIAssistant } from './FloatingAIAssistant';
+import { QuickAddFAB } from './QuickAddFAB';
 import { Button } from "./ui/button";
 import { toast } from "sonner";
 import {
@@ -500,6 +501,9 @@ function DashboardLayoutContent({
 
       {/* Floating AI Assistant - available throughout the app */}
       <FloatingAIAssistant />
+
+      {/* Quick Add FAB - click anywhere to add items */}
+      <QuickAddFAB />
     </>
   );
 }

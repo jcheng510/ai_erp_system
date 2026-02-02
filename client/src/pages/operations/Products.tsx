@@ -4,7 +4,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
@@ -30,9 +29,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Package, Plus, Search, Loader2 } from "lucide-react";
+import { Package, Plus, Search, Loader2, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { Link } from "wouter";
+import { EditableCell } from "@/components/ui/click-to-edit";
 
 function formatCurrency(value: string | null | undefined) {
   const num = parseFloat(value || "0");
@@ -41,6 +41,18 @@ function formatCurrency(value: string | null | undefined) {
     currency: "USD",
   }).format(num);
 }
+
+const statusOptions = [
+  { value: "active", label: "Active", color: "bg-green-500/10 text-green-600" },
+  { value: "inactive", label: "Inactive", color: "bg-gray-500/10 text-gray-600" },
+  { value: "discontinued", label: "Discontinued", color: "bg-red-500/10 text-red-600" },
+];
+
+const typeOptions = [
+  { value: "physical", label: "Physical", color: "bg-blue-500/10 text-blue-600" },
+  { value: "digital", label: "Digital", color: "bg-purple-500/10 text-purple-600" },
+  { value: "service", label: "Service", color: "bg-amber-500/10 text-amber-600" },
+];
 
 export default function Products() {
   const [search, setSearch] = useState("");
@@ -57,7 +69,9 @@ export default function Products() {
     unit: "each",
   });
 
+  const utils = trpc.useUtils();
   const { data: products, isLoading, refetch } = trpc.products.list.useQuery();
+
   const createProduct = trpc.products.create.useMutation({
     onSuccess: () => {
       toast.success("Product created successfully");
@@ -73,6 +87,23 @@ export default function Products() {
     },
   });
 
+  const updateProduct = trpc.products.update.useMutation({
+    onSuccess: () => {
+      toast.success("Product updated");
+      utils.products.list.invalidate();
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const handleUpdate = async (productId: number, field: string, value: string) => {
+    await updateProduct.mutateAsync({
+      id: productId,
+      [field]: value,
+    });
+  };
+
   const filteredProducts = products?.filter((product) => {
     const matchesSearch =
       product.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -80,18 +111,6 @@ export default function Products() {
     const matchesStatus = statusFilter === "all" || product.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
-
-  const statusColors: Record<string, string> = {
-    active: "bg-green-500/10 text-green-600",
-    inactive: "bg-gray-500/10 text-gray-600",
-    discontinued: "bg-red-500/10 text-red-600",
-  };
-
-  const typeColors: Record<string, string> = {
-    physical: "bg-blue-500/10 text-blue-600",
-    digital: "bg-purple-500/10 text-purple-600",
-    service: "bg-amber-500/10 text-amber-600",
-  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -103,7 +122,7 @@ export default function Products() {
       type: formData.type,
       unitPrice: formData.unitPrice,
       costPrice: formData.costPrice || undefined,
-      
+
     });
   };
 
@@ -116,7 +135,7 @@ export default function Products() {
             Products
           </h1>
           <p className="text-muted-foreground mt-1">
-            Manage your product catalog.
+            Manage your product catalog. Click on any cell to edit inline.
           </p>
         </div>
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
@@ -264,6 +283,10 @@ export default function Products() {
                 <SelectItem value="discontinued">Discontinued</SelectItem>
               </SelectContent>
             </Select>
+            <div className="text-xs text-muted-foreground flex items-center gap-1">
+              <Pencil className="h-3 w-3" />
+              Click any cell to edit
+            </div>
           </div>
         </CardHeader>
         <CardContent>
@@ -291,22 +314,53 @@ export default function Products() {
               </TableHeader>
               <TableBody>
                 {filteredProducts.map((product) => (
-                  <TableRow key={product.id} className="cursor-pointer hover:bg-muted/50">
+                  <TableRow key={product.id} className="group">
                     <TableCell className="font-mono">
                       <Link href={`/operations/products/${product.id}`}>
-                        <span className="hover:underline">{product.sku}</span>
+                        <span className="hover:underline text-primary">{product.sku}</span>
                       </Link>
                     </TableCell>
-                    <TableCell className="font-medium">{product.name}</TableCell>
-                    <TableCell>{product.category || "-"}</TableCell>
                     <TableCell>
-                      <Badge className={typeColors[product.type]}>{product.type}</Badge>
-                    </TableCell>
-                    <TableCell className="text-right font-mono">
-                      {formatCurrency(product.unitPrice)}
+                      <EditableCell
+                        value={product.name}
+                        onSave={(value) => handleUpdate(product.id, "name", value)}
+                        required
+                        displayClassName="font-medium"
+                      />
                     </TableCell>
                     <TableCell>
-                      <Badge className={statusColors[product.status]}>{product.status}</Badge>
+                      <EditableCell
+                        value={product.category}
+                        onSave={(value) => handleUpdate(product.id, "category", value)}
+                        emptyText="-"
+                        placeholder="Category..."
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <EditableCell
+                        value={product.type}
+                        type="badge"
+                        options={typeOptions}
+                        onSave={(value) => handleUpdate(product.id, "type", value)}
+                      />
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <EditableCell
+                        value={product.unitPrice}
+                        type="currency"
+                        onSave={(value) => handleUpdate(product.id, "unitPrice", value)}
+                        formatDisplay={(val) => formatCurrency(val?.toString())}
+                        displayClassName="font-mono"
+                        cellClassName="justify-end"
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <EditableCell
+                        value={product.status}
+                        type="badge"
+                        options={statusOptions}
+                        onSave={(value) => handleUpdate(product.id, "status", value)}
+                      />
                     </TableCell>
                   </TableRow>
                 ))}

@@ -32,8 +32,29 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Building2, Plus, Search, Loader2, Ship, Star, Truck } from "lucide-react";
+import { Building2, Plus, Search, Loader2, Ship, Star, Truck, Pencil } from "lucide-react";
 import { toast } from "sonner";
+import { EditableCell } from "@/components/ui/click-to-edit";
+
+const statusOptions = [
+  { value: "active", label: "Active", color: "bg-green-500/10 text-green-600" },
+  { value: "inactive", label: "Inactive", color: "bg-gray-500/10 text-gray-600" },
+  { value: "pending", label: "Pending", color: "bg-amber-500/10 text-amber-600" },
+];
+
+const typeOptions = [
+  { value: "supplier", label: "Supplier", color: "bg-blue-500/10 text-blue-600" },
+  { value: "contractor", label: "Contractor", color: "bg-purple-500/10 text-purple-600" },
+  { value: "service", label: "Service", color: "bg-amber-500/10 text-amber-600" },
+];
+
+const carrierTypeOptions = [
+  { value: "ocean", label: "Ocean", color: "bg-blue-500/10 text-blue-600" },
+  { value: "air", label: "Air", color: "bg-sky-500/10 text-sky-600" },
+  { value: "ground", label: "Ground", color: "bg-amber-500/10 text-amber-600" },
+  { value: "rail", label: "Rail", color: "bg-purple-500/10 text-purple-600" },
+  { value: "multimodal", label: "Multimodal", color: "bg-green-500/10 text-green-600" },
+];
 
 export default function Vendors() {
   const [activeTab, setActiveTab] = useState("suppliers");
@@ -41,7 +62,7 @@ export default function Vendors() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [isOpen, setIsOpen] = useState(false);
   const [carrierDialogOpen, setCarrierDialogOpen] = useState(false);
-  
+
   // Vendor form
   const [formData, setFormData] = useState({
     name: "",
@@ -74,7 +95,7 @@ export default function Vendors() {
   });
 
   const utils = trpc.useUtils();
-  
+
   // Vendors queries
   const { data: vendors, isLoading: vendorsLoading } = trpc.vendors.list.useQuery();
   const createVendor = trpc.vendors.create.useMutation({
@@ -88,6 +109,23 @@ export default function Vendors() {
       toast.error(error.message);
     },
   });
+
+  const updateVendor = trpc.vendors.update.useMutation({
+    onSuccess: () => {
+      toast.success("Vendor updated");
+      utils.vendors.list.invalidate();
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const handleVendorUpdate = async (vendorId: number, field: string, value: string | number) => {
+    await updateVendor.mutateAsync({
+      id: vendorId,
+      [field]: value,
+    });
+  };
 
   // Carriers queries
   const { data: carriers, isLoading: carriersLoading } = trpc.freight.carriers.list.useQuery();
@@ -130,26 +168,6 @@ export default function Vendors() {
     return carrier.name.toLowerCase().includes(search.toLowerCase()) ||
       carrier.contactName?.toLowerCase().includes(search.toLowerCase());
   });
-
-  const statusColors: Record<string, string> = {
-    active: "bg-green-500/10 text-green-600",
-    inactive: "bg-gray-500/10 text-gray-600",
-    pending: "bg-amber-500/10 text-amber-600",
-  };
-
-  const typeColors: Record<string, string> = {
-    supplier: "bg-blue-500/10 text-blue-600",
-    contractor: "bg-purple-500/10 text-purple-600",
-    service: "bg-amber-500/10 text-amber-600",
-  };
-
-  const carrierTypeColors: Record<string, string> = {
-    ocean: "bg-blue-500/10 text-blue-600",
-    air: "bg-sky-500/10 text-sky-600",
-    ground: "bg-amber-500/10 text-amber-600",
-    rail: "bg-purple-500/10 text-purple-600",
-    multimodal: "bg-green-500/10 text-green-600",
-  };
 
   const handleSubmitVendor = (e: React.FormEvent) => {
     e.preventDefault();
@@ -195,7 +213,7 @@ export default function Vendors() {
             Vendors & Carriers
           </h1>
           <p className="text-muted-foreground mt-1">
-            Manage suppliers, service providers, and freight carriers.
+            Manage suppliers, service providers, and freight carriers. Click any cell to edit.
           </p>
         </div>
       </div>
@@ -212,7 +230,7 @@ export default function Vendors() {
               Freight Carriers
             </TabsTrigger>
           </TabsList>
-          
+
           {activeTab === "suppliers" ? (
             <Dialog open={isOpen} onOpenChange={setIsOpen}>
               <DialogTrigger asChild>
@@ -515,6 +533,10 @@ export default function Vendors() {
                   </SelectContent>
                 </Select>
               )}
+              <div className="text-xs text-muted-foreground flex items-center gap-1">
+                <Pencil className="h-3 w-3" />
+                Click to edit
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -537,35 +559,62 @@ export default function Vendors() {
                       <TableHead>Name</TableHead>
                       <TableHead>Contact</TableHead>
                       <TableHead>Type</TableHead>
-                      <TableHead>Location</TableHead>
+                      <TableHead>Email</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Payment Terms</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {filteredVendors.map((vendor) => (
-                      <TableRow key={vendor.id}>
-                        <TableCell className="font-medium">{vendor.name}</TableCell>
+                      <TableRow key={vendor.id} className="group">
                         <TableCell>
-                          <div>
-                            <p>{vendor.contactName || "-"}</p>
-                            <p className="text-sm text-muted-foreground">{vendor.email}</p>
-                          </div>
+                          <EditableCell
+                            value={vendor.name}
+                            onSave={(value) => handleVendorUpdate(vendor.id, "name", value)}
+                            required
+                            displayClassName="font-medium"
+                          />
                         </TableCell>
                         <TableCell>
-                          <Badge className={typeColors[vendor.type] || ""}>
-                            {vendor.type}
-                          </Badge>
+                          <EditableCell
+                            value={vendor.contactName}
+                            onSave={(value) => handleVendorUpdate(vendor.id, "contactName", value)}
+                            emptyText="-"
+                            placeholder="Contact name..."
+                          />
                         </TableCell>
                         <TableCell>
-                          {[vendor.city, vendor.country].filter(Boolean).join(", ") || "-"}
+                          <EditableCell
+                            value={vendor.type}
+                            type="badge"
+                            options={typeOptions}
+                            onSave={(value) => handleVendorUpdate(vendor.id, "type", value)}
+                          />
                         </TableCell>
                         <TableCell>
-                          <Badge className={statusColors[vendor.status] || ""}>
-                            {vendor.status}
-                          </Badge>
+                          <EditableCell
+                            value={vendor.email}
+                            onSave={(value) => handleVendorUpdate(vendor.id, "email", value)}
+                            emptyText="-"
+                            placeholder="email@vendor.com"
+                          />
                         </TableCell>
-                        <TableCell>Net {vendor.paymentTerms}</TableCell>
+                        <TableCell>
+                          <EditableCell
+                            value={vendor.status}
+                            type="badge"
+                            options={statusOptions}
+                            onSave={(value) => handleVendorUpdate(vendor.id, "status", value)}
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <EditableCell
+                            value={vendor.paymentTerms?.toString()}
+                            type="number"
+                            onSave={(value) => handleVendorUpdate(vendor.id, "paymentTerms", parseInt(value))}
+                            formatDisplay={(val) => `Net ${val || 30}`}
+                          />
+                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -611,7 +660,7 @@ export default function Vendors() {
                   </TableHeader>
                   <TableBody>
                     {filteredCarriers.map((carrier) => (
-                      <TableRow key={carrier.id}>
+                      <TableRow key={carrier.id} className="group">
                         <TableCell>
                           <div className="flex items-center gap-2">
                             <span className="font-medium">{carrier.name}</span>
@@ -627,7 +676,7 @@ export default function Vendors() {
                           </div>
                         </TableCell>
                         <TableCell>
-                          <Badge className={carrierTypeColors[carrier.type] || ""}>
+                          <Badge className={carrierTypeOptions.find(o => o.value === carrier.type)?.color || ""}>
                             {carrier.type}
                           </Badge>
                         </TableCell>
