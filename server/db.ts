@@ -4038,6 +4038,26 @@ export async function updateShopifyStore(id: number, data: Partial<InsertShopify
   await db.update(shopifyStores).set(data).where(eq(shopifyStores.id, id));
 }
 
+export async function upsertShopifyStore(domain: string, data: InsertShopifyStore) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const existing = await getShopifyStoreByDomain(domain);
+  if (existing) {
+    await db.update(shopifyStores).set(data).where(eq(shopifyStores.storeDomain, domain));
+    return { id: existing.id };
+  } else {
+    const result = await db.insert(shopifyStores).values(data);
+    return { id: result[0].insertId };
+  }
+}
+
+export async function deleteShopifyStore(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(shopifyStores).where(eq(shopifyStores.id, id));
+}
+
 // Webhook Events
 export async function createWebhookEvent(data: InsertWebhookEvent) {
   const db = await getDb();

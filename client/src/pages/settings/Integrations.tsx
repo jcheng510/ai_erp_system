@@ -36,6 +36,7 @@ export default function IntegrationsPage() {
   const [shopifyShopDomain, setShopifyShopDomain] = useState("");
   const [shopifyConnecting, setShopifyConnecting] = useState(false);
   const [activeTab, setActiveTab] = useState("connections");
+  const searchParams = useSearch();
 
   const { data: status, isLoading, refetch } = trpc.integrations.getStatus.useQuery();
   const { data: syncHistory } = trpc.integrations.getSyncHistory.useQuery({ limit: 20 });

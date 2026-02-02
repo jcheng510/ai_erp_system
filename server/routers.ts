@@ -2222,6 +2222,107 @@ export const appRouter = router({
       await db.clearSyncHistory();
       return { success: true };
     }),
+
+    // Shopify sub-router
+    shopify: router({
+      // Initiate OAuth flow
+      initiateOAuth: protectedProcedure
+        .input(z.object({ shop: z.string().min(1) }))
+        .mutation(async ({ input, ctx }) => {
+          const clientId = process.env.SHOPIFY_CLIENT_ID;
+          const clientSecret = process.env.SHOPIFY_CLIENT_SECRET;
+          const appUrl = process.env.VITE_APP_URL || 'http://localhost:3000';
+
+          if (!clientId || !clientSecret) {
+            throw new TRPCError({
+              code: 'BAD_REQUEST',
+              message: 'Shopify OAuth is not configured. Please add SHOPIFY_CLIENT_ID and SHOPIFY_CLIENT_SECRET environment variables.',
+            });
+          }
+
+          // Normalize shop domain
+          let shopDomain = input.shop.trim().toLowerCase();
+          if (!shopDomain.includes('.')) {
+            shopDomain = `${shopDomain}.myshopify.com`;
+          }
+          if (!shopDomain.endsWith('.myshopify.com')) {
+            throw new TRPCError({
+              code: 'BAD_REQUEST',
+              message: 'Invalid Shopify domain. Please enter your store name (e.g., "mystore" or "mystore.myshopify.com")',
+            });
+          }
+
+          // Create state parameter: userId:companyId:shopDomain:timestamp
+          const state = `${ctx.user.id}:${ctx.user.companyId || 'undefined'}:${shopDomain}:${Date.now()}`;
+
+          // Build OAuth URL
+          const scopes = 'read_products,write_products,read_orders,write_orders,read_inventory,write_inventory';
+          const redirectUri = `${appUrl}/api/shopify/callback`;
+          const authUrl = `https://${shopDomain}/admin/oauth/authorize?client_id=${clientId}&scope=${scopes}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}`;
+
+          return { authUrl };
+        }),
+
+      // Disconnect a store
+      disconnect: protectedProcedure
+        .input(z.object({ storeId: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const store = await db.getShopifyStoreById(input.storeId);
+          if (!store) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'Store not found' });
+          }
+
+          await db.deleteShopifyStore(input.storeId);
+
+          await db.createSyncLog({
+            integration: 'shopify',
+            action: 'store_disconnected',
+            status: 'success',
+            details: `Disconnected store: ${store.storeName || store.storeDomain}`,
+          });
+
+          return { success: true };
+        }),
+
+      // Test connection to a store
+      testConnection: protectedProcedure
+        .input(z.object({ storeId: z.number() }))
+        .mutation(async ({ input }) => {
+          const store = await db.getShopifyStoreById(input.storeId);
+          if (!store) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'Store not found' });
+          }
+
+          if (!store.accessToken) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'Store has no access token' });
+          }
+
+          try {
+            // Decrypt the access token
+            const { decrypt } = await import('./_core/crypto');
+            const accessToken = decrypt(store.accessToken);
+
+            // Test by fetching shop info
+            const response = await fetch(`https://${store.storeDomain}/admin/api/2024-01/shop.json`, {
+              headers: {
+                'X-Shopify-Access-Token': accessToken,
+                'Content-Type': 'application/json',
+              },
+            });
+
+            if (!response.ok) {
+              throw new Error(`Shopify API returned ${response.status}`);
+            }
+
+            return { success: true, message: `Connection to ${store.storeName || store.storeDomain} is working` };
+          } catch (error: any) {
+            throw new TRPCError({
+              code: 'INTERNAL_SERVER_ERROR',
+              message: `Connection failed: ${error.message}`,
+            });
+          }
+        }),
+    }),
   }),
 
   // ============================================
