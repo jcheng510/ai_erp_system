@@ -4081,3 +4081,547 @@ export const notionIntegrations = mysqlTable("notion_integrations", {
 
 export type NotionIntegration = typeof notionIntegrations.$inferSelect;
 export type InsertNotionIntegration = typeof notionIntegrations.$inferInsert;
+
+// ============================================
+// HS CODE & TARIFF CLASSIFICATION
+// ============================================
+
+// HS Code database for tariff lookup
+export const hsCodes = mysqlTable("hs_codes", {
+  id: int("id").autoincrement().primaryKey(),
+  hsCode: varchar("hsCode", { length: 12 }).notNull(), // Full HS code (up to 10 digits)
+  hsCode2: varchar("hsCode2", { length: 2 }), // Chapter (2-digit)
+  hsCode4: varchar("hsCode4", { length: 4 }), // Heading (4-digit)
+  hsCode6: varchar("hsCode6", { length: 6 }), // Subheading (6-digit international)
+  hsCode8: varchar("hsCode8", { length: 8 }), // National tariff line
+  hsCode10: varchar("hsCode10", { length: 10 }), // Statistical suffix
+
+  description: text("description").notNull(),
+  shortDescription: varchar("shortDescription", { length: 255 }),
+
+  // Duty rates
+  generalDutyRate: varchar("generalDutyRate", { length: 64 }), // e.g., "5%", "Free", "$0.50/kg"
+  specialDutyRate: varchar("specialDutyRate", { length: 255 }), // Special program rates
+  column2DutyRate: varchar("column2DutyRate", { length: 64 }), // Column 2 rate
+
+  // Additional info
+  unitOfQuantity: varchar("unitOfQuantity", { length: 32 }), // kg, pcs, etc.
+  quotaCategory: varchar("quotaCategory", { length: 64 }),
+  additionalDuties: text("additionalDuties"), // JSON for AD/CVD etc.
+
+  // Country-specific
+  countryCode: varchar("countryCode", { length: 2 }).default("US"),
+
+  isActive: boolean("isActive").default(true),
+  effectiveDate: timestamp("effectiveDate"),
+  expirationDate: timestamp("expirationDate"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type HsCode = typeof hsCodes.$inferSelect;
+export type InsertHsCode = typeof hsCodes.$inferInsert;
+
+// Product HS Code classifications
+export const productHsClassifications = mysqlTable("product_hs_classifications", {
+  id: int("id").autoincrement().primaryKey(),
+  productId: int("productId"),
+  rawMaterialId: int("rawMaterialId"),
+
+  hsCodeId: int("hsCodeId"),
+  hsCode: varchar("hsCode", { length: 12 }).notNull(),
+  description: text("description"),
+
+  // Classification details
+  classificationMethod: mysqlEnum("classificationMethod", ["manual", "ai_suggested", "ai_confirmed", "customs_ruling"]).default("manual"),
+  aiConfidence: decimal("aiConfidence", { precision: 5, scale: 2 }),
+  aiReasoning: text("aiReasoning"),
+  customsRulingNumber: varchar("customsRulingNumber", { length: 64 }),
+
+  // Origin and destination
+  countryOfOrigin: varchar("countryOfOrigin", { length: 2 }),
+  importCountry: varchar("importCountry", { length: 2 }).default("US"),
+
+  // Calculated duties
+  estimatedDutyRate: decimal("estimatedDutyRate", { precision: 8, scale: 4 }),
+  estimatedDutyAmount: decimal("estimatedDutyAmount", { precision: 15, scale: 2 }),
+  specialProgram: varchar("specialProgram", { length: 64 }), // GSP, USMCA, etc.
+
+  // Verification
+  verifiedBy: int("verifiedBy"),
+  verifiedAt: timestamp("verifiedAt"),
+  isVerified: boolean("isVerified").default(false),
+
+  notes: text("notes"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ProductHsClassification = typeof productHsClassifications.$inferSelect;
+export type InsertProductHsClassification = typeof productHsClassifications.$inferInsert;
+
+// Tariff calculation history
+export const tariffCalculations = mysqlTable("tariff_calculations", {
+  id: int("id").autoincrement().primaryKey(),
+  shipmentId: int("shipmentId"),
+  purchaseOrderId: int("purchaseOrderId"),
+  customsClearanceId: int("customsClearanceId"),
+
+  calculationDate: timestamp("calculationDate").defaultNow().notNull(),
+
+  // Totals
+  totalDeclaredValue: decimal("totalDeclaredValue", { precision: 15, scale: 2 }),
+  totalDutyAmount: decimal("totalDutyAmount", { precision: 15, scale: 2 }),
+  totalTaxAmount: decimal("totalTaxAmount", { precision: 15, scale: 2 }),
+  totalFees: decimal("totalFees", { precision: 15, scale: 2 }),
+  grandTotal: decimal("grandTotal", { precision: 15, scale: 2 }),
+
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  exchangeRate: decimal("exchangeRate", { precision: 12, scale: 6 }),
+
+  // Breakdown by line item
+  lineItems: text("lineItems"), // JSON array of line item calculations
+
+  // Status
+  status: mysqlEnum("status", ["estimated", "confirmed", "paid", "refunded"]).default("estimated"),
+
+  notes: text("notes"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type TariffCalculation = typeof tariffCalculations.$inferSelect;
+export type InsertTariffCalculation = typeof tariffCalculations.$inferInsert;
+
+// ============================================
+// ISF (IMPORTER SECURITY FILING) FORMS
+// ============================================
+
+export const isfForms = mysqlTable("isf_forms", {
+  id: int("id").autoincrement().primaryKey(),
+  isfNumber: varchar("isfNumber", { length: 64 }).notNull(),
+  status: mysqlEnum("status", ["draft", "pending_review", "submitted", "accepted", "rejected", "amended", "cancelled"]).default("draft").notNull(),
+
+  // Related records
+  shipmentId: int("shipmentId"),
+  purchaseOrderId: int("purchaseOrderId"),
+  customsClearanceId: int("customsClearanceId"),
+
+  // ISF Type (10+2 for ocean, 5+2 for FROB)
+  isfType: mysqlEnum("isfType", ["isf_10_plus_2", "isf_5_plus_2"]).default("isf_10_plus_2"),
+
+  // Importer of Record (Party 1)
+  importerName: varchar("importerName", { length: 255 }),
+  importerAddress: text("importerAddress"),
+  importerEin: varchar("importerEin", { length: 32 }), // EIN/IRS number
+  importerBond: varchar("importerBond", { length: 64 }),
+
+  // Consignee (Party 2)
+  consigneeName: varchar("consigneeName", { length: 255 }),
+  consigneeAddress: text("consigneeAddress"),
+
+  // Seller (Party 3)
+  sellerName: varchar("sellerName", { length: 255 }),
+  sellerAddress: text("sellerAddress"),
+
+  // Buyer (Party 4)
+  buyerName: varchar("buyerName", { length: 255 }),
+  buyerAddress: text("buyerAddress"),
+
+  // Ship-to Party (Party 5)
+  shipToName: varchar("shipToName", { length: 255 }),
+  shipToAddress: text("shipToAddress"),
+
+  // Manufacturer/Supplier (Party 6)
+  manufacturerName: varchar("manufacturerName", { length: 255 }),
+  manufacturerAddress: text("manufacturerAddress"),
+  manufacturerId: varchar("manufacturerId", { length: 64 }), // MID
+
+  // Country of Origin (Party 7)
+  countryOfOrigin: varchar("countryOfOrigin", { length: 2 }),
+
+  // HS Codes (Party 8) - stored as JSON array
+  hsCodes: text("hsCodes"),
+
+  // Container Stuffing Location (Party 9)
+  stuffingLocationName: varchar("stuffingLocationName", { length: 255 }),
+  stuffingLocationAddress: text("stuffingLocationAddress"),
+
+  // Consolidator (Party 10)
+  consolidatorName: varchar("consolidatorName", { length: 255 }),
+  consolidatorAddress: text("consolidatorAddress"),
+
+  // Carrier info (+2)
+  vesselName: varchar("vesselName", { length: 128 }),
+  voyageNumber: varchar("voyageNumber", { length: 64 }),
+  carrierScac: varchar("carrierScac", { length: 8 }),
+  billOfLadingNumber: varchar("billOfLadingNumber", { length: 64 }),
+  masterBillNumber: varchar("masterBillNumber", { length: 64 }),
+  houseBillNumber: varchar("houseBillNumber", { length: 64 }),
+
+  // Container info
+  containerNumbers: text("containerNumbers"), // JSON array
+
+  // Port info
+  foreignPortOfLading: varchar("foreignPortOfLading", { length: 128 }),
+  foreignPortCode: varchar("foreignPortCode", { length: 8 }),
+  usPortOfUnlading: varchar("usPortOfUnlading", { length: 128 }),
+  usPortCode: varchar("usPortCode", { length: 8 }),
+
+  // Dates
+  estimatedArrivalDate: timestamp("estimatedArrivalDate"),
+  actualArrivalDate: timestamp("actualArrivalDate"),
+  isfFilingDeadline: timestamp("isfFilingDeadline"), // 24 hours before loading
+
+  // Submission details
+  submittedAt: timestamp("submittedAt"),
+  submittedBy: int("submittedBy"),
+  cbpTransactionNumber: varchar("cbpTransactionNumber", { length: 64 }),
+  cbpResponse: text("cbpResponse"),
+
+  // Amendment history
+  amendmentCount: int("amendmentCount").default(0),
+  lastAmendedAt: timestamp("lastAmendedAt"),
+  amendmentReason: text("amendmentReason"),
+
+  notes: text("notes"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type IsfForm = typeof isfForms.$inferSelect;
+export type InsertIsfForm = typeof isfForms.$inferInsert;
+
+// ISF Line Items (for multiple commodities)
+export const isfLineItems = mysqlTable("isf_line_items", {
+  id: int("id").autoincrement().primaryKey(),
+  isfId: int("isfId").notNull(),
+
+  lineNumber: int("lineNumber").notNull(),
+  description: text("description").notNull(),
+  hsCode: varchar("hsCode", { length: 12 }),
+  countryOfOrigin: varchar("countryOfOrigin", { length: 2 }),
+
+  manufacturerName: varchar("manufacturerName", { length: 255 }),
+  manufacturerAddress: text("manufacturerAddress"),
+  manufacturerId: varchar("manufacturerId", { length: 64 }),
+
+  quantity: decimal("quantity", { precision: 15, scale: 4 }),
+  unit: varchar("unit", { length: 32 }),
+  value: decimal("value", { precision: 15, scale: 2 }),
+
+  containerNumber: varchar("containerNumber", { length: 32 }),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type IsfLineItem = typeof isfLineItems.$inferSelect;
+export type InsertIsfLineItem = typeof isfLineItems.$inferInsert;
+
+// ============================================
+// VENDOR MONITORING & ALERTS
+// ============================================
+
+// Vendor performance tracking
+export const vendorPerformanceRecords = mysqlTable("vendor_performance_records", {
+  id: int("id").autoincrement().primaryKey(),
+  vendorId: int("vendorId").notNull(),
+
+  // Period
+  periodStart: timestamp("periodStart").notNull(),
+  periodEnd: timestamp("periodEnd").notNull(),
+
+  // Order metrics
+  totalOrders: int("totalOrders").default(0),
+  onTimeDeliveries: int("onTimeDeliveries").default(0),
+  lateDeliveries: int("lateDeliveries").default(0),
+  earlyDeliveries: int("earlyDeliveries").default(0),
+
+  // Lead time metrics
+  averageLeadTimeDays: decimal("averageLeadTimeDays", { precision: 8, scale: 2 }),
+  expectedLeadTimeDays: decimal("expectedLeadTimeDays", { precision: 8, scale: 2 }),
+  leadTimeVarianceDays: decimal("leadTimeVarianceDays", { precision: 8, scale: 2 }),
+  leadTimeVariancePercent: decimal("leadTimeVariancePercent", { precision: 8, scale: 2 }),
+
+  // Quality metrics
+  totalUnitsReceived: decimal("totalUnitsReceived", { precision: 15, scale: 2 }),
+  defectiveUnits: decimal("defectiveUnits", { precision: 15, scale: 2 }),
+  defectRate: decimal("defectRate", { precision: 8, scale: 4 }),
+  qualityScore: decimal("qualityScore", { precision: 5, scale: 2 }), // 0-100
+
+  // Pricing metrics
+  totalSpend: decimal("totalSpend", { precision: 15, scale: 2 }),
+  averageUnitPrice: decimal("averageUnitPrice", { precision: 15, scale: 4 }),
+  priceVariancePercent: decimal("priceVariancePercent", { precision: 8, scale: 2 }),
+
+  // Overall score
+  overallScore: decimal("overallScore", { precision: 5, scale: 2 }), // 0-100
+  scoreBreakdown: text("scoreBreakdown"), // JSON with component scores
+
+  // Comparison to previous period
+  previousPeriodScore: decimal("previousPeriodScore", { precision: 5, scale: 2 }),
+  scoreTrend: mysqlEnum("scoreTrend", ["improving", "stable", "declining"]),
+
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type VendorPerformanceRecord = typeof vendorPerformanceRecords.$inferSelect;
+export type InsertVendorPerformanceRecord = typeof vendorPerformanceRecords.$inferInsert;
+
+// Vendor price history for tracking changes
+export const vendorPriceHistory = mysqlTable("vendor_price_history", {
+  id: int("id").autoincrement().primaryKey(),
+  vendorId: int("vendorId").notNull(),
+  productId: int("productId"),
+  rawMaterialId: int("rawMaterialId"),
+
+  effectiveDate: timestamp("effectiveDate").notNull(),
+  expirationDate: timestamp("expirationDate"),
+
+  previousPrice: decimal("previousPrice", { precision: 15, scale: 4 }),
+  newPrice: decimal("newPrice", { precision: 15, scale: 4 }).notNull(),
+  priceChange: decimal("priceChange", { precision: 15, scale: 4 }),
+  priceChangePercent: decimal("priceChangePercent", { precision: 8, scale: 2 }),
+
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  unit: varchar("unit", { length: 32 }),
+  minOrderQuantity: decimal("minOrderQuantity", { precision: 15, scale: 2 }),
+
+  // Source of price change
+  changeSource: mysqlEnum("changeSource", ["quote", "contract", "invoice", "manual", "api"]).default("manual"),
+  sourceDocumentId: int("sourceDocumentId"),
+  sourceReference: varchar("sourceReference", { length: 128 }),
+
+  // Alert tracking
+  alertGenerated: boolean("alertGenerated").default(false),
+  alertId: int("alertId"),
+
+  notes: text("notes"),
+  recordedBy: int("recordedBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type VendorPriceHistory = typeof vendorPriceHistory.$inferSelect;
+export type InsertVendorPriceHistory = typeof vendorPriceHistory.$inferInsert;
+
+// Vendor alert configurations
+export const vendorAlertConfigs = mysqlTable("vendor_alert_configs", {
+  id: int("id").autoincrement().primaryKey(),
+  vendorId: int("vendorId"), // null for global defaults
+
+  // Lead time alerts
+  leadTimeVarianceThresholdDays: int("leadTimeVarianceThresholdDays").default(3),
+  leadTimeVarianceThresholdPercent: decimal("leadTimeVarianceThresholdPercent", { precision: 5, scale: 2 }).default("20"),
+  alertOnLateDelivery: boolean("alertOnLateDelivery").default(true),
+
+  // Price change alerts
+  priceIncreaseThresholdPercent: decimal("priceIncreaseThresholdPercent", { precision: 5, scale: 2 }).default("5"),
+  priceDecreaseThresholdPercent: decimal("priceDecreaseThresholdPercent", { precision: 5, scale: 2 }).default("10"),
+  alertOnPriceIncrease: boolean("alertOnPriceIncrease").default(true),
+  alertOnPriceDecrease: boolean("alertOnPriceDecrease").default(false),
+
+  // Quality alerts
+  defectRateThresholdPercent: decimal("defectRateThresholdPercent", { precision: 5, scale: 2 }).default("2"),
+  alertOnQualityIssue: boolean("alertOnQualityIssue").default(true),
+
+  // Performance alerts
+  performanceScoreThreshold: decimal("performanceScoreThreshold", { precision: 5, scale: 2 }).default("70"),
+  alertOnLowPerformance: boolean("alertOnLowPerformance").default(true),
+
+  // Renegotiation triggers
+  autoSuggestRenegotiation: boolean("autoSuggestRenegotiation").default(true),
+  renegotiationTriggerMonths: int("renegotiationTriggerMonths").default(12),
+  renegotiationSpendThreshold: decimal("renegotiationSpendThreshold", { precision: 15, scale: 2 }),
+
+  // Notification settings
+  notifyUsers: text("notifyUsers"), // JSON array of user IDs
+  notifyEmail: boolean("notifyEmail").default(true),
+  notifyInApp: boolean("notifyInApp").default(true),
+
+  isActive: boolean("isActive").default(true),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type VendorAlertConfig = typeof vendorAlertConfigs.$inferSelect;
+export type InsertVendorAlertConfig = typeof vendorAlertConfigs.$inferInsert;
+
+// ============================================
+// 3PL COMPARISON & SELECTION
+// ============================================
+
+// 3PL Provider profiles
+export const thirdPartyLogisticsProviders = mysqlTable("third_party_logistics_providers", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  code: varchar("code", { length: 32 }),
+  status: mysqlEnum("status", ["active", "inactive", "pending_evaluation", "suspended"]).default("active"),
+
+  // Contact info
+  contactName: varchar("contactName", { length: 255 }),
+  contactEmail: varchar("contactEmail", { length: 320 }),
+  contactPhone: varchar("contactPhone", { length: 32 }),
+  website: varchar("website", { length: 512 }),
+
+  // Address
+  headquarters: text("headquarters"),
+  warehouseLocations: text("warehouseLocations"), // JSON array of locations
+
+  // Services offered
+  servicesOffered: text("servicesOffered"), // JSON array: warehousing, fulfillment, kitting, returns, etc.
+  industriesServed: text("industriesServed"), // JSON array
+  geographicCoverage: text("geographicCoverage"), // JSON array of regions/countries
+
+  // Capabilities
+  warehouseSquareFootage: int("warehouseSquareFootage"),
+  temperatureControlled: boolean("temperatureControlled").default(false),
+  hazmatCertified: boolean("hazmatCertified").default(false),
+  fdaRegistered: boolean("fdaRegistered").default(false),
+  customsBonded: boolean("customsBonded").default(false),
+
+  // Integration capabilities
+  integrationTypes: text("integrationTypes"), // JSON: API, EDI, FTP, etc.
+  supportedPlatforms: text("supportedPlatforms"), // JSON: Shopify, Amazon, etc.
+
+  // Pricing structure
+  pricingModel: mysqlEnum("pricingModel", ["per_order", "per_unit", "per_pallet", "monthly_fixed", "hybrid"]),
+  minimumMonthlyFee: decimal("minimumMonthlyFee", { precision: 15, scale: 2 }),
+  setupFee: decimal("setupFee", { precision: 15, scale: 2 }),
+
+  // Performance metrics
+  averageAccuracyRate: decimal("averageAccuracyRate", { precision: 5, scale: 2 }),
+  averageShipTime: decimal("averageShipTime", { precision: 5, scale: 2 }), // hours
+  rating: decimal("rating", { precision: 3, scale: 2 }), // 1-5
+
+  // Contract info
+  contractStartDate: timestamp("contractStartDate"),
+  contractEndDate: timestamp("contractEndDate"),
+  contractTerms: text("contractTerms"),
+
+  notes: text("notes"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ThirdPartyLogisticsProvider = typeof thirdPartyLogisticsProviders.$inferSelect;
+export type InsertThirdPartyLogisticsProvider = typeof thirdPartyLogisticsProviders.$inferInsert;
+
+// 3PL Rate cards
+export const threePlRates = mysqlTable("three_pl_rates", {
+  id: int("id").autoincrement().primaryKey(),
+  providerId: int("providerId").notNull(),
+
+  rateType: mysqlEnum("rateType", [
+    "receiving_per_pallet", "receiving_per_carton", "receiving_per_unit",
+    "storage_per_pallet", "storage_per_bin", "storage_per_sqft",
+    "pick_per_order", "pick_per_unit", "pick_per_line",
+    "pack_per_order", "pack_per_unit",
+    "ship_handling", "ship_per_lb",
+    "kitting_per_kit", "returns_per_unit",
+    "special_project_hourly", "monthly_minimum"
+  ]).notNull(),
+
+  rateName: varchar("rateName", { length: 128 }),
+  description: text("description"),
+
+  rate: decimal("rate", { precision: 15, scale: 4 }).notNull(),
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  unit: varchar("unit", { length: 32 }), // per pallet, per unit, etc.
+
+  // Volume tiers
+  minVolume: decimal("minVolume", { precision: 15, scale: 2 }),
+  maxVolume: decimal("maxVolume", { precision: 15, scale: 2 }),
+
+  // Effective dates
+  effectiveDate: timestamp("effectiveDate").notNull(),
+  expirationDate: timestamp("expirationDate"),
+
+  isActive: boolean("isActive").default(true),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ThreePlRate = typeof threePlRates.$inferSelect;
+export type InsertThreePlRate = typeof threePlRates.$inferInsert;
+
+// 3PL Comparison quotes/scenarios
+export const threePlComparisons = mysqlTable("three_pl_comparisons", {
+  id: int("id").autoincrement().primaryKey(),
+  comparisonName: varchar("comparisonName", { length: 255 }).notNull(),
+  status: mysqlEnum("status", ["draft", "in_progress", "completed", "archived"]).default("draft"),
+
+  // Scenario parameters
+  monthlyOrderVolume: int("monthlyOrderVolume"),
+  averageUnitsPerOrder: decimal("averageUnitsPerOrder", { precision: 8, scale: 2 }),
+  averageSkuCount: int("averageSkuCount"),
+  palletStorageNeeded: int("palletStorageNeeded"),
+  binStorageNeeded: int("binStorageNeeded"),
+
+  // Special requirements
+  requiresTemperatureControl: boolean("requiresTemperatureControl").default(false),
+  requiresHazmat: boolean("requiresHazmat").default(false),
+  requiresFda: boolean("requiresFda").default(false),
+  requiresKitting: boolean("requiresKitting").default(false),
+  requiresReturnsProcessing: boolean("requiresReturnsProcessing").default(false),
+
+  // Locations needed
+  geographicRequirements: text("geographicRequirements"), // JSON
+
+  // Results
+  recommendedProviderId: int("recommendedProviderId"),
+  recommendationReason: text("recommendationReason"),
+
+  notes: text("notes"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ThreePlComparison = typeof threePlComparisons.$inferSelect;
+export type InsertThreePlComparison = typeof threePlComparisons.$inferInsert;
+
+// 3PL Comparison results per provider
+export const threePlComparisonResults = mysqlTable("three_pl_comparison_results", {
+  id: int("id").autoincrement().primaryKey(),
+  comparisonId: int("comparisonId").notNull(),
+  providerId: int("providerId").notNull(),
+
+  // Capability match
+  meetsRequirements: boolean("meetsRequirements").default(false),
+  capabilityScore: decimal("capabilityScore", { precision: 5, scale: 2 }), // 0-100
+  capabilityNotes: text("capabilityNotes"),
+
+  // Cost breakdown
+  monthlyReceivingCost: decimal("monthlyReceivingCost", { precision: 15, scale: 2 }),
+  monthlyStorageCost: decimal("monthlyStorageCost", { precision: 15, scale: 2 }),
+  monthlyPickPackCost: decimal("monthlyPickPackCost", { precision: 15, scale: 2 }),
+  monthlyShippingCost: decimal("monthlyShippingCost", { precision: 15, scale: 2 }),
+  monthlyOtherCost: decimal("monthlyOtherCost", { precision: 15, scale: 2 }),
+  totalMonthlyCost: decimal("totalMonthlyCost", { precision: 15, scale: 2 }),
+
+  // Cost per order
+  costPerOrder: decimal("costPerOrder", { precision: 15, scale: 4 }),
+  costPerUnit: decimal("costPerUnit", { precision: 15, scale: 4 }),
+
+  // Scoring
+  costScore: decimal("costScore", { precision: 5, scale: 2 }), // 0-100 (lower cost = higher score)
+  serviceScore: decimal("serviceScore", { precision: 5, scale: 2 }), // based on accuracy, speed
+  overallScore: decimal("overallScore", { precision: 5, scale: 2 }), // weighted average
+
+  // Ranking
+  rank: int("rank"),
+
+  // Detail breakdown
+  costBreakdown: text("costBreakdown"), // JSON detailed breakdown
+
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type ThreePlComparisonResult = typeof threePlComparisonResults.$inferSelect;
+export type InsertThreePlComparisonResult = typeof threePlComparisonResults.$inferInsert;

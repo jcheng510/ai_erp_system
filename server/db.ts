@@ -86,7 +86,19 @@ import {
   crmContacts, crmTags, crmContactTags, whatsappMessages, crmInteractions,
   crmPipelines, crmDeals, contactCaptures, crmEmailCampaigns, crmCampaignRecipients,
   InsertCrmContact, InsertCrmTag, InsertWhatsappMessage, InsertCrmInteraction,
-  InsertCrmPipeline, InsertCrmDeal, InsertContactCapture, InsertCrmEmailCampaign, InsertCrmCampaignRecipient
+  InsertCrmPipeline, InsertCrmDeal, InsertContactCapture, InsertCrmEmailCampaign, InsertCrmCampaignRecipient,
+  // HS Codes & Tariffs
+  hsCodes, productHsClassifications, tariffCalculations,
+  InsertHsCode, InsertProductHsClassification, InsertTariffCalculation,
+  // ISF Forms
+  isfForms, isfLineItems,
+  InsertIsfForm, InsertIsfLineItem,
+  // Vendor Monitoring & Alerts
+  vendorPerformanceRecords, vendorPriceHistory, vendorAlertConfigs,
+  InsertVendorPerformanceRecord, InsertVendorPriceHistory, InsertVendorAlertConfig,
+  // 3PL Comparison
+  thirdPartyLogisticsProviders, threePlRates, threePlComparisons, threePlComparisonResults,
+  InsertThirdPartyLogisticsProvider, InsertThreePlRate, InsertThreePlComparison, InsertThreePlComparisonResult
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -8514,4 +8526,545 @@ export async function deleteNotionIntegration(userId: number) {
   const db = await getDb();
   if (!db) return;
   await db.delete(notionIntegrations).where(eq(notionIntegrations.userId, userId));
+}
+
+// ============================================
+// HS CODES & TARIFF CLASSIFICATION
+// ============================================
+
+export async function getHsCodes(filters?: { chapter?: string; search?: string; countryCode?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+
+  let query = db.select().from(hsCodes).where(eq(hsCodes.isActive, true)).orderBy(hsCodes.hsCode);
+
+  const conditions = [eq(hsCodes.isActive, true)];
+  if (filters?.chapter) {
+    conditions.push(like(hsCodes.hsCode, `${filters.chapter}%`));
+  }
+  if (filters?.search) {
+    conditions.push(or(
+      like(hsCodes.hsCode, `%${filters.search}%`),
+      like(hsCodes.description, `%${filters.search}%`)
+    ) as any);
+  }
+  if (filters?.countryCode) {
+    conditions.push(eq(hsCodes.countryCode, filters.countryCode));
+  }
+
+  return db.select().from(hsCodes).where(and(...conditions)).orderBy(hsCodes.hsCode).limit(100);
+}
+
+export async function getHsCodeById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(hsCodes).where(eq(hsCodes.id, id)).limit(1);
+  return result[0];
+}
+
+export async function getHsCodeByCode(hsCode: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(hsCodes).where(eq(hsCodes.hsCode, hsCode)).limit(1);
+  return result[0];
+}
+
+export async function createHsCode(data: InsertHsCode) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(hsCodes).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateHsCode(id: number, data: Partial<InsertHsCode>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(hsCodes).set(data).where(eq(hsCodes.id, id));
+}
+
+// Product HS Classifications
+export async function getProductHsClassifications(filters?: { productId?: number; rawMaterialId?: number; isVerified?: boolean }) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (filters?.productId) conditions.push(eq(productHsClassifications.productId, filters.productId));
+  if (filters?.rawMaterialId) conditions.push(eq(productHsClassifications.rawMaterialId, filters.rawMaterialId));
+  if (filters?.isVerified !== undefined) conditions.push(eq(productHsClassifications.isVerified, filters.isVerified));
+
+  let query = db.select().from(productHsClassifications).orderBy(desc(productHsClassifications.createdAt));
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as any;
+  }
+  return query;
+}
+
+export async function getProductHsClassificationById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(productHsClassifications).where(eq(productHsClassifications.id, id)).limit(1);
+  return result[0];
+}
+
+export async function createProductHsClassification(data: InsertProductHsClassification) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(productHsClassifications).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateProductHsClassification(id: number, data: Partial<InsertProductHsClassification>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(productHsClassifications).set(data).where(eq(productHsClassifications.id, id));
+}
+
+export async function deleteProductHsClassification(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(productHsClassifications).where(eq(productHsClassifications.id, id));
+}
+
+// Tariff Calculations
+export async function getTariffCalculations(filters?: { shipmentId?: number; purchaseOrderId?: number; status?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (filters?.shipmentId) conditions.push(eq(tariffCalculations.shipmentId, filters.shipmentId));
+  if (filters?.purchaseOrderId) conditions.push(eq(tariffCalculations.purchaseOrderId, filters.purchaseOrderId));
+  if (filters?.status) conditions.push(eq(tariffCalculations.status, filters.status as any));
+
+  let query = db.select().from(tariffCalculations).orderBy(desc(tariffCalculations.calculationDate));
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as any;
+  }
+  return query;
+}
+
+export async function getTariffCalculationById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(tariffCalculations).where(eq(tariffCalculations.id, id)).limit(1);
+  return result[0];
+}
+
+export async function createTariffCalculation(data: InsertTariffCalculation) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(tariffCalculations).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateTariffCalculation(id: number, data: Partial<InsertTariffCalculation>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(tariffCalculations).set(data).where(eq(tariffCalculations.id, id));
+}
+
+// ============================================
+// ISF (IMPORTER SECURITY FILING) FORMS
+// ============================================
+
+export async function getIsfForms(filters?: { status?: string; shipmentId?: number; purchaseOrderId?: number; limit?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (filters?.status) conditions.push(eq(isfForms.status, filters.status as any));
+  if (filters?.shipmentId) conditions.push(eq(isfForms.shipmentId, filters.shipmentId));
+  if (filters?.purchaseOrderId) conditions.push(eq(isfForms.purchaseOrderId, filters.purchaseOrderId));
+
+  let query = db.select().from(isfForms).orderBy(desc(isfForms.createdAt));
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as any;
+  }
+  if (filters?.limit) {
+    query = query.limit(filters.limit) as any;
+  }
+  return query;
+}
+
+export async function getIsfFormById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(isfForms).where(eq(isfForms.id, id)).limit(1);
+  return result[0];
+}
+
+export async function getIsfFormByNumber(isfNumber: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(isfForms).where(eq(isfForms.isfNumber, isfNumber)).limit(1);
+  return result[0];
+}
+
+export async function createIsfForm(data: InsertIsfForm) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(isfForms).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateIsfForm(id: number, data: Partial<InsertIsfForm>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(isfForms).set(data).where(eq(isfForms.id, id));
+}
+
+export async function deleteIsfForm(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(isfLineItems).where(eq(isfLineItems.isfId, id));
+  await db.delete(isfForms).where(eq(isfForms.id, id));
+}
+
+// ISF Line Items
+export async function getIsfLineItems(isfId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(isfLineItems).where(eq(isfLineItems.isfId, isfId)).orderBy(isfLineItems.lineNumber);
+}
+
+export async function createIsfLineItem(data: InsertIsfLineItem) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(isfLineItems).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateIsfLineItem(id: number, data: Partial<InsertIsfLineItem>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(isfLineItems).set(data).where(eq(isfLineItems.id, id));
+}
+
+export async function deleteIsfLineItem(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(isfLineItems).where(eq(isfLineItems.id, id));
+}
+
+// Generate ISF number
+export async function generateIsfNumber() {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const year = new Date().getFullYear();
+  const result = await db.select({ count: count() }).from(isfForms)
+    .where(like(isfForms.isfNumber, `ISF-${year}-%`));
+  const countNum = result[0]?.count || 0;
+  return `ISF-${year}-${String(countNum + 1).padStart(6, '0')}`;
+}
+
+// ============================================
+// VENDOR MONITORING & ALERTS
+// ============================================
+
+// Vendor Performance Records
+export async function getVendorPerformanceRecords(filters?: { vendorId?: number; periodStart?: Date; periodEnd?: Date }) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (filters?.vendorId) conditions.push(eq(vendorPerformanceRecords.vendorId, filters.vendorId));
+  if (filters?.periodStart) conditions.push(gte(vendorPerformanceRecords.periodStart, filters.periodStart));
+  if (filters?.periodEnd) conditions.push(lte(vendorPerformanceRecords.periodEnd, filters.periodEnd));
+
+  let query = db.select().from(vendorPerformanceRecords).orderBy(desc(vendorPerformanceRecords.periodEnd));
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as any;
+  }
+  return query;
+}
+
+export async function getVendorPerformanceRecordById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(vendorPerformanceRecords).where(eq(vendorPerformanceRecords.id, id)).limit(1);
+  return result[0];
+}
+
+export async function getLatestVendorPerformance(vendorId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(vendorPerformanceRecords)
+    .where(eq(vendorPerformanceRecords.vendorId, vendorId))
+    .orderBy(desc(vendorPerformanceRecords.periodEnd))
+    .limit(1);
+  return result[0];
+}
+
+export async function createVendorPerformanceRecord(data: InsertVendorPerformanceRecord) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(vendorPerformanceRecords).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateVendorPerformanceRecord(id: number, data: Partial<InsertVendorPerformanceRecord>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(vendorPerformanceRecords).set(data).where(eq(vendorPerformanceRecords.id, id));
+}
+
+// Vendor Price History
+export async function getVendorPriceHistory(filters?: { vendorId?: number; productId?: number; rawMaterialId?: number; startDate?: Date; endDate?: Date }) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (filters?.vendorId) conditions.push(eq(vendorPriceHistory.vendorId, filters.vendorId));
+  if (filters?.productId) conditions.push(eq(vendorPriceHistory.productId, filters.productId));
+  if (filters?.rawMaterialId) conditions.push(eq(vendorPriceHistory.rawMaterialId, filters.rawMaterialId));
+  if (filters?.startDate) conditions.push(gte(vendorPriceHistory.effectiveDate, filters.startDate));
+  if (filters?.endDate) conditions.push(lte(vendorPriceHistory.effectiveDate, filters.endDate));
+
+  let query = db.select().from(vendorPriceHistory).orderBy(desc(vendorPriceHistory.effectiveDate));
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as any;
+  }
+  return query;
+}
+
+export async function getLatestVendorPrice(vendorId: number, productId?: number, rawMaterialId?: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+
+  const conditions = [eq(vendorPriceHistory.vendorId, vendorId)];
+  if (productId) conditions.push(eq(vendorPriceHistory.productId, productId));
+  if (rawMaterialId) conditions.push(eq(vendorPriceHistory.rawMaterialId, rawMaterialId));
+
+  const result = await db.select().from(vendorPriceHistory)
+    .where(and(...conditions))
+    .orderBy(desc(vendorPriceHistory.effectiveDate))
+    .limit(1);
+  return result[0];
+}
+
+export async function createVendorPriceHistory(data: InsertVendorPriceHistory) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(vendorPriceHistory).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateVendorPriceHistory(id: number, data: Partial<InsertVendorPriceHistory>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(vendorPriceHistory).set(data).where(eq(vendorPriceHistory.id, id));
+}
+
+// Vendor Alert Configurations
+export async function getVendorAlertConfigs(vendorId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  if (vendorId) {
+    return db.select().from(vendorAlertConfigs)
+      .where(or(eq(vendorAlertConfigs.vendorId, vendorId), isNull(vendorAlertConfigs.vendorId)))
+      .orderBy(vendorAlertConfigs.vendorId);
+  }
+  return db.select().from(vendorAlertConfigs).where(eq(vendorAlertConfigs.isActive, true));
+}
+
+export async function getVendorAlertConfigById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(vendorAlertConfigs).where(eq(vendorAlertConfigs.id, id)).limit(1);
+  return result[0];
+}
+
+export async function getGlobalVendorAlertConfig() {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(vendorAlertConfigs)
+    .where(and(isNull(vendorAlertConfigs.vendorId), eq(vendorAlertConfigs.isActive, true)))
+    .limit(1);
+  return result[0];
+}
+
+export async function createVendorAlertConfig(data: InsertVendorAlertConfig) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(vendorAlertConfigs).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateVendorAlertConfig(id: number, data: Partial<InsertVendorAlertConfig>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(vendorAlertConfigs).set(data).where(eq(vendorAlertConfigs.id, id));
+}
+
+export async function deleteVendorAlertConfig(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(vendorAlertConfigs).where(eq(vendorAlertConfigs.id, id));
+}
+
+// ============================================
+// 3PL COMPARISON & SELECTION
+// ============================================
+
+// 3PL Providers
+export async function get3PlProviders(filters?: { status?: string; hasCapability?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (filters?.status) conditions.push(eq(thirdPartyLogisticsProviders.status, filters.status as any));
+
+  let query = db.select().from(thirdPartyLogisticsProviders).orderBy(thirdPartyLogisticsProviders.name);
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as any;
+  }
+  return query;
+}
+
+export async function get3PlProviderById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(thirdPartyLogisticsProviders).where(eq(thirdPartyLogisticsProviders.id, id)).limit(1);
+  return result[0];
+}
+
+export async function create3PlProvider(data: InsertThirdPartyLogisticsProvider) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(thirdPartyLogisticsProviders).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function update3PlProvider(id: number, data: Partial<InsertThirdPartyLogisticsProvider>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(thirdPartyLogisticsProviders).set(data).where(eq(thirdPartyLogisticsProviders.id, id));
+}
+
+export async function delete3PlProvider(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  // Delete related rates and comparison results first
+  await db.delete(threePlRates).where(eq(threePlRates.providerId, id));
+  await db.delete(threePlComparisonResults).where(eq(threePlComparisonResults.providerId, id));
+  await db.delete(thirdPartyLogisticsProviders).where(eq(thirdPartyLogisticsProviders.id, id));
+}
+
+// 3PL Rates
+export async function get3PlRates(providerId: number, rateType?: string) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [eq(threePlRates.providerId, providerId), eq(threePlRates.isActive, true)];
+  if (rateType) conditions.push(eq(threePlRates.rateType, rateType as any));
+
+  return db.select().from(threePlRates)
+    .where(and(...conditions))
+    .orderBy(threePlRates.rateType);
+}
+
+export async function get3PlRateById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(threePlRates).where(eq(threePlRates.id, id)).limit(1);
+  return result[0];
+}
+
+export async function create3PlRate(data: InsertThreePlRate) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(threePlRates).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function update3PlRate(id: number, data: Partial<InsertThreePlRate>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(threePlRates).set(data).where(eq(threePlRates.id, id));
+}
+
+export async function delete3PlRate(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(threePlRates).where(eq(threePlRates.id, id));
+}
+
+// 3PL Comparisons
+export async function get3PlComparisons(filters?: { status?: string; limit?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (filters?.status) conditions.push(eq(threePlComparisons.status, filters.status as any));
+
+  let query = db.select().from(threePlComparisons).orderBy(desc(threePlComparisons.createdAt));
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as any;
+  }
+  if (filters?.limit) {
+    query = query.limit(filters.limit) as any;
+  }
+  return query;
+}
+
+export async function get3PlComparisonById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(threePlComparisons).where(eq(threePlComparisons.id, id)).limit(1);
+  return result[0];
+}
+
+export async function create3PlComparison(data: InsertThreePlComparison) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(threePlComparisons).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function update3PlComparison(id: number, data: Partial<InsertThreePlComparison>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(threePlComparisons).set(data).where(eq(threePlComparisons.id, id));
+}
+
+export async function delete3PlComparison(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(threePlComparisonResults).where(eq(threePlComparisonResults.comparisonId, id));
+  await db.delete(threePlComparisons).where(eq(threePlComparisons.id, id));
+}
+
+// 3PL Comparison Results
+export async function get3PlComparisonResults(comparisonId: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  return db.select({
+    result: threePlComparisonResults,
+    provider: thirdPartyLogisticsProviders,
+  })
+    .from(threePlComparisonResults)
+    .leftJoin(thirdPartyLogisticsProviders, eq(threePlComparisonResults.providerId, thirdPartyLogisticsProviders.id))
+    .where(eq(threePlComparisonResults.comparisonId, comparisonId))
+    .orderBy(threePlComparisonResults.rank);
+}
+
+export async function create3PlComparisonResult(data: InsertThreePlComparisonResult) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(threePlComparisonResults).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function update3PlComparisonResult(id: number, data: Partial<InsertThreePlComparisonResult>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(threePlComparisonResults).set(data).where(eq(threePlComparisonResults.id, id));
+}
+
+export async function delete3PlComparisonResults(comparisonId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(threePlComparisonResults).where(eq(threePlComparisonResults.comparisonId, comparisonId));
 }

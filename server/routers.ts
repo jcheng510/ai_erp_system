@@ -13427,6 +13427,1074 @@ Extract and return JSON with:
       }),
     }),
   }),
+
+  // ============================================
+  // HS CODES & TARIFF CLASSIFICATION
+  // ============================================
+  hsCodes: router({
+    // HS Code lookup
+    list: protectedProcedure
+      .input(z.object({
+        chapter: z.string().optional(),
+        search: z.string().optional(),
+        countryCode: z.string().optional(),
+      }).optional())
+      .query(({ input }) => db.getHsCodes(input)),
+
+    get: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(({ input }) => db.getHsCodeById(input.id)),
+
+    getByCode: protectedProcedure
+      .input(z.object({ hsCode: z.string() }))
+      .query(({ input }) => db.getHsCodeByCode(input.hsCode)),
+
+    create: opsProcedure
+      .input(z.object({
+        hsCode: z.string().min(2),
+        chapter: z.string().optional(),
+        heading: z.string().optional(),
+        subheading: z.string().optional(),
+        description: z.string(),
+        shortDescription: z.string().optional(),
+        generalDutyRate: z.string().optional(),
+        specialDutyRate: z.string().optional(),
+        column2DutyRate: z.string().optional(),
+        unitOfQuantity: z.string().optional(),
+        quotaCategory: z.string().optional(),
+        additionalDuties: z.string().optional(),
+        countryCode: z.string().optional(),
+        effectiveDate: z.date().optional(),
+        expirationDate: z.date().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.createHsCode(input);
+        await createAuditLog(ctx.user.id, 'create', 'hs_code', result.id, input.hsCode);
+        return result;
+      }),
+
+    update: opsProcedure
+      .input(z.object({
+        id: z.number(),
+        hsCode: z.string().optional(),
+        description: z.string().optional(),
+        generalDutyRate: z.string().optional(),
+        specialDutyRate: z.string().optional(),
+        isActive: z.boolean().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { id, ...data } = input;
+        await db.updateHsCode(id, data);
+        await createAuditLog(ctx.user.id, 'update', 'hs_code', id);
+        return { success: true };
+      }),
+
+    // Product HS Classifications
+    classifications: router({
+      list: protectedProcedure
+        .input(z.object({
+          productId: z.number().optional(),
+          rawMaterialId: z.number().optional(),
+          isVerified: z.boolean().optional(),
+        }).optional())
+        .query(({ input }) => db.getProductHsClassifications(input)),
+
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getProductHsClassificationById(input.id)),
+
+      create: opsProcedure
+        .input(z.object({
+          productId: z.number().optional(),
+          rawMaterialId: z.number().optional(),
+          hsCode: z.string(),
+          hsCodeId: z.number().optional(),
+          description: z.string().optional(),
+          classificationMethod: z.enum(["manual", "ai_suggested", "ai_confirmed", "customs_ruling"]).optional(),
+          aiConfidence: z.string().optional(),
+          aiReasoning: z.string().optional(),
+          customsRulingNumber: z.string().optional(),
+          countryOfOrigin: z.string().optional(),
+          importCountry: z.string().optional(),
+          estimatedDutyRate: z.string().optional(),
+          estimatedDutyAmount: z.string().optional(),
+          specialProgram: z.string().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createProductHsClassification({
+            ...input,
+            createdBy: ctx.user.id,
+          });
+          await createAuditLog(ctx.user.id, 'create', 'product_hs_classification', result.id, input.hsCode);
+          return result;
+        }),
+
+      update: opsProcedure
+        .input(z.object({
+          id: z.number(),
+          hsCode: z.string().optional(),
+          description: z.string().optional(),
+          isVerified: z.boolean().optional(),
+          verifiedBy: z.number().optional(),
+          verifiedAt: z.date().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateProductHsClassification(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'product_hs_classification', id);
+          return { success: true };
+        }),
+
+      verify: opsProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.updateProductHsClassification(input.id, {
+            isVerified: true,
+            verifiedBy: ctx.user.id,
+            verifiedAt: new Date(),
+          });
+          await createAuditLog(ctx.user.id, 'update', 'product_hs_classification', input.id, 'Verified');
+          return { success: true };
+        }),
+
+      delete: opsProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteProductHsClassification(input.id);
+          await createAuditLog(ctx.user.id, 'delete', 'product_hs_classification', input.id);
+          return { success: true };
+        }),
+
+      // AI Classification
+      aiClassify: protectedProcedure
+        .input(z.object({
+          productName: z.string(),
+          productDescription: z.string(),
+          material: z.string().optional(),
+          countryOfOrigin: z.string().optional(),
+          intendedUse: z.string().optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const prompt = `You are an expert customs classification specialist. Based on the following product details, suggest the most appropriate HS (Harmonized System) code for US import.
+
+Product Name: ${input.productName}
+Description: ${input.productDescription}
+${input.material ? `Material/Composition: ${input.material}` : ''}
+${input.countryOfOrigin ? `Country of Origin: ${input.countryOfOrigin}` : ''}
+${input.intendedUse ? `Intended Use: ${input.intendedUse}` : ''}
+
+Provide your response in this JSON format:
+{
+  "hsCode": "the 10-digit HS code",
+  "chapter": "the 2-digit chapter",
+  "heading": "the 4-digit heading",
+  "subheading": "the 6-digit subheading",
+  "description": "official HS description for this code",
+  "confidence": "confidence percentage 0-100",
+  "reasoning": "explanation of why this classification is appropriate",
+  "alternativeCodes": [{"code": "alternative HS code", "reason": "why this might also apply"}],
+  "estimatedDutyRate": "estimated duty rate percentage",
+  "specialPrograms": ["applicable special programs like GSP, USMCA, etc."],
+  "warnings": ["any compliance warnings or notes"]
+}`;
+
+          const result = await invokeLLM({
+            prompt,
+            responseFormat: 'json',
+          });
+
+          try {
+            return JSON.parse(result);
+          } catch {
+            return { error: 'Failed to parse AI response', raw: result };
+          }
+        }),
+    }),
+
+    // Tariff Calculations
+    calculations: router({
+      list: protectedProcedure
+        .input(z.object({
+          shipmentId: z.number().optional(),
+          purchaseOrderId: z.number().optional(),
+          status: z.string().optional(),
+        }).optional())
+        .query(({ input }) => db.getTariffCalculations(input)),
+
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getTariffCalculationById(input.id)),
+
+      create: opsProcedure
+        .input(z.object({
+          shipmentId: z.number().optional(),
+          purchaseOrderId: z.number().optional(),
+          customsClearanceId: z.number().optional(),
+          totalDeclaredValue: z.string(),
+          totalDutyAmount: z.string(),
+          totalTaxAmount: z.string().optional(),
+          totalFees: z.string().optional(),
+          grandTotal: z.string(),
+          currency: z.string().optional(),
+          exchangeRate: z.string().optional(),
+          lineItems: z.string().optional(),
+          status: z.enum(["estimated", "confirmed", "paid", "refunded"]).optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createTariffCalculation({
+            ...input,
+            createdBy: ctx.user.id,
+          });
+          await createAuditLog(ctx.user.id, 'create', 'tariff_calculation', result.id);
+          return result;
+        }),
+
+      update: opsProcedure
+        .input(z.object({
+          id: z.number(),
+          status: z.enum(["estimated", "confirmed", "paid", "refunded"]).optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateTariffCalculation(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'tariff_calculation', id);
+          return { success: true };
+        }),
+
+      // Calculate tariffs for a shipment
+      calculate: protectedProcedure
+        .input(z.object({
+          items: z.array(z.object({
+            hsCode: z.string(),
+            description: z.string(),
+            quantity: z.number(),
+            unitValue: z.number(),
+            countryOfOrigin: z.string(),
+            weight: z.number().optional(),
+          })),
+          importCountry: z.string().default("US"),
+        }))
+        .mutation(async ({ input }) => {
+          const calculations = [];
+          let totalDuty = 0;
+          let totalValue = 0;
+
+          for (const item of input.items) {
+            const hsCode = await db.getHsCodeByCode(item.hsCode);
+            const dutyRate = hsCode?.generalDutyRate ? parseFloat(hsCode.generalDutyRate.replace('%', '')) / 100 : 0;
+            const lineValue = item.quantity * item.unitValue;
+            const lineDuty = lineValue * dutyRate;
+
+            totalValue += lineValue;
+            totalDuty += lineDuty;
+
+            calculations.push({
+              hsCode: item.hsCode,
+              description: item.description,
+              quantity: item.quantity,
+              unitValue: item.unitValue,
+              lineValue,
+              dutyRate: dutyRate * 100,
+              dutyAmount: lineDuty,
+            });
+          }
+
+          return {
+            lineItems: calculations,
+            totalDeclaredValue: totalValue,
+            totalDutyAmount: totalDuty,
+            totalFees: 0,
+            grandTotal: totalDuty,
+          };
+        }),
+    }),
+  }),
+
+  // ============================================
+  // ISF (IMPORTER SECURITY FILING) FORMS
+  // ============================================
+  isf: router({
+    list: protectedProcedure
+      .input(z.object({
+        status: z.string().optional(),
+        shipmentId: z.number().optional(),
+        purchaseOrderId: z.number().optional(),
+        limit: z.number().optional(),
+      }).optional())
+      .query(({ input }) => db.getIsfForms(input)),
+
+    get: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const isf = await db.getIsfFormById(input.id);
+        if (!isf) return null;
+        const lineItems = await db.getIsfLineItems(input.id);
+        return { ...isf, lineItems };
+      }),
+
+    getByNumber: protectedProcedure
+      .input(z.object({ isfNumber: z.string() }))
+      .query(({ input }) => db.getIsfFormByNumber(input.isfNumber)),
+
+    create: opsProcedure
+      .input(z.object({
+        shipmentId: z.number().optional(),
+        purchaseOrderId: z.number().optional(),
+        customsClearanceId: z.number().optional(),
+        isfType: z.enum(["isf_10_plus_2", "isf_5_plus_2"]).optional(),
+        importerName: z.string().optional(),
+        importerAddress: z.string().optional(),
+        importerEin: z.string().optional(),
+        importerBond: z.string().optional(),
+        consigneeName: z.string().optional(),
+        consigneeAddress: z.string().optional(),
+        sellerName: z.string().optional(),
+        sellerAddress: z.string().optional(),
+        buyerName: z.string().optional(),
+        buyerAddress: z.string().optional(),
+        shipToName: z.string().optional(),
+        shipToAddress: z.string().optional(),
+        manufacturerName: z.string().optional(),
+        manufacturerAddress: z.string().optional(),
+        manufacturerId: z.string().optional(),
+        countryOfOrigin: z.string().optional(),
+        hsCodes: z.string().optional(),
+        stuffingLocationName: z.string().optional(),
+        stuffingLocationAddress: z.string().optional(),
+        consolidatorName: z.string().optional(),
+        consolidatorAddress: z.string().optional(),
+        vesselName: z.string().optional(),
+        voyageNumber: z.string().optional(),
+        carrierScac: z.string().optional(),
+        billOfLadingNumber: z.string().optional(),
+        masterBillNumber: z.string().optional(),
+        houseBillNumber: z.string().optional(),
+        containerNumbers: z.string().optional(),
+        foreignPortOfLading: z.string().optional(),
+        foreignPortCode: z.string().optional(),
+        usPortOfUnlading: z.string().optional(),
+        usPortCode: z.string().optional(),
+        estimatedArrivalDate: z.date().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const isfNumber = await db.generateIsfNumber();
+        const result = await db.createIsfForm({
+          ...input,
+          isfNumber,
+          createdBy: ctx.user.id,
+        });
+        await createAuditLog(ctx.user.id, 'create', 'isf_form', result.id, isfNumber);
+        return { ...result, isfNumber };
+      }),
+
+    update: opsProcedure
+      .input(z.object({
+        id: z.number(),
+        status: z.enum(["draft", "pending_review", "submitted", "accepted", "rejected", "amended", "cancelled"]).optional(),
+        importerName: z.string().optional(),
+        importerAddress: z.string().optional(),
+        vesselName: z.string().optional(),
+        voyageNumber: z.string().optional(),
+        estimatedArrivalDate: z.date().optional(),
+        cbpTransactionNumber: z.string().optional(),
+        cbpResponse: z.string().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { id, ...data } = input;
+        await db.updateIsfForm(id, data);
+        await createAuditLog(ctx.user.id, 'update', 'isf_form', id);
+        return { success: true };
+      }),
+
+    submit: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.updateIsfForm(input.id, {
+          status: 'submitted',
+          submittedAt: new Date(),
+          submittedBy: ctx.user.id,
+        });
+        await createAuditLog(ctx.user.id, 'update', 'isf_form', input.id, 'Submitted');
+        return { success: true };
+      }),
+
+    delete: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deleteIsfForm(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'isf_form', input.id);
+        return { success: true };
+      }),
+
+    // Line Items
+    lineItems: router({
+      list: protectedProcedure
+        .input(z.object({ isfId: z.number() }))
+        .query(({ input }) => db.getIsfLineItems(input.isfId)),
+
+      create: opsProcedure
+        .input(z.object({
+          isfId: z.number(),
+          lineNumber: z.number(),
+          description: z.string(),
+          hsCode: z.string().optional(),
+          countryOfOrigin: z.string().optional(),
+          manufacturerName: z.string().optional(),
+          manufacturerAddress: z.string().optional(),
+          manufacturerId: z.string().optional(),
+          quantity: z.string().optional(),
+          unit: z.string().optional(),
+          value: z.string().optional(),
+          containerNumber: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createIsfLineItem(input);
+          await createAuditLog(ctx.user.id, 'create', 'isf_line_item', result.id);
+          return result;
+        }),
+
+      update: opsProcedure
+        .input(z.object({
+          id: z.number(),
+          description: z.string().optional(),
+          hsCode: z.string().optional(),
+          quantity: z.string().optional(),
+          value: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateIsfLineItem(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'isf_line_item', id);
+          return { success: true };
+        }),
+
+      delete: opsProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteIsfLineItem(input.id);
+          await createAuditLog(ctx.user.id, 'delete', 'isf_line_item', input.id);
+          return { success: true };
+        }),
+    }),
+
+    // Generate ISF from PO
+    generateFromPO: opsProcedure
+      .input(z.object({ purchaseOrderId: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const po = await db.getPurchaseOrderById(input.purchaseOrderId);
+        if (!po) throw new TRPCError({ code: 'NOT_FOUND', message: 'Purchase order not found' });
+
+        const vendor = po.vendorId ? await db.getVendorById(po.vendorId) : null;
+        const isfNumber = await db.generateIsfNumber();
+
+        const result = await db.createIsfForm({
+          isfNumber,
+          purchaseOrderId: input.purchaseOrderId,
+          sellerName: vendor?.name,
+          sellerAddress: vendor ? `${vendor.address || ''}, ${vendor.city || ''}, ${vendor.country || ''}` : undefined,
+          countryOfOrigin: vendor?.country,
+          createdBy: ctx.user.id,
+        });
+
+        await createAuditLog(ctx.user.id, 'create', 'isf_form', result.id, `Generated from PO ${po.poNumber}`);
+        return { ...result, isfNumber };
+      }),
+  }),
+
+  // ============================================
+  // VENDOR MONITORING & ALERTS
+  // ============================================
+  vendorMonitoring: router({
+    // Performance Records
+    performance: router({
+      list: protectedProcedure
+        .input(z.object({
+          vendorId: z.number().optional(),
+          periodStart: z.date().optional(),
+          periodEnd: z.date().optional(),
+        }).optional())
+        .query(({ input }) => db.getVendorPerformanceRecords(input)),
+
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getVendorPerformanceRecordById(input.id)),
+
+      getLatest: protectedProcedure
+        .input(z.object({ vendorId: z.number() }))
+        .query(({ input }) => db.getLatestVendorPerformance(input.vendorId)),
+
+      create: opsProcedure
+        .input(z.object({
+          vendorId: z.number(),
+          periodStart: z.date(),
+          periodEnd: z.date(),
+          totalOrders: z.number().optional(),
+          onTimeDeliveries: z.number().optional(),
+          lateDeliveries: z.number().optional(),
+          earlyDeliveries: z.number().optional(),
+          averageLeadTimeDays: z.string().optional(),
+          expectedLeadTimeDays: z.string().optional(),
+          totalUnitsReceived: z.string().optional(),
+          defectiveUnits: z.string().optional(),
+          defectRate: z.string().optional(),
+          qualityScore: z.string().optional(),
+          totalSpend: z.string().optional(),
+          averageUnitPrice: z.string().optional(),
+          priceVariancePercent: z.string().optional(),
+          overallScore: z.string().optional(),
+          scoreBreakdown: z.string().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          // Calculate lead time variance
+          const avgLead = parseFloat(input.averageLeadTimeDays || '0');
+          const expectedLead = parseFloat(input.expectedLeadTimeDays || '0');
+          const leadTimeVarianceDays = avgLead - expectedLead;
+          const leadTimeVariancePercent = expectedLead > 0 ? ((leadTimeVarianceDays / expectedLead) * 100) : 0;
+
+          // Determine trend
+          const previousRecord = await db.getLatestVendorPerformance(input.vendorId);
+          const previousScore = previousRecord?.overallScore ? parseFloat(previousRecord.overallScore) : null;
+          const currentScore = input.overallScore ? parseFloat(input.overallScore) : 0;
+          let scoreTrend: 'improving' | 'stable' | 'declining' = 'stable';
+          if (previousScore !== null) {
+            if (currentScore > previousScore + 2) scoreTrend = 'improving';
+            else if (currentScore < previousScore - 2) scoreTrend = 'declining';
+          }
+
+          const result = await db.createVendorPerformanceRecord({
+            ...input,
+            leadTimeVarianceDays: leadTimeVarianceDays.toFixed(2),
+            leadTimeVariancePercent: leadTimeVariancePercent.toFixed(2),
+            previousPeriodScore: previousScore?.toFixed(2),
+            scoreTrend,
+          });
+
+          await createAuditLog(ctx.user.id, 'create', 'vendor_performance', result.id);
+          return result;
+        }),
+
+      update: opsProcedure
+        .input(z.object({
+          id: z.number(),
+          overallScore: z.string().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateVendorPerformanceRecord(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'vendor_performance', id);
+          return { success: true };
+        }),
+    }),
+
+    // Price History
+    priceHistory: router({
+      list: protectedProcedure
+        .input(z.object({
+          vendorId: z.number().optional(),
+          productId: z.number().optional(),
+          rawMaterialId: z.number().optional(),
+          startDate: z.date().optional(),
+          endDate: z.date().optional(),
+        }).optional())
+        .query(({ input }) => db.getVendorPriceHistory(input)),
+
+      getLatest: protectedProcedure
+        .input(z.object({
+          vendorId: z.number(),
+          productId: z.number().optional(),
+          rawMaterialId: z.number().optional(),
+        }))
+        .query(({ input }) => db.getLatestVendorPrice(input.vendorId, input.productId, input.rawMaterialId)),
+
+      create: opsProcedure
+        .input(z.object({
+          vendorId: z.number(),
+          productId: z.number().optional(),
+          rawMaterialId: z.number().optional(),
+          effectiveDate: z.date(),
+          expirationDate: z.date().optional(),
+          newPrice: z.string(),
+          currency: z.string().optional(),
+          unit: z.string().optional(),
+          minOrderQuantity: z.string().optional(),
+          changeSource: z.enum(["quote", "contract", "invoice", "manual", "api"]).optional(),
+          sourceDocumentId: z.number().optional(),
+          sourceReference: z.string().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          // Get previous price for comparison
+          const previousPrice = await db.getLatestVendorPrice(input.vendorId, input.productId, input.rawMaterialId);
+          const prevPriceVal = previousPrice?.newPrice ? parseFloat(previousPrice.newPrice) : null;
+          const newPriceVal = parseFloat(input.newPrice);
+
+          let priceChange: string | undefined;
+          let priceChangePercent: string | undefined;
+
+          if (prevPriceVal !== null) {
+            priceChange = (newPriceVal - prevPriceVal).toFixed(4);
+            priceChangePercent = ((newPriceVal - prevPriceVal) / prevPriceVal * 100).toFixed(2);
+          }
+
+          const result = await db.createVendorPriceHistory({
+            ...input,
+            previousPrice: prevPriceVal?.toFixed(4),
+            priceChange,
+            priceChangePercent,
+            recordedBy: ctx.user.id,
+          });
+
+          // Check alert thresholds and create alert if needed
+          if (priceChangePercent) {
+            const changePercent = parseFloat(priceChangePercent);
+            const config = await db.getVendorAlertConfigs(input.vendorId);
+            const alertConfig = config[0] || await db.getGlobalVendorAlertConfig();
+
+            if (alertConfig) {
+              const increaseThreshold = parseFloat(alertConfig.priceIncreaseThresholdPercent?.toString() || '5');
+              const decreaseThreshold = parseFloat(alertConfig.priceDecreaseThresholdPercent?.toString() || '10');
+
+              if ((changePercent > increaseThreshold && alertConfig.alertOnPriceIncrease) ||
+                  (changePercent < -decreaseThreshold && alertConfig.alertOnPriceDecrease)) {
+                await db.createAlert({
+                  type: 'price_change',
+                  severity: Math.abs(changePercent) > 10 ? 'high' : 'medium',
+                  title: `Vendor Price ${changePercent > 0 ? 'Increase' : 'Decrease'} Alert`,
+                  message: `Price changed by ${priceChangePercent}% for vendor ID ${input.vendorId}`,
+                  relatedType: 'vendor',
+                  relatedId: input.vendorId,
+                });
+              }
+            }
+          }
+
+          await createAuditLog(ctx.user.id, 'create', 'vendor_price_history', result.id);
+          return result;
+        }),
+    }),
+
+    // Alert Configurations
+    alertConfigs: router({
+      list: protectedProcedure
+        .input(z.object({ vendorId: z.number().optional() }).optional())
+        .query(({ input }) => db.getVendorAlertConfigs(input?.vendorId)),
+
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getVendorAlertConfigById(input.id)),
+
+      getGlobal: protectedProcedure
+        .query(() => db.getGlobalVendorAlertConfig()),
+
+      create: opsProcedure
+        .input(z.object({
+          vendorId: z.number().optional(),
+          leadTimeVarianceThresholdDays: z.number().optional(),
+          leadTimeVarianceThresholdPercent: z.string().optional(),
+          alertOnLateDelivery: z.boolean().optional(),
+          priceIncreaseThresholdPercent: z.string().optional(),
+          priceDecreaseThresholdPercent: z.string().optional(),
+          alertOnPriceIncrease: z.boolean().optional(),
+          alertOnPriceDecrease: z.boolean().optional(),
+          defectRateThresholdPercent: z.string().optional(),
+          alertOnQualityIssue: z.boolean().optional(),
+          performanceScoreThreshold: z.string().optional(),
+          alertOnLowPerformance: z.boolean().optional(),
+          autoSuggestRenegotiation: z.boolean().optional(),
+          renegotiationTriggerMonths: z.number().optional(),
+          renegotiationSpendThreshold: z.string().optional(),
+          notifyUsers: z.string().optional(),
+          notifyEmail: z.boolean().optional(),
+          notifyInApp: z.boolean().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createVendorAlertConfig({
+            ...input,
+            createdBy: ctx.user.id,
+          });
+          await createAuditLog(ctx.user.id, 'create', 'vendor_alert_config', result.id);
+          return result;
+        }),
+
+      update: opsProcedure
+        .input(z.object({
+          id: z.number(),
+          leadTimeVarianceThresholdDays: z.number().optional(),
+          priceIncreaseThresholdPercent: z.string().optional(),
+          alertOnPriceIncrease: z.boolean().optional(),
+          isActive: z.boolean().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateVendorAlertConfig(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'vendor_alert_config', id);
+          return { success: true };
+        }),
+
+      delete: opsProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteVendorAlertConfig(input.id);
+          await createAuditLog(ctx.user.id, 'delete', 'vendor_alert_config', input.id);
+          return { success: true };
+        }),
+    }),
+  }),
+
+  // ============================================
+  // 3PL COMPARISON & SELECTION
+  // ============================================
+  threePl: router({
+    // 3PL Providers
+    providers: router({
+      list: protectedProcedure
+        .input(z.object({
+          status: z.string().optional(),
+        }).optional())
+        .query(({ input }) => db.get3PlProviders(input)),
+
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(async ({ input }) => {
+          const provider = await db.get3PlProviderById(input.id);
+          if (!provider) return null;
+          const rates = await db.get3PlRates(input.id);
+          return { ...provider, rates };
+        }),
+
+      create: opsProcedure
+        .input(z.object({
+          name: z.string().min(1),
+          code: z.string().optional(),
+          status: z.enum(["active", "inactive", "pending_evaluation", "suspended"]).optional(),
+          contactName: z.string().optional(),
+          contactEmail: z.string().optional(),
+          contactPhone: z.string().optional(),
+          website: z.string().optional(),
+          headquarters: z.string().optional(),
+          warehouseLocations: z.string().optional(),
+          servicesOffered: z.string().optional(),
+          industriesServed: z.string().optional(),
+          geographicCoverage: z.string().optional(),
+          warehouseSquareFootage: z.number().optional(),
+          temperatureControlled: z.boolean().optional(),
+          hazmatCertified: z.boolean().optional(),
+          fdaRegistered: z.boolean().optional(),
+          customsBonded: z.boolean().optional(),
+          integrationTypes: z.string().optional(),
+          supportedPlatforms: z.string().optional(),
+          pricingModel: z.enum(["per_order", "per_unit", "per_pallet", "monthly_fixed", "hybrid"]).optional(),
+          minimumMonthlyFee: z.string().optional(),
+          setupFee: z.string().optional(),
+          averageAccuracyRate: z.string().optional(),
+          averageShipTime: z.string().optional(),
+          rating: z.string().optional(),
+          contractStartDate: z.date().optional(),
+          contractEndDate: z.date().optional(),
+          contractTerms: z.string().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.create3PlProvider({
+            ...input,
+            createdBy: ctx.user.id,
+          });
+          await createAuditLog(ctx.user.id, 'create', '3pl_provider', result.id, input.name);
+          return result;
+        }),
+
+      update: opsProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          status: z.enum(["active", "inactive", "pending_evaluation", "suspended"]).optional(),
+          contactName: z.string().optional(),
+          contactEmail: z.string().optional(),
+          rating: z.string().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.update3PlProvider(id, data);
+          await createAuditLog(ctx.user.id, 'update', '3pl_provider', id);
+          return { success: true };
+        }),
+
+      delete: opsProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.delete3PlProvider(input.id);
+          await createAuditLog(ctx.user.id, 'delete', '3pl_provider', input.id);
+          return { success: true };
+        }),
+    }),
+
+    // 3PL Rates
+    rates: router({
+      list: protectedProcedure
+        .input(z.object({
+          providerId: z.number(),
+          rateType: z.string().optional(),
+        }))
+        .query(({ input }) => db.get3PlRates(input.providerId, input.rateType)),
+
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.get3PlRateById(input.id)),
+
+      create: opsProcedure
+        .input(z.object({
+          providerId: z.number(),
+          rateType: z.enum([
+            "receiving_per_pallet", "receiving_per_carton", "receiving_per_unit",
+            "storage_per_pallet", "storage_per_bin", "storage_per_sqft",
+            "pick_per_order", "pick_per_unit", "pick_per_line",
+            "pack_per_order", "pack_per_unit",
+            "ship_handling", "ship_per_lb",
+            "kitting_per_kit", "returns_per_unit",
+            "special_project_hourly", "monthly_minimum"
+          ]),
+          rateName: z.string().optional(),
+          description: z.string().optional(),
+          rate: z.string(),
+          currency: z.string().optional(),
+          unit: z.string().optional(),
+          minVolume: z.string().optional(),
+          maxVolume: z.string().optional(),
+          effectiveDate: z.date(),
+          expirationDate: z.date().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.create3PlRate(input);
+          await createAuditLog(ctx.user.id, 'create', '3pl_rate', result.id);
+          return result;
+        }),
+
+      update: opsProcedure
+        .input(z.object({
+          id: z.number(),
+          rate: z.string().optional(),
+          isActive: z.boolean().optional(),
+          expirationDate: z.date().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.update3PlRate(id, data);
+          await createAuditLog(ctx.user.id, 'update', '3pl_rate', id);
+          return { success: true };
+        }),
+
+      delete: opsProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.delete3PlRate(input.id);
+          await createAuditLog(ctx.user.id, 'delete', '3pl_rate', input.id);
+          return { success: true };
+        }),
+    }),
+
+    // 3PL Comparisons
+    comparisons: router({
+      list: protectedProcedure
+        .input(z.object({
+          status: z.string().optional(),
+          limit: z.number().optional(),
+        }).optional())
+        .query(({ input }) => db.get3PlComparisons(input)),
+
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(async ({ input }) => {
+          const comparison = await db.get3PlComparisonById(input.id);
+          if (!comparison) return null;
+          const results = await db.get3PlComparisonResults(input.id);
+          return { ...comparison, results };
+        }),
+
+      create: opsProcedure
+        .input(z.object({
+          comparisonName: z.string().min(1),
+          monthlyOrderVolume: z.number().optional(),
+          averageUnitsPerOrder: z.string().optional(),
+          averageSkuCount: z.number().optional(),
+          palletStorageNeeded: z.number().optional(),
+          binStorageNeeded: z.number().optional(),
+          requiresTemperatureControl: z.boolean().optional(),
+          requiresHazmat: z.boolean().optional(),
+          requiresFda: z.boolean().optional(),
+          requiresKitting: z.boolean().optional(),
+          requiresReturnsProcessing: z.boolean().optional(),
+          geographicRequirements: z.string().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.create3PlComparison({
+            ...input,
+            createdBy: ctx.user.id,
+          });
+          await createAuditLog(ctx.user.id, 'create', '3pl_comparison', result.id, input.comparisonName);
+          return result;
+        }),
+
+      update: opsProcedure
+        .input(z.object({
+          id: z.number(),
+          status: z.enum(["draft", "in_progress", "completed", "archived"]).optional(),
+          recommendedProviderId: z.number().optional(),
+          recommendationReason: z.string().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.update3PlComparison(id, data);
+          await createAuditLog(ctx.user.id, 'update', '3pl_comparison', id);
+          return { success: true };
+        }),
+
+      delete: opsProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.delete3PlComparison(input.id);
+          await createAuditLog(ctx.user.id, 'delete', '3pl_comparison', input.id);
+          return { success: true };
+        }),
+
+      // Run comparison analysis
+      runComparison: opsProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const comparison = await db.get3PlComparisonById(input.id);
+          if (!comparison) throw new TRPCError({ code: 'NOT_FOUND', message: 'Comparison not found' });
+
+          // Get all active providers
+          const providers = await db.get3PlProviders({ status: 'active' });
+
+          // Delete existing results
+          await db.delete3PlComparisonResults(input.id);
+
+          const results = [];
+          const monthlyOrders = comparison.monthlyOrderVolume || 1000;
+          const unitsPerOrder = parseFloat(comparison.averageUnitsPerOrder?.toString() || '2');
+          const pallets = comparison.palletStorageNeeded || 50;
+
+          for (const provider of providers) {
+            // Check capability match
+            let meetsRequirements = true;
+            const capabilityNotes: string[] = [];
+
+            if (comparison.requiresTemperatureControl && !provider.temperatureControlled) {
+              meetsRequirements = false;
+              capabilityNotes.push('No temperature control');
+            }
+            if (comparison.requiresHazmat && !provider.hazmatCertified) {
+              meetsRequirements = false;
+              capabilityNotes.push('Not hazmat certified');
+            }
+            if (comparison.requiresFda && !provider.fdaRegistered) {
+              meetsRequirements = false;
+              capabilityNotes.push('Not FDA registered');
+            }
+
+            // Get rates and calculate costs
+            const rates = await db.get3PlRates(provider.id);
+            const rateMap: Record<string, number> = {};
+            for (const rate of rates) {
+              rateMap[rate.rateType] = parseFloat(rate.rate);
+            }
+
+            const receivingCost = (rateMap['receiving_per_pallet'] || 5) * (pallets / 4);
+            const storageCost = (rateMap['storage_per_pallet'] || 25) * pallets;
+            const pickPackCost = (rateMap['pick_per_order'] || 2.5) * monthlyOrders +
+                                 (rateMap['pick_per_unit'] || 0.25) * monthlyOrders * unitsPerOrder;
+            const shippingCost = (rateMap['ship_handling'] || 1) * monthlyOrders;
+            const otherCost = rateMap['monthly_minimum'] || 0;
+
+            const totalMonthlyCost = receivingCost + storageCost + pickPackCost + shippingCost + otherCost;
+            const costPerOrder = totalMonthlyCost / monthlyOrders;
+            const costPerUnit = totalMonthlyCost / (monthlyOrders * unitsPerOrder);
+
+            // Calculate scores
+            const capabilityScore = meetsRequirements ? 100 : 50;
+            const serviceScore = provider.averageAccuracyRate ? parseFloat(provider.averageAccuracyRate) : 95;
+
+            results.push({
+              providerId: provider.id,
+              meetsRequirements,
+              capabilityScore: capabilityScore.toFixed(2),
+              capabilityNotes: capabilityNotes.join('; '),
+              monthlyReceivingCost: receivingCost.toFixed(2),
+              monthlyStorageCost: storageCost.toFixed(2),
+              monthlyPickPackCost: pickPackCost.toFixed(2),
+              monthlyShippingCost: shippingCost.toFixed(2),
+              monthlyOtherCost: otherCost.toFixed(2),
+              totalMonthlyCost: totalMonthlyCost.toFixed(2),
+              costPerOrder: costPerOrder.toFixed(4),
+              costPerUnit: costPerUnit.toFixed(4),
+              serviceScore: serviceScore.toFixed(2),
+            });
+          }
+
+          // Sort by total cost and assign ranks/scores
+          results.sort((a, b) => parseFloat(a.totalMonthlyCost) - parseFloat(b.totalMonthlyCost));
+          const minCost = parseFloat(results[0]?.totalMonthlyCost || '1');
+
+          for (let i = 0; i < results.length; i++) {
+            const costScore = (minCost / parseFloat(results[i].totalMonthlyCost)) * 100;
+            const overallScore = (parseFloat(results[i].capabilityScore) * 0.3 +
+                                  costScore * 0.5 +
+                                  parseFloat(results[i].serviceScore) * 0.2);
+
+            await db.create3PlComparisonResult({
+              comparisonId: input.id,
+              ...results[i],
+              costScore: costScore.toFixed(2),
+              overallScore: overallScore.toFixed(2),
+              rank: i + 1,
+            });
+          }
+
+          // Update comparison with recommendation
+          if (results.length > 0) {
+            const bestResult = results[0];
+            await db.update3PlComparison(input.id, {
+              status: 'completed',
+              recommendedProviderId: bestResult.providerId,
+              recommendationReason: `Lowest total monthly cost of $${bestResult.totalMonthlyCost} with ${bestResult.meetsRequirements ? 'full' : 'partial'} capability match.`,
+            });
+          }
+
+          await createAuditLog(ctx.user.id, 'update', '3pl_comparison', input.id, 'Comparison completed');
+          return { success: true, resultsCount: results.length };
+        }),
+    }),
+
+    // Comparison Results
+    results: router({
+      list: protectedProcedure
+        .input(z.object({ comparisonId: z.number() }))
+        .query(({ input }) => db.get3PlComparisonResults(input.comparisonId)),
+
+      update: opsProcedure
+        .input(z.object({
+          id: z.number(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.update3PlComparisonResult(id, data);
+          await createAuditLog(ctx.user.id, 'update', '3pl_comparison_result', id);
+          return { success: true };
+        }),
+    }),
+  }),
 });
 
 // Helper function to calculate next generation date for recurring invoices
