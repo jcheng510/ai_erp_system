@@ -1184,6 +1184,7 @@ export const appRouter = router({
         status: z.string().optional(),
         fromWarehouseId: z.number().optional(),
         toWarehouseId: z.number().optional(),
+        shippingMode: z.enum(["ocean", "air", "ground", "rail", "multimodal"]).optional(),
       }).optional())
       .query(({ input }) => db.getInventoryTransfers(input)),
     getById: opsProcedure
@@ -1199,6 +1200,7 @@ export const appRouter = router({
         toWarehouseId: z.number(),
         requestedDate: z.date(),
         expectedArrival: z.date().optional(),
+        shippingMode: z.enum(["ocean", "air", "ground", "rail", "multimodal"]).optional(),
         notes: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
@@ -1226,12 +1228,14 @@ export const appRouter = router({
         id: z.number(),
         trackingNumber: z.string().optional(),
         carrier: z.string().optional(),
+        shippingMode: z.enum(["ocean", "air", "ground", "rail", "multimodal"]).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
-        if (input.trackingNumber || input.carrier) {
+        if (input.trackingNumber || input.carrier || input.shippingMode) {
           await db.updateTransfer(input.id, {
             trackingNumber: input.trackingNumber,
             carrier: input.carrier,
+            shippingMode: input.shippingMode,
           });
         }
         await db.processTransferShipment(input.id);

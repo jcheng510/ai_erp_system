@@ -10,23 +10,48 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { Plus, ArrowRight, Truck, Package, Eye, Send, CheckCircle } from "lucide-react";
+import { Plus, ArrowRight, Truck, Package, Eye, Send, CheckCircle, Ship, Plane, Train, Layers } from "lucide-react";
 import { useLocation } from "wouter";
+
+// Shipping mode icons mapping
+const shippingModeIcons: Record<string, React.ReactNode> = {
+  ocean: <Ship className="h-4 w-4 text-blue-600" />,
+  air: <Plane className="h-4 w-4 text-blue-600" />,
+  ground: <Truck className="h-4 w-4 text-blue-600" />,
+  rail: <Train className="h-4 w-4 text-purple-600" />,
+  multimodal: <Layers className="h-4 w-4 text-green-600" />,
+};
+
+const shippingModeLabels: Record<string, string> = {
+  ocean: "Ocean",
+  air: "Air",
+  ground: "Ground",
+  rail: "Rail",
+  multimodal: "Multimodal",
+};
 
 export default function Transfers() {
   const [, setLocation] = useLocation();
   const [isOpen, setIsOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [shippingModeFilter, setShippingModeFilter] = useState<string>("all");
   const [formData, setFormData] = useState({
     fromWarehouseId: 0,
     toWarehouseId: 0,
     requestedDate: new Date().toISOString().split("T")[0],
     expectedArrival: "",
+    shippingMode: "" as string,
     notes: "",
   });
 
+  // Build query filters
+  const queryFilters = {
+    ...(statusFilter !== "all" && { status: statusFilter }),
+    ...(shippingModeFilter !== "all" && { shippingMode: shippingModeFilter as "ocean" | "air" | "ground" | "rail" | "multimodal" }),
+  };
+
   const { data: transfers, isLoading, refetch } = trpc.transfers.list.useQuery(
-    statusFilter !== "all" ? { status: statusFilter } : undefined
+    Object.keys(queryFilters).length > 0 ? queryFilters : undefined
   );
   const { data: warehouses } = trpc.warehouses.list.useQuery();
   
@@ -48,6 +73,7 @@ export default function Transfers() {
       toWarehouseId: 0,
       requestedDate: new Date().toISOString().split("T")[0],
       expectedArrival: "",
+      shippingMode: "",
       notes: "",
     });
   };
@@ -67,6 +93,7 @@ export default function Transfers() {
       toWarehouseId: formData.toWarehouseId,
       requestedDate: new Date(formData.requestedDate),
       expectedArrival: formData.expectedArrival ? new Date(formData.expectedArrival) : undefined,
+      shippingMode: formData.shippingMode ? formData.shippingMode as "ocean" | "air" | "ground" | "rail" | "multimodal" : undefined,
       notes: formData.notes || undefined,
     });
   };
@@ -164,6 +191,49 @@ export default function Transfers() {
                   </div>
                 </div>
                 <div className="space-y-2">
+                  <Label>Shipping Mode</Label>
+                  <Select
+                    value={formData.shippingMode}
+                    onValueChange={(v) => setFormData({ ...formData, shippingMode: v })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select shipping mode" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ocean">
+                        <div className="flex items-center gap-2">
+                          <Ship className="h-4 w-4 text-blue-600" />
+                          Ocean
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="air">
+                        <div className="flex items-center gap-2">
+                          <Plane className="h-4 w-4 text-blue-600" />
+                          Air
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="ground">
+                        <div className="flex items-center gap-2">
+                          <Truck className="h-4 w-4 text-blue-600" />
+                          Ground
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="rail">
+                        <div className="flex items-center gap-2">
+                          <Train className="h-4 w-4 text-purple-600" />
+                          Rail
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="multimodal">
+                        <div className="flex items-center gap-2">
+                          <Layers className="h-4 w-4 text-green-600" />
+                          Multimodal
+                        </div>
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
                   <Label>Notes</Label>
                   <Textarea
                     placeholder="Additional notes about this transfer..."
@@ -226,7 +296,7 @@ export default function Transfers() {
           </Card>
         </div>
 
-        {/* Filter */}
+        {/* Filters */}
         <div className="flex items-center gap-4">
           <Select value={statusFilter} onValueChange={setStatusFilter}>
             <SelectTrigger className="w-48">
@@ -239,6 +309,44 @@ export default function Transfers() {
               <SelectItem value="in_transit">In Transit</SelectItem>
               <SelectItem value="received">Received</SelectItem>
               <SelectItem value="cancelled">Cancelled</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={shippingModeFilter} onValueChange={setShippingModeFilter}>
+            <SelectTrigger className="w-48">
+              <SelectValue placeholder="Filter by shipping mode" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Shipping Modes</SelectItem>
+              <SelectItem value="ocean">
+                <div className="flex items-center gap-2">
+                  <Ship className="h-4 w-4 text-blue-600" />
+                  Ocean
+                </div>
+              </SelectItem>
+              <SelectItem value="air">
+                <div className="flex items-center gap-2">
+                  <Plane className="h-4 w-4 text-blue-600" />
+                  Air
+                </div>
+              </SelectItem>
+              <SelectItem value="ground">
+                <div className="flex items-center gap-2">
+                  <Truck className="h-4 w-4 text-blue-600" />
+                  Ground
+                </div>
+              </SelectItem>
+              <SelectItem value="rail">
+                <div className="flex items-center gap-2">
+                  <Train className="h-4 w-4 text-purple-600" />
+                  Rail
+                </div>
+              </SelectItem>
+              <SelectItem value="multimodal">
+                <div className="flex items-center gap-2">
+                  <Layers className="h-4 w-4 text-green-600" />
+                  Multimodal
+                </div>
+              </SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -261,6 +369,7 @@ export default function Transfers() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Transfer #</TableHead>
+                    <TableHead>Mode</TableHead>
                     <TableHead>Route</TableHead>
                     <TableHead>Requested</TableHead>
                     <TableHead>Expected</TableHead>
@@ -274,6 +383,16 @@ export default function Transfers() {
                     <TableRow key={transfer.id}>
                       <TableCell className="font-mono text-sm">
                         {transfer.transferNumber}
+                      </TableCell>
+                      <TableCell>
+                        {transfer.shippingMode ? (
+                          <div className="flex items-center gap-2">
+                            {shippingModeIcons[transfer.shippingMode] || <Truck className="h-4 w-4 text-gray-400" />}
+                            <span className="text-sm">{shippingModeLabels[transfer.shippingMode] || transfer.shippingMode}</span>
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground">-</span>
+                        )}
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">

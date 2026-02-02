@@ -387,6 +387,7 @@ export const inventoryTransfers = mysqlTable("inventory_transfers", {
   expectedArrival: timestamp("expectedArrival"),
   trackingNumber: varchar("trackingNumber", { length: 128 }),
   carrier: varchar("carrier", { length: 128 }),
+  shippingMode: mysqlEnum("shippingMode", ["ocean", "air", "ground", "rail", "multimodal"]),
   notes: text("notes"),
   requestedBy: int("requestedBy"),
   approvedBy: int("approvedBy"),

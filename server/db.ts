@@ -1855,13 +1855,13 @@ export async function updateInventoryQuantity(productId: number, warehouseId: nu
 // INVENTORY TRANSFERS
 // ============================================
 
-export async function getInventoryTransfers(filters?: { status?: string; fromWarehouseId?: number; toWarehouseId?: number }) {
+export async function getInventoryTransfers(filters?: { status?: string; fromWarehouseId?: number; toWarehouseId?: number; shippingMode?: string }) {
   const db = await getDb();
   if (!db) return [];
-  
+
   let query = db.select().from(inventoryTransfers);
   const conditions = [];
-  
+
   if (filters?.status) {
     conditions.push(eq(inventoryTransfers.status, filters.status as any));
   }
@@ -1871,11 +1871,14 @@ export async function getInventoryTransfers(filters?: { status?: string; fromWar
   if (filters?.toWarehouseId) {
     conditions.push(eq(inventoryTransfers.toWarehouseId, filters.toWarehouseId));
   }
-  
+  if (filters?.shippingMode) {
+    conditions.push(eq(inventoryTransfers.shippingMode, filters.shippingMode as any));
+  }
+
   if (conditions.length > 0) {
     query = query.where(and(...conditions)) as any;
   }
-  
+
   return query.orderBy(desc(inventoryTransfers.createdAt));
 }
 
