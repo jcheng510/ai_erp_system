@@ -1616,22 +1616,26 @@ export async function updateFreightEmail(id: number, data: Partial<InsertFreight
 export async function getCustomsClearances(filters?: { status?: string; type?: string }) {
   const db = await getDb();
   if (!db) return [];
-  
-  let query = db.select().from(customsClearances);
+
   const conditions = [];
-  
+
   if (filters?.status) {
     conditions.push(eq(customsClearances.status, filters.status as any));
   }
   if (filters?.type) {
     conditions.push(eq(customsClearances.type, filters.type as any));
   }
-  
-  if (conditions.length > 0) {
-    query = query.where(and(...conditions)) as any;
-  }
-  
-  return query.orderBy(desc(customsClearances.createdAt));
+
+  const clearances = await db.select()
+    .from(customsClearances)
+    .leftJoin(freightBookings, eq(customsClearances.freightBookingId, freightBookings.id))
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(customsClearances.createdAt));
+
+  return clearances.map(row => ({
+    ...row.customsClearances,
+    freightBooking: row.freightBookings, // Connected freight booking
+  }));
 }
 
 export async function getCustomsClearanceById(id: number) {
@@ -1659,6 +1663,24 @@ export async function updateCustomsClearance(id: number, data: Partial<InsertCus
   if (!db) throw new Error("Database not available");
   await db.update(customsClearances).set(data).where(eq(customsClearances.id, id));
   return { success: true };
+}
+
+// Get customs clearance by freight booking ID (for freight-customs integration)
+export async function getCustomsClearanceByBookingId(freightBookingId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(customsClearances)
+    .where(eq(customsClearances.freightBookingId, freightBookingId)).limit(1);
+  return result[0];
+}
+
+// Get freight booking by customs clearance ID (for customs-freight integration)
+export async function getFreightBookingByClearanceId(customsClearanceId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(freightBookings)
+    .where(eq(freightBookings.customsClearanceId, customsClearanceId)).limit(1);
+  return result[0];
 }
 
 // ============================================
@@ -1692,18 +1714,20 @@ export async function updateCustomsDocument(id: number, data: Partial<InsertCust
 export async function getFreightBookings(filters?: { status?: string }) {
   const db = await getDb();
   if (!db) return [];
-  
+
   const bookings = await db.select()
     .from(freightBookings)
     .leftJoin(freightQuotes, eq(freightBookings.quoteId, freightQuotes.id))
     .leftJoin(freightCarriers, eq(freightBookings.carrierId, freightCarriers.id))
+    .leftJoin(customsClearances, eq(freightBookings.customsClearanceId, customsClearances.id))
     .where(filters?.status ? eq(freightBookings.status, filters.status as any) : undefined)
     .orderBy(desc(freightBookings.createdAt));
-  
+
   return bookings.map(row => ({
     ...row.freightBookings,
     quote: row.freightQuotes,
     carrier: row.freightCarriers,
+    customsClearance: row.customsClearances, // Connected customs clearance
   }));
 }
 

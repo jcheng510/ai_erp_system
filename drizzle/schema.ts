@@ -1236,6 +1236,7 @@ export const customsClearances = mysqlTable("customsClearances", {
   clearanceNumber: varchar("clearanceNumber", { length: 50 }).notNull().unique(),
   shipmentId: int("shipmentId"),
   rfqId: int("rfqId"),
+  freightBookingId: int("freightBookingId"), // Links customs clearance to freight booking
   
   // Clearance details
   type: mysqlEnum("type", ["import", "export"]).notNull(),
@@ -1337,7 +1338,11 @@ export const freightBookings = mysqlTable("freightBookings", {
   agreedCost: decimal("agreedCost", { precision: 15, scale: 2 }),
   actualCost: decimal("actualCost", { precision: 15, scale: 2 }),
   currency: varchar("currency", { length: 3 }).default("USD"),
-  
+
+  // Customs connection
+  customsClearanceId: int("customsClearanceId"), // Links freight booking to customs clearance
+  customsClearanceRequired: boolean("customsClearanceRequired").default(true),
+
   notes: text("notes"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),

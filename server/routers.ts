@@ -4818,10 +4818,13 @@ Format your response as JSON with the structure:
         .mutation(async ({ input, ctx }) => {
           const quote = await db.getFreightQuoteById(input.quoteId);
           if (!quote) throw new TRPCError({ code: 'NOT_FOUND', message: 'Quote not found' });
-          
+
+          // Get RFQ to check if customs clearance is required
+          const rfq = await db.getFreightRfqById(quote.rfqId);
+
           // Update quote status
           await db.updateFreightQuote(input.quoteId, { status: 'accepted' });
-          
+
           // Reject other quotes for this RFQ
           const otherQuotes = await db.getFreightQuotes(quote.rfqId);
           for (const q of otherQuotes) {
@@ -4829,7 +4832,7 @@ Format your response as JSON with the structure:
               await db.updateFreightQuote(q.id, { status: 'rejected' });
             }
           }
-          
+
           // Create booking
           const booking = await db.createFreightBooking({
             quoteId: input.quoteId,
@@ -4838,14 +4841,37 @@ Format your response as JSON with the structure:
             status: 'pending',
             agreedCost: quote.totalCost,
             currency: quote.currency || 'USD',
+            customsClearanceRequired: rfq?.customsClearanceRequired ?? true,
           });
-          
+
+          // Auto-create customs clearance if required (connects freight to customs)
+          let customsClearance = null;
+          if (rfq?.customsClearanceRequired) {
+            customsClearance = await db.createCustomsClearance({
+              rfqId: quote.rfqId,
+              freightBookingId: booking.id,
+              type: 'import', // Default to import; can be updated later
+              country: rfq.destinationCountry || undefined,
+              portOfEntry: rfq.destinationCity || undefined,
+              hsCode: rfq.hsCode || undefined,
+              countryOfOrigin: rfq.originCountry || undefined,
+            });
+
+            // Link booking back to customs clearance
+            await db.updateFreightBooking(booking.id, {
+              customsClearanceId: customsClearance.id,
+            });
+
+            await createAuditLog(ctx.user.id, 'create', 'customs_clearance', customsClearance.id,
+              `Auto-created from freight booking ${booking.bookingNumber}`);
+          }
+
           // Update RFQ status
           await db.updateFreightRfq(quote.rfqId, { status: 'awarded' });
-          
+
           await createAuditLog(ctx.user.id, 'approve', 'freight_quote', input.quoteId, `Booking ${booking.bookingNumber} created`);
-          
-          return { booking };
+
+          return { booking, customsClearance };
         }),
     }),
     
@@ -4987,9 +5013,16 @@ Extract and return as JSON:
           await createAuditLog(ctx.user.id, 'update', 'freight_booking', id);
           return { success: true };
         }),
+
+      // Get linked customs clearance for a booking
+      getLinkedCustomsClearance: protectedProcedure
+        .input(z.object({ bookingId: z.number() }))
+        .query(async ({ input }) => {
+          return db.getCustomsClearanceByBookingId(input.bookingId);
+        }),
     }),
   }),
-  
+
   // ============================================
   // CUSTOMS CLEARANCE
   // ============================================
@@ -5005,6 +5038,7 @@ Extract and return as JSON:
         .input(z.object({
           shipmentId: z.number().optional(),
           rfqId: z.number().optional(),
+          freightBookingId: z.number().optional(), // Links to freight booking
           type: z.enum(['import', 'export']),
           customsOffice: z.string().optional(),
           portOfEntry: z.string().optional(),
@@ -5018,6 +5052,14 @@ Extract and return as JSON:
         }))
         .mutation(async ({ input, ctx }) => {
           const result = await db.createCustomsClearance(input);
+
+          // If linked to a freight booking, update the booking with customs clearance ID
+          if (input.freightBookingId) {
+            await db.updateFreightBooking(input.freightBookingId, {
+              customsClearanceId: result.id,
+            });
+          }
+
           await createAuditLog(ctx.user.id, 'create', 'customs_clearance', result.id, result.clearanceNumber);
           return result;
         }),
@@ -5085,8 +5127,15 @@ Provide a brief status summary, any missing documents, and next steps.`;
             aiSummary: typeof rawSummary === 'string' ? rawSummary : 'Unable to generate summary.',
           };
         }),
+
+      // Get linked freight booking for a customs clearance
+      getLinkedFreightBooking: protectedProcedure
+        .input(z.object({ clearanceId: z.number() }))
+        .query(async ({ input }) => {
+          return db.getFreightBookingByClearanceId(input.clearanceId);
+        }),
     }),
-    
+
     documents: router({
       list: protectedProcedure
         .input(z.object({ clearanceId: z.number() }))
