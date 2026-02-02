@@ -106,6 +106,12 @@ import DataRoomPublic from "./pages/DataRoomPublic";
 // AI Agent
 import ApprovalQueue from "./pages/ai/ApprovalQueue";
 
+// Autonomous Supply Chain
+import AutonomousDashboard from "./pages/autonomous/Dashboard";
+import AutonomousApprovals from "./pages/autonomous/Approvals";
+import AutonomousExceptions from "./pages/autonomous/Exceptions";
+import AutonomousSettings from "./pages/autonomous/Settings";
+
 function Router() {
   return (
     <DashboardLayout>
@@ -115,6 +121,12 @@ function Router() {
         <Route path="/ai" component={AIAssistant} />
         <Route path="/ai/approvals" component={ApprovalQueue} />
         <Route path="/search" component={GlobalSearch} />
+
+        {/* Autonomous Supply Chain */}
+        <Route path="/autonomous-dashboard" component={AutonomousDashboard} />
+        <Route path="/approvals" component={AutonomousApprovals} />
+        <Route path="/exceptions" component={AutonomousExceptions} />
+        <Route path="/autonomous-settings" component={AutonomousSettings} />
         <Route path="/notifications" component={Notifications} />
         <Route path="/settings" component={Settings} />
         <Route path="/settings/integrations" component={Integrations} />
