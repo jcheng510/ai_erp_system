@@ -62,11 +62,30 @@ export interface ImportedFreightInvoice {
   confidence: number;
 }
 
+export interface ImportedVendorInvoice {
+  invoiceNumber: string;
+  vendorName: string;
+  vendorEmail?: string;
+  invoiceDate: string;
+  dueDate?: string;
+  lineItems: ImportedLineItem[];
+  subtotal: number;
+  taxAmount?: number;
+  shippingAmount?: number;
+  totalAmount: number;
+  currency?: string;
+  relatedPoNumber?: string;
+  paymentTerms?: string;
+  notes?: string;
+  confidence: number;
+}
+
 export interface DocumentParseResult {
   success: boolean;
-  documentType: "purchase_order" | "freight_invoice" | "unknown";
+  documentType: "purchase_order" | "freight_invoice" | "vendor_invoice" | "unknown";
   purchaseOrder?: ImportedPurchaseOrder;
   freightInvoice?: ImportedFreightInvoice;
+  vendorInvoice?: ImportedVendorInvoice;
   rawText?: string;
   error?: string;
 }
@@ -106,16 +125,20 @@ DOCUMENT FILENAME: ${filename}
 DOCUMENT HINT: ${documentHint || "auto-detect"}
 
 INSTRUCTIONS:
-1. First, determine if this is a Purchase Order or a Freight Invoice
+1. First, determine if this is a Purchase Order, Vendor Invoice, or Freight Invoice
+   - Purchase Order: A document ordering goods/services FROM a vendor (has PO number, may or may not have been received)
+   - Vendor Invoice: A bill/invoice from a vendor for goods/services (has invoice number, line items with prices, amount due)
+   - Freight Invoice: A shipping/logistics bill specifically for transportation/freight charges
 2. Extract all relevant structured data
 3. For Purchase Orders: extract PO number, vendor info, line items with quantities/prices, dates, totals
-4. For Freight Invoices: extract invoice number, carrier info, shipment details, charges breakdown
-5. Match line item descriptions to common raw materials if possible
-6. Assign a confidence score (0-100) based on extraction completeness
+4. For Vendor Invoices: extract invoice number, vendor info, line items with quantities/prices, due date, totals
+5. For Freight Invoices: extract invoice number, carrier info, shipment details, charges breakdown
+6. Match line item descriptions to common raw materials if possible
+7. Assign a confidence score (0-100) based on extraction completeness
 
 Return a JSON object with this structure:
 {
-  "documentType": "purchase_order" | "freight_invoice" | "unknown",
+  "documentType": "purchase_order" | "vendor_invoice" | "freight_invoice" | "unknown",
   "confidence": 85,
   "purchaseOrder": {
     "poNumber": "PO-12345",
@@ -141,6 +164,31 @@ Return a JSON object with this structure:
     "currency": "USD",
     "notes": "Any special notes"
   },
+  "vendorInvoice": {
+    "invoiceNumber": "INV-12345",
+    "vendorName": "Supplier Inc",
+    "vendorEmail": "billing@supplier.com",
+    "invoiceDate": "2025-01-15",
+    "dueDate": "2025-02-15",
+    "lineItems": [
+      {
+        "description": "Coconut Oil",
+        "quantity": 1000,
+        "unit": "kg",
+        "unitPrice": 2.50,
+        "totalPrice": 2500.00,
+        "sku": "CO-001"
+      }
+    ],
+    "subtotal": 2500.00,
+    "taxAmount": 200.00,
+    "shippingAmount": 150.00,
+    "totalAmount": 2850.00,
+    "currency": "USD",
+    "relatedPoNumber": "PO-12345",
+    "paymentTerms": "Net 30",
+    "notes": "Any special notes"
+  },
   "freightInvoice": {
     "invoiceNumber": "FI-98765",
     "carrierName": "FastFreight Logistics",
@@ -163,8 +211,8 @@ Return a JSON object with this structure:
   }
 }
 
-Only include the relevant object (purchaseOrder OR freightInvoice) based on document type.
-If document type is unknown, return both as null.`;
+Only include the relevant object (purchaseOrder OR vendorInvoice OR freightInvoice) based on document type.
+If document type is unknown, return all as null.`;
 
     // Determine file type
     const isImage = filename.toLowerCase().match(/\.(png|jpg|jpeg|gif|webp)$/i);
@@ -342,11 +390,11 @@ If document type is unknown, return both as null.`;
     let response;
     response = await invokeLLM({
       messages: [
-        { role: "system", content: useSimpleFormat 
-          ? "You are a document parsing AI. Analyze the image and extract structured data. IMPORTANT: You MUST respond with ONLY valid JSON, no other text. The JSON must have this structure: {\"documentType\": \"purchase_order\" or \"freight_invoice\" or \"unknown\", \"confidence\": 0.0-1.0, \"purchaseOrder\": {...} or null, \"freightInvoice\": {...} or null}"
+        { role: "system", content: useSimpleFormat
+          ? "You are a document parsing AI. Analyze the image and extract structured data. IMPORTANT: You MUST respond with ONLY valid JSON, no other text. The JSON must have this structure: {\"documentType\": \"purchase_order\" or \"vendor_invoice\" or \"freight_invoice\" or \"unknown\", \"confidence\": 0.0-1.0, \"purchaseOrder\": {...} or null, \"vendorInvoice\": {...} or null, \"freightInvoice\": {...} or null}"
           : "You are a document parsing AI that extracts structured data from business documents. Always respond with valid JSON." },
-        { 
-          role: "user", 
+        {
+          role: "user",
           content: messageContent
         }
       ],
@@ -361,7 +409,7 @@ If document type is unknown, return both as null.`;
             schema: {
               type: "object",
               properties: {
-                documentType: { type: "string", enum: ["purchase_order", "freight_invoice", "unknown"] },
+                documentType: { type: "string", enum: ["purchase_order", "vendor_invoice", "freight_invoice", "unknown"] },
                 confidence: { type: "number" },
                 purchaseOrder: {
                   type: ["object", "null"],
@@ -396,6 +444,42 @@ If document type is unknown, return both as null.`;
                     notes: { type: "string" }
                   },
                   required: ["poNumber", "vendorName", "orderDate", "lineItems", "totalAmount"],
+                  additionalProperties: false
+                },
+                vendorInvoice: {
+                  type: ["object", "null"],
+                  properties: {
+                    invoiceNumber: { type: "string" },
+                    vendorName: { type: "string" },
+                    vendorEmail: { type: "string" },
+                    invoiceDate: { type: "string" },
+                    dueDate: { type: "string" },
+                    lineItems: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        properties: {
+                          description: { type: "string" },
+                          quantity: { type: "number" },
+                          unit: { type: "string" },
+                          unitPrice: { type: "number" },
+                          totalPrice: { type: "number" },
+                          sku: { type: "string" }
+                        },
+                        required: ["description", "quantity", "unitPrice", "totalPrice"],
+                        additionalProperties: false
+                      }
+                    },
+                    subtotal: { type: "number" },
+                    taxAmount: { type: "number" },
+                    shippingAmount: { type: "number" },
+                    totalAmount: { type: "number" },
+                    currency: { type: "string" },
+                    relatedPoNumber: { type: "string" },
+                    paymentTerms: { type: "string" },
+                    notes: { type: "string" }
+                  },
+                  required: ["invoiceNumber", "vendorName", "invoiceDate", "lineItems", "totalAmount"],
                   additionalProperties: false
                 },
                 freightInvoice: {
@@ -479,6 +563,7 @@ If document type is unknown, return both as null.`;
       success: true,
       documentType: parsed.documentType,
       purchaseOrder: parsed.purchaseOrder,
+      vendorInvoice: parsed.vendorInvoice,
       freightInvoice: parsed.freightInvoice,
       rawText: `Document parsed from: ${fileUrl}`
     };
@@ -721,10 +806,135 @@ export async function importFreightInvoice(
 }
 
 /**
+ * Import a parsed vendor invoice into the system
+ */
+export async function importVendorInvoice(
+  invoice: ImportedVendorInvoice,
+  userId: number,
+  markAsReceived: boolean = false
+): Promise<ImportResult> {
+  const createdRecords: ImportResult["createdRecords"] = [];
+  const updatedRecords: ImportResult["updatedRecords"] = [];
+  const warnings: string[] = [];
+
+  try {
+    // 1. Find or create vendor
+    let vendor = await db.getVendorByName(invoice.vendorName);
+    if (!vendor) {
+      const vendorResult = await db.createVendor({
+        name: invoice.vendorName,
+        email: invoice.vendorEmail || "",
+        type: "supplier",
+        status: "active"
+      });
+      vendor = await db.getVendorById(vendorResult.id) || null;
+      createdRecords.push({ type: "vendor", id: vendorResult.id, name: invoice.vendorName });
+    }
+
+    // 2. Match line items to raw materials
+    const matchedItems = await matchLineItemsToMaterials(invoice.lineItems);
+
+    // 3. Try to find related PO if specified
+    let relatedPoId: number | undefined;
+    if (invoice.relatedPoNumber) {
+      const po = await db.findPurchaseOrderByNumber(invoice.relatedPoNumber);
+      if (po) {
+        relatedPoId = po.id;
+      } else {
+        warnings.push(`Related PO ${invoice.relatedPoNumber} not found`);
+      }
+    }
+
+    // 4. Create raw materials for unmatched items
+    for (const item of matchedItems) {
+      if (!item.rawMaterialId) {
+        const materialResult = await db.createRawMaterial({
+          name: item.description,
+          sku: item.sku || `RM-${Date.now()}`,
+          unit: item.unit || "EA",
+          unitCost: item.unitPrice.toString(),
+          preferredVendorId: vendor!.id
+        });
+        item.rawMaterialId = materialResult.id;
+        createdRecords.push({ type: "raw_material", id: materialResult.id, name: item.description });
+      }
+    }
+
+    // 5. Create a purchase order from the invoice (as a received order)
+    const poResult = await db.createPurchaseOrder({
+      poNumber: invoice.relatedPoNumber || `INV-${invoice.invoiceNumber}`,
+      vendorId: vendor!.id,
+      status: markAsReceived ? "received" : "confirmed",
+      orderDate: new Date(invoice.invoiceDate),
+      expectedDate: invoice.dueDate ? new Date(invoice.dueDate) : undefined,
+      subtotal: invoice.subtotal.toString(),
+      totalAmount: invoice.totalAmount.toString(),
+      notes: `Imported from vendor invoice ${invoice.invoiceNumber}. ${invoice.paymentTerms ? `Payment terms: ${invoice.paymentTerms}. ` : ''}${invoice.notes || ''}`,
+      createdBy: userId
+    });
+    createdRecords.push({ type: "purchase_order", id: poResult.id, name: invoice.invoiceNumber });
+
+    // 6. Create PO line items
+    for (const item of matchedItems) {
+      await db.createPurchaseOrderItem({
+        purchaseOrderId: poResult.id,
+        productId: null,
+        description: item.description,
+        quantity: item.quantity.toString(),
+        unitPrice: item.unitPrice.toString(),
+        totalAmount: item.totalPrice.toString()
+      });
+    }
+
+    // 7. If marking as received, update inventory
+    if (markAsReceived) {
+      for (const item of matchedItems) {
+        if (item.rawMaterialId) {
+          const material = await db.getRawMaterialById(item.rawMaterialId);
+          if (material) {
+            const currentReceived = parseFloat(material.quantityReceived || '0');
+            const newReceived = currentReceived + item.quantity;
+            await db.updateRawMaterial(item.rawMaterialId, {
+              quantityReceived: newReceived.toString(),
+              lastReceivedDate: new Date(),
+              lastReceivedQty: item.quantity.toString(),
+              receivingStatus: 'received'
+            } as any);
+            updatedRecords.push({
+              type: "raw_material",
+              id: item.rawMaterialId,
+              name: material.name,
+              changes: `Received: +${item.quantity} (total received: ${newReceived})`
+            });
+          }
+        }
+      }
+    }
+
+    return {
+      success: true,
+      documentType: "vendor_invoice",
+      createdRecords,
+      updatedRecords,
+      warnings
+    };
+  } catch (error) {
+    return {
+      success: false,
+      documentType: "vendor_invoice",
+      createdRecords,
+      updatedRecords,
+      warnings,
+      error: error instanceof Error ? error.message : "Import failed"
+    };
+  }
+}
+
+/**
  * Process multiple documents in bulk
  */
 export async function bulkImportDocuments(
-  documents: { content: string; filename: string; hint?: "purchase_order" | "freight_invoice" }[],
+  documents: { content: string; filename: string; hint?: "purchase_order" | "vendor_invoice" | "freight_invoice" }[],
   userId: number,
   markPOsAsReceived: boolean = true
 ): Promise<{
@@ -739,7 +949,7 @@ export async function bulkImportDocuments(
 
   for (const doc of documents) {
     const parseResult = await parseUploadedDocument(doc.content, doc.filename, doc.hint);
-    
+
     if (!parseResult.success) {
       results.push({
         success: false,
@@ -754,9 +964,11 @@ export async function bulkImportDocuments(
     }
 
     let importResult: ImportResult;
-    
+
     if (parseResult.documentType === "purchase_order" && parseResult.purchaseOrder) {
       importResult = await importPurchaseOrder(parseResult.purchaseOrder, userId, markPOsAsReceived);
+    } else if (parseResult.documentType === "vendor_invoice" && parseResult.vendorInvoice) {
+      importResult = await importVendorInvoice(parseResult.vendorInvoice, userId, markPOsAsReceived);
     } else if (parseResult.documentType === "freight_invoice" && parseResult.freightInvoice) {
       importResult = await importFreightInvoice(parseResult.freightInvoice, userId);
     } else {

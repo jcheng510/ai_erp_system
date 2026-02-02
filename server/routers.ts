@@ -9,7 +9,7 @@ import { sendEmail, isEmailConfigured, formatEmailHtml } from "./_core/email";
 import { processEmailReply, analyzeEmail, generateEmailReply } from "./emailReplyService";
 import * as emailService from "./_core/emailService";
 import * as sendgridProvider from "./_core/sendgridProvider";
-import { parseUploadedDocument, importPurchaseOrder, importFreightInvoice, matchLineItemsToMaterials } from "./documentImportService";
+import { parseUploadedDocument, importPurchaseOrder, importFreightInvoice, importVendorInvoice, matchLineItemsToMaterials } from "./documentImportService";
 import { processAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingActions, type AIAgentContext } from "./aiAgentService";
 import * as db from "./db";
 import { storagePut } from "./storage";
@@ -10999,6 +10999,39 @@ Ask if they received the original request and if they can provide a quote.`;
       }))
       .mutation(async ({ input, ctx }) => {
         return importFreightInvoice(input.invoiceData as any, ctx.user.id);
+      }),
+
+    // Import a vendor invoice
+    importVendorInvoice: protectedProcedure
+      .input(z.object({
+        invoiceData: z.object({
+          invoiceNumber: z.string(),
+          vendorName: z.string(),
+          vendorEmail: z.string().optional(),
+          invoiceDate: z.string(),
+          dueDate: z.string().optional(),
+          lineItems: z.array(z.object({
+            description: z.string(),
+            sku: z.string().optional(),
+            quantity: z.number(),
+            unit: z.string().optional(),
+            unitPrice: z.number(),
+            totalPrice: z.number(),
+          })),
+          subtotal: z.number(),
+          taxAmount: z.number().optional(),
+          shippingAmount: z.number().optional(),
+          totalAmount: z.number(),
+          currency: z.string().optional(),
+          relatedPoNumber: z.string().optional(),
+          paymentTerms: z.string().optional(),
+          notes: z.string().optional(),
+        }),
+        markAsReceived: z.boolean().default(false),
+        updateInventory: z.boolean().default(true),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return importVendorInvoice(input.invoiceData as any, ctx.user.id, input.markAsReceived);
       }),
 
     // Get import history

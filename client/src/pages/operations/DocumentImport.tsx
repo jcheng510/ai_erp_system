@@ -62,6 +62,24 @@ interface ParsedFreightInvoice {
   confidence: number;
 }
 
+interface ParsedVendorInvoice {
+  invoiceNumber: string;
+  vendorName: string;
+  vendorEmail?: string;
+  invoiceDate: string;
+  dueDate?: string;
+  lineItems: ParsedLineItem[];
+  subtotal: number;
+  taxAmount?: number;
+  shippingAmount?: number;
+  totalAmount: number;
+  currency?: string;
+  relatedPoNumber?: string;
+  paymentTerms?: string;
+  notes?: string;
+  confidence: number;
+}
+
 interface DriveFile {
   id: string;
   name: string;
@@ -79,10 +97,11 @@ interface DriveFolder {
 
 export default function DocumentImport() {
   const [activeTab, setActiveTab] = useState("upload");
-  const [uploadType, setUploadType] = useState<"po" | "freight">("po");
+  const [uploadType, setUploadType] = useState<"po" | "freight" | "vendor_invoice">("po");
   const [isUploading, setIsUploading] = useState(false);
   const [parsedPO, setParsedPO] = useState<ParsedPO | null>(null);
   const [parsedFreight, setParsedFreight] = useState<ParsedFreightInvoice | null>(null);
+  const [parsedVendorInvoice, setParsedVendorInvoice] = useState<ParsedVendorInvoice | null>(null);
   const [showPreview, setShowPreview] = useState(false);
   const [markAsReceived, setMarkAsReceived] = useState(true);
   const [updateInventory, setUpdateInventory] = useState(true);
@@ -100,6 +119,7 @@ export default function DocumentImport() {
   const parseMutation = trpc.documentImport.parse.useMutation();
   const importPOMutation = trpc.documentImport.importPO.useMutation();
   const importFreightMutation = trpc.documentImport.importFreightInvoice.useMutation();
+  const importVendorInvoiceMutation = trpc.documentImport.importVendorInvoice.useMutation();
   const matchMaterialsMutation = trpc.documentImport.matchMaterials.useMutation();
   const historyQuery = trpc.documentImport.getHistory.useQuery({ limit: 50 });
   
@@ -145,7 +165,7 @@ export default function DocumentImport() {
             const matchedItems = await matchMaterialsMutation.mutateAsync({
               lineItems: result.purchaseOrder.lineItems,
             });
-            
+
             setParsedPO({
               ...result.purchaseOrder,
               lineItems: matchedItems.map((item: any) => ({
@@ -167,6 +187,34 @@ export default function DocumentImport() {
             });
           }
           setUploadType("po");
+          setShowPreview(true);
+        } else if (result.documentType === "vendor_invoice" && result.vendorInvoice) {
+          // Match line items to materials for vendor invoices
+          try {
+            const matchedItems = await matchMaterialsMutation.mutateAsync({
+              lineItems: result.vendorInvoice.lineItems,
+            });
+
+            setParsedVendorInvoice({
+              ...result.vendorInvoice,
+              lineItems: matchedItems.map((item: any) => ({
+                ...item,
+                matchedMaterialId: item.rawMaterialId,
+                matchedMaterialName: item.rawMaterialId ? item.description : undefined,
+              })),
+            });
+          } catch (matchError) {
+            console.error("[DocumentImport] Material matching error:", matchError);
+            setParsedVendorInvoice({
+              ...result.vendorInvoice,
+              lineItems: result.vendorInvoice.lineItems.map((item: any) => ({
+                ...item,
+                matchedMaterialId: undefined,
+                matchedMaterialName: undefined,
+              })),
+            });
+          }
+          setUploadType("vendor_invoice");
           setShowPreview(true);
         } else if (result.documentType === "freight_invoice" && result.freightInvoice) {
           setParsedFreight(result.freightInvoice);
@@ -234,13 +282,13 @@ export default function DocumentImport() {
 
   const handleImportFreight = async () => {
     if (!parsedFreight) return;
-    
+
     try {
       const result = await importFreightMutation.mutateAsync({
         invoiceData: parsedFreight,
         linkToPO,
       });
-      
+
       toast.success(`Freight invoice ${parsedFreight.invoiceNumber} imported successfully!`);
       setParsedFreight(null);
       setShowPreview(false);
@@ -251,12 +299,36 @@ export default function DocumentImport() {
     }
   };
 
+  const handleImportVendorInvoice = async () => {
+    if (!parsedVendorInvoice) return;
+
+    try {
+      const result = await importVendorInvoiceMutation.mutateAsync({
+        invoiceData: parsedVendorInvoice,
+        markAsReceived,
+        updateInventory,
+      });
+
+      toast.success(`Vendor invoice ${parsedVendorInvoice.invoiceNumber} imported successfully!`);
+      setParsedVendorInvoice(null);
+      setShowPreview(false);
+      historyQuery.refetch();
+    } catch (error) {
+      console.error("Import error:", error);
+      toast.error("Failed to import vendor invoice. Please try again.");
+    }
+  };
+
   const updateLineItem = (index: number, field: string, value: any) => {
-    if (!parsedPO) return;
-    
-    const newLineItems = [...parsedPO.lineItems];
-    newLineItems[index] = { ...newLineItems[index], [field]: value };
-    setParsedPO({ ...parsedPO, lineItems: newLineItems });
+    if (parsedPO) {
+      const newLineItems = [...parsedPO.lineItems];
+      newLineItems[index] = { ...newLineItems[index], [field]: value };
+      setParsedPO({ ...parsedPO, lineItems: newLineItems });
+    } else if (parsedVendorInvoice) {
+      const newLineItems = [...parsedVendorInvoice.lineItems];
+      newLineItems[index] = { ...newLineItems[index], [field]: value };
+      setParsedVendorInvoice({ ...parsedVendorInvoice, lineItems: newLineItems });
+    }
   };
 
   return (
@@ -364,7 +436,7 @@ export default function DocumentImport() {
               <CardTitle>Supported Document Types</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid gap-4 md:grid-cols-2">
+              <div className="grid gap-4 md:grid-cols-3">
                 <div className="flex items-start gap-3 p-4 rounded-lg border">
                   <Package className="h-8 w-8 text-blue-500" />
                   <div>
@@ -372,9 +444,22 @@ export default function DocumentImport() {
                     <p className="text-sm text-muted-foreground">
                       Import POs to create vendor records, track orders, and update inventory when received
                     </p>
-                    <div className="flex gap-2 mt-2">
+                    <div className="flex gap-2 mt-2 flex-wrap">
                       <Badge variant="secondary">Auto-create vendors</Badge>
                       <Badge variant="secondary">Match materials</Badge>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3 p-4 rounded-lg border">
+                  <FileText className="h-8 w-8 text-purple-500" />
+                  <div>
+                    <h3 className="font-medium">Vendor Invoices</h3>
+                    <p className="text-sm text-muted-foreground">
+                      Import invoices from suppliers with line items, pricing, and payment terms
+                    </p>
+                    <div className="flex gap-2 mt-2 flex-wrap">
+                      <Badge variant="secondary">Line item extraction</Badge>
+                      <Badge variant="secondary">Payment tracking</Badge>
                     </div>
                   </div>
                 </div>
@@ -385,7 +470,7 @@ export default function DocumentImport() {
                     <p className="text-sm text-muted-foreground">
                       Import freight invoices to track shipping costs and link to related purchase orders
                     </p>
-                    <div className="flex gap-2 mt-2">
+                    <div className="flex gap-2 mt-2 flex-wrap">
                       <Badge variant="secondary">Auto-link to PO</Badge>
                       <Badge variant="secondary">Cost tracking</Badge>
                     </div>
@@ -431,8 +516,8 @@ export default function DocumentImport() {
                           {log.fileName}
                         </TableCell>
                         <TableCell>
-                          <Badge variant={log.documentType === "purchase_order" ? "default" : "secondary"}>
-                            {log.documentType === "purchase_order" ? "Purchase Order" : "Freight Invoice"}
+                          <Badge variant={log.documentType === "purchase_order" ? "default" : log.documentType === "vendor_invoice" ? "default" : "secondary"}>
+                            {log.documentType === "purchase_order" ? "Purchase Order" : log.documentType === "vendor_invoice" ? "Vendor Invoice" : "Freight Invoice"}
                           </Badge>
                         </TableCell>
                         <TableCell>
@@ -719,6 +804,10 @@ export default function DocumentImport() {
                                   setParsedPO(result.data.purchaseOrder);
                                   setUploadType('po');
                                   setShowPreview(true);
+                                } else if (result.data.documentType === 'vendor_invoice' && result.data.vendorInvoice) {
+                                  setParsedVendorInvoice(result.data.vendorInvoice);
+                                  setUploadType('vendor_invoice');
+                                  setShowPreview(true);
                                 } else if (result.data.documentType === 'freight_invoice' && result.data.freightInvoice) {
                                   setParsedFreight(result.data.freightInvoice);
                                   setUploadType('freight');
@@ -848,17 +937,17 @@ export default function DocumentImport() {
                         </TableCell>
                         <TableCell>
                           {editingLineItem === index ? (
-                            <Input 
+                            <Input
                               type="number"
-                              value={item.unitPrice} 
-                              onChange={(e) => updateLineItem(index, "unitPrice", parseFloat(e.target.value))}
+                              value={item.unitPrice ?? 0}
+                              onChange={(e) => updateLineItem(index, "unitPrice", parseFloat(e.target.value) || 0)}
                               className="h-8 w-24"
                             />
                           ) : (
-                            `$${item.unitPrice.toFixed(2)}`
+                            `$${(item.unitPrice ?? 0).toFixed(2)}`
                           )}
                         </TableCell>
-                        <TableCell>${item.totalPrice.toFixed(2)}</TableCell>
+                        <TableCell>${(item.totalPrice ?? 0).toFixed(2)}</TableCell>
                         <TableCell>
                           {item.matchedMaterialName ? (
                             <Badge variant="secondary" className="gap-1">
@@ -891,10 +980,10 @@ export default function DocumentImport() {
               <div className="flex justify-end">
                 <div className="space-y-1 text-right">
                   <div className="text-sm">
-                    Subtotal: <span className="font-medium">${parsedPO.subtotal.toFixed(2)}</span>
+                    Subtotal: <span className="font-medium">${(parsedPO.subtotal ?? 0).toFixed(2)}</span>
                   </div>
                   <div className="text-lg font-bold">
-                    Total: ${parsedPO.totalAmount.toFixed(2)}
+                    Total: ${(parsedPO.totalAmount ?? 0).toFixed(2)}
                   </div>
                 </div>
               </div>
@@ -1050,7 +1139,7 @@ export default function DocumentImport() {
                   </div>
                 </div>
                 <div className="text-right text-lg font-bold">
-                  Total: ${parsedFreight.totalAmount.toFixed(2)}
+                  Total: ${(parsedFreight.totalAmount ?? 0).toFixed(2)}
                 </div>
               </div>
 
@@ -1078,6 +1167,228 @@ export default function DocumentImport() {
             <Button onClick={handleImportFreight} disabled={importFreightMutation.isPending}>
               {importFreightMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Import Freight Invoice
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Vendor Invoice Preview Dialog */}
+      <Dialog open={showPreview && uploadType === "vendor_invoice" && !!parsedVendorInvoice} onOpenChange={(open) => !open && setShowPreview(false)}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Review Vendor Invoice</DialogTitle>
+            <DialogDescription>
+              Review and edit the extracted invoice data before importing
+            </DialogDescription>
+          </DialogHeader>
+
+          {parsedVendorInvoice && (
+            <div className="space-y-6">
+              {/* Confidence Score */}
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-muted-foreground">Extraction Confidence:</span>
+                <Badge variant={parsedVendorInvoice.confidence > 0.8 ? "default" : parsedVendorInvoice.confidence > 0.6 ? "secondary" : "destructive"}>
+                  {Math.round(parsedVendorInvoice.confidence * 100)}%
+                </Badge>
+              </div>
+
+              {/* Invoice Details */}
+              <div className="grid gap-4 md:grid-cols-2">
+                <div>
+                  <Label>Invoice Number</Label>
+                  <Input
+                    value={parsedVendorInvoice.invoiceNumber}
+                    onChange={(e) => setParsedVendorInvoice({ ...parsedVendorInvoice, invoiceNumber: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <Label>Vendor Name</Label>
+                  <Input
+                    value={parsedVendorInvoice.vendorName}
+                    onChange={(e) => setParsedVendorInvoice({ ...parsedVendorInvoice, vendorName: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <Label>Invoice Date</Label>
+                  <Input
+                    type="date"
+                    value={parsedVendorInvoice.invoiceDate}
+                    onChange={(e) => setParsedVendorInvoice({ ...parsedVendorInvoice, invoiceDate: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <Label>Due Date</Label>
+                  <Input
+                    type="date"
+                    value={parsedVendorInvoice.dueDate || ""}
+                    onChange={(e) => setParsedVendorInvoice({ ...parsedVendorInvoice, dueDate: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <Label>Related PO Number</Label>
+                  <Input
+                    value={parsedVendorInvoice.relatedPoNumber || ""}
+                    onChange={(e) => setParsedVendorInvoice({ ...parsedVendorInvoice, relatedPoNumber: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <Label>Payment Terms</Label>
+                  <Input
+                    value={parsedVendorInvoice.paymentTerms || ""}
+                    onChange={(e) => setParsedVendorInvoice({ ...parsedVendorInvoice, paymentTerms: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              {/* Line Items */}
+              <div>
+                <Label className="mb-2 block">Line Items</Label>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Description</TableHead>
+                      <TableHead>SKU</TableHead>
+                      <TableHead>Qty</TableHead>
+                      <TableHead>Unit Price</TableHead>
+                      <TableHead>Total</TableHead>
+                      <TableHead>Matched Material</TableHead>
+                      <TableHead></TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {parsedVendorInvoice.lineItems.map((item, index) => (
+                      <TableRow key={index}>
+                        <TableCell>
+                          {editingLineItem === index ? (
+                            <Input
+                              value={item.description}
+                              onChange={(e) => updateLineItem(index, "description", e.target.value)}
+                              className="h-8"
+                            />
+                          ) : (
+                            item.description
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {editingLineItem === index ? (
+                            <Input
+                              value={item.sku || ""}
+                              onChange={(e) => updateLineItem(index, "sku", e.target.value)}
+                              className="h-8 w-24"
+                            />
+                          ) : (
+                            item.sku || "-"
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {editingLineItem === index ? (
+                            <Input
+                              type="number"
+                              value={item.quantity}
+                              onChange={(e) => updateLineItem(index, "quantity", parseFloat(e.target.value))}
+                              className="h-8 w-20"
+                            />
+                          ) : (
+                            item.quantity
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {editingLineItem === index ? (
+                            <Input
+                              type="number"
+                              value={item.unitPrice ?? 0}
+                              onChange={(e) => updateLineItem(index, "unitPrice", parseFloat(e.target.value) || 0)}
+                              className="h-8 w-24"
+                            />
+                          ) : (
+                            `$${(item.unitPrice ?? 0).toFixed(2)}`
+                          )}
+                        </TableCell>
+                        <TableCell>${(item.totalPrice ?? 0).toFixed(2)}</TableCell>
+                        <TableCell>
+                          {item.matchedMaterialName ? (
+                            <Badge variant="secondary" className="gap-1">
+                              <CheckCircle className="h-3 w-3" />
+                              {item.matchedMaterialName}
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="gap-1">
+                              <AlertCircle className="h-3 w-3" />
+                              No match
+                            </Badge>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => setEditingLineItem(editingLineItem === index ? null : index)}
+                          >
+                            {editingLineItem === index ? <X className="h-4 w-4" /> : <Edit2 className="h-4 w-4" />}
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+
+              {/* Totals */}
+              <div className="flex justify-end">
+                <div className="space-y-1 text-right">
+                  <div className="text-sm">
+                    Subtotal: <span className="font-medium">${(parsedVendorInvoice.subtotal ?? 0).toFixed(2)}</span>
+                  </div>
+                  {parsedVendorInvoice.taxAmount && (
+                    <div className="text-sm">
+                      Tax: <span className="font-medium">${(parsedVendorInvoice.taxAmount ?? 0).toFixed(2)}</span>
+                    </div>
+                  )}
+                  {parsedVendorInvoice.shippingAmount && (
+                    <div className="text-sm">
+                      Shipping: <span className="font-medium">${(parsedVendorInvoice.shippingAmount ?? 0).toFixed(2)}</span>
+                    </div>
+                  )}
+                  <div className="text-lg font-bold">
+                    Total: ${(parsedVendorInvoice.totalAmount ?? 0).toFixed(2)}
+                  </div>
+                </div>
+              </div>
+
+              {/* Import Options */}
+              <div className="space-y-3 border-t pt-4">
+                <Label>Import Options</Label>
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="markReceivedInvoice"
+                    checked={markAsReceived}
+                    onCheckedChange={(checked) => setMarkAsReceived(!!checked)}
+                  />
+                  <label htmlFor="markReceivedInvoice" className="text-sm">
+                    Mark as received (historical import)
+                  </label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="updateInventoryInvoice"
+                    checked={updateInventory}
+                    onCheckedChange={(checked) => setUpdateInventory(!!checked)}
+                  />
+                  <label htmlFor="updateInventoryInvoice" className="text-sm">
+                    Update inventory quantities
+                  </label>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowPreview(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleImportVendorInvoice} disabled={importVendorInvoiceMutation.isPending}>
+              {importVendorInvoiceMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Import Vendor Invoice
             </Button>
           </DialogFooter>
         </DialogContent>
