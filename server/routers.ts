@@ -14065,12 +14065,12 @@ Provide your response in this JSON format:
               if ((changePercent > increaseThreshold && alertConfig.alertOnPriceIncrease) ||
                   (changePercent < -decreaseThreshold && alertConfig.alertOnPriceDecrease)) {
                 await db.createAlert({
-                  type: 'price_change',
-                  severity: Math.abs(changePercent) > 10 ? 'high' : 'medium',
+                  type: 'reconciliation_variance',
+                  severity: Math.abs(changePercent) > 10 ? 'critical' : 'warning',
                   title: `Vendor Price ${changePercent > 0 ? 'Increase' : 'Decrease'} Alert`,
-                  message: `Price changed by ${priceChangePercent}% for vendor ID ${input.vendorId}`,
-                  relatedType: 'vendor',
-                  relatedId: input.vendorId,
+                  description: `Price changed by ${priceChangePercent}% for vendor ID ${input.vendorId}`,
+                  entityType: 'vendor',
+                  entityId: input.vendorId,
                 });
               }
             }
