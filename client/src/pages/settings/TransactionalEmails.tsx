@@ -183,7 +183,7 @@ export default function TransactionalEmailsPage() {
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Queued</CardDescription>
-            <CardTitle className="text-2xl text-yellow-500">{stats?.queued || 0}</CardTitle>
+            <CardTitle className="text-2xl text-yellow-500">{(stats as any)?.queued || 0}</CardTitle>
           </CardHeader>
         </Card>
         <Card>
@@ -375,7 +375,7 @@ export default function TransactionalEmailsPage() {
                     </TableCell>
                   </TableRow>
                 ) : (
-                  templates?.map((template) => (
+                  templates?.map((template: any) => (
                     <TableRow key={template.id}>
                       <TableCell className="font-medium">
                         {TEMPLATE_NAMES.find(t => t.value === template.name)?.label || template.name}
@@ -483,7 +483,7 @@ export default function TransactionalEmailsPage() {
                     </TableCell>
                   </TableRow>
                 ) : (
-                  messages?.map((message) => (
+                  messages?.map((message: any) => (
                     <TableRow key={message.id}>
                       <TableCell className="font-mono text-sm">{message.id}</TableCell>
                       <TableCell>
@@ -558,7 +558,7 @@ export default function TransactionalEmailsPage() {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    events?.map((event) => (
+                    events?.map((event: any) => (
                       <TableRow key={event.id}>
                         <TableCell>
                           <Badge variant="outline">{event.providerEventType}</Badge>

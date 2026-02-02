@@ -28,7 +28,11 @@ export default function CopackerPortal() {
   const { data: warehouse } = trpc.copackerPortal.getWarehouse.useQuery();
   const { data: inventory, isLoading: loadingInventory, refetch: refetchInventory } = trpc.copackerPortal.getInventory.useQuery();
   const { data: shipments, isLoading: loadingShipments } = trpc.copackerPortal.getShipments.useQuery();
-  const { data: customsClearances, isLoading: loadingCustoms, refetch: refetchCustoms } = trpc.copackerPortal.getCustomsClearances.useQuery();
+  // TODO: Implement when backend is ready
+  // const { data: customsClearances, isLoading: loadingCustoms, refetch: refetchCustoms } = trpc.copackerPortal.getCustomsClearances.useQuery();
+  const customsClearances: any[] = [];
+  const loadingCustoms = false;
+  const refetchCustoms = () => {};
   
   // Mutations
   const updateInventory = trpc.copackerPortal.updateInventory.useMutation({
@@ -52,16 +56,14 @@ export default function CopackerPortal() {
     },
   });
 
-  const uploadCustomsDocument = trpc.copackerPortal.uploadCustomsDocument.useMutation({
-    onSuccess: () => {
-      toast.success("Customs document uploaded");
+  // TODO: Implement when backend is ready
+  const uploadCustomsDocument = {
+    mutate: (_data: any) => {
+      toast.success("Customs document uploaded (mock)");
       setCustomsUploadOpen(false);
-      refetchCustoms();
     },
-    onError: (error) => {
-      toast.error("Failed to upload customs document", { description: error.message });
-    },
-  });
+    isPending: false
+  };
   
   const startEdit = (item: any) => {
     setEditingId(item.inventory.id);

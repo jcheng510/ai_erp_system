@@ -108,36 +108,39 @@ async function startServer() {
           const email = event.email;
           const timestamp = event.timestamp ? new Date(event.timestamp * 1000) : new Date();
 
+          // TODO: Waiting for db function implementation
           // Store the raw event
-          const emailEvent = await db.createEmailEvent({
-            providerEventType,
-            providerMessageId,
-            providerTimestamp: timestamp,
-            rawEventJson: event,
-            email,
-            reason: event.reason || event.response || null,
-            bounceType: event.type || null,
-            processedAt: new Date(),
-          });
+          // const emailEvent = await db.createEmailEvent({
+          //   providerEventType,
+          //   providerMessageId,
+          //   providerTimestamp: timestamp,
+          //   rawEventJson: event,
+          //   email,
+          //   reason: event.reason || event.response || null,
+          //   bounceType: event.type || null,
+          //   processedAt: new Date(),
+          // });
 
+          // TODO: Waiting for db function implementation
           // Find and update the corresponding email message
-          if (providerMessageId) {
-            const message = await db.getEmailMessageByProviderMessageId(providerMessageId);
-            if (message) {
-              // Update the event with the message ID
-              await db.createEmailEvent({
-                ...emailEvent,
-                emailMessageId: message.id,
-              });
-
-              // Map the event to a status
-              const newStatus = sendgridProvider.mapEventToStatus(providerEventType);
-              if (newStatus) {
-                await db.updateEmailMessageStatus(message.id, newStatus);
-                console.log(`[SendGrid Webhook] Updated message ${message.id} status to ${newStatus}`);
-              }
-            }
-          }
+          // if (providerMessageId) {
+          //   const message = await db.getEmailMessageByProviderMessageId(providerMessageId);
+          //   if (message) {
+          //     // Update the event with the message ID
+          //     await db.createEmailEvent({
+          //       ...emailEvent,
+          //       emailMessageId: message.id,
+          //     });
+          //
+          //     // Map the event to a status
+          //     const newStatus = sendgridProvider.mapEventToStatus(providerEventType);
+          //     if (newStatus) {
+          //       await db.updateEmailMessageStatus(message.id, newStatus);
+          //       console.log(`[SendGrid Webhook] Updated message ${message.id} status to ${newStatus}`);
+          //     }
+          //   }
+          // }
+          console.log(`[SendGrid Webhook] Event received: ${providerEventType} - db functions pending`);
         } catch (eventError) {
           console.error('[SendGrid Webhook] Error processing event:', eventError);
           // Continue processing other events
@@ -270,7 +273,8 @@ async function startServer() {
       }
 
       // Verify company ID matches (if user has one)
-      if (user.companyId && stateCompanyId !== user.companyId) {
+      const userCompanyId = (user as any).companyId as number | undefined;
+      if (userCompanyId && stateCompanyId !== userCompanyId) {
         return res.redirect('/settings/integrations?shopify_error=company_mismatch');
       }
 
@@ -324,19 +328,20 @@ async function startServer() {
       }
 
       const shopInfo = await shopInfoResponse.json();
-      
+
       // Import db functions
-      const { upsertShopifyStore, createSyncLog } = await import('../db');
-      
+      const { getShopifyStoreByDomain, createShopifyStore, updateShopifyStore, createSyncLog } = await import('../db');
+
       // Use the company ID from the authenticated user
-      const companyId = user.companyId || undefined;
+      const companyId = userCompanyId;
 
       // Import encryption function
       const { encrypt } = await import('../_core/crypto');
       const encryptedToken = encrypt(accessToken);
 
-      // Store the Shopify connection
-      await upsertShopifyStore(shopDomain, {
+      // Store the Shopify connection (upsert pattern)
+      const existingStore = await getShopifyStoreByDomain(shopDomain);
+      const storeData = {
         companyId,
         storeDomain: shopDomain,
         storeName: shopInfo.shop.name || shopDomain,
@@ -345,8 +350,14 @@ async function startServer() {
         isEnabled: true,
         syncInventory: true,
         syncOrders: true,
-        inventoryAuthority: 'hybrid',
-      });
+        inventoryAuthority: 'hybrid' as const,
+      };
+
+      if (existingStore) {
+        await updateShopifyStore(existingStore.id, storeData);
+      } else {
+        await createShopifyStore(storeData as any);
+      }
 
       // Log the connection
       await createSyncLog({

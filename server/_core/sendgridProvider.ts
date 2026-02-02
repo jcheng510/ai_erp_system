@@ -258,18 +258,18 @@ export function mapEventToStatus(eventType: string): string | null {
     'deferred': 'deferred',
 
     // Processing events (we already have 'sent' status)
-    'processed': null, // Don't update - we set this when we send
+    'processed': '', // Don't update - we set this when we send
 
     // Engagement events (informational only, don't change status)
-    'open': null,
-    'click': null,
-    'unsubscribe': null,
-    'spamreport': null,
-    'group_unsubscribe': null,
-    'group_resubscribe': null,
+    'open': '',
+    'click': '',
+    'unsubscribe': '',
+    'spamreport': '',
+    'group_unsubscribe': '',
+    'group_resubscribe': '',
   };
 
-  return mapping[eventType] ?? null;
+  return mapping[eventType] || null;
 }
 
 /**

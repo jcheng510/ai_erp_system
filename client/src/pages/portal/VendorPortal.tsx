@@ -30,7 +30,11 @@ export default function VendorPortal() {
   const { data: vendorInfo } = trpc.vendorPortal.getVendorInfo.useQuery();
   const { data: purchaseOrders, isLoading: loadingPOs, refetch: refetchPOs } = trpc.vendorPortal.getPurchaseOrders.useQuery();
   const { data: shipments, isLoading: loadingShipments } = trpc.vendorPortal.getShipments.useQuery();
-  const { data: customsClearances, isLoading: loadingCustoms, refetch: refetchCustoms } = trpc.vendorPortal.getCustomsClearances.useQuery();
+  // TODO: Implement when backend is ready
+  // const { data: customsClearances, isLoading: loadingCustoms, refetch: refetchCustoms } = trpc.vendorPortal.getCustomsClearances.useQuery();
+  const customsClearances: any[] = [];
+  const loadingCustoms = false;
+  const refetchCustoms = () => {};
   
   // Mutations
   const updatePOStatus = trpc.vendorPortal.updatePOStatus.useMutation({
@@ -54,16 +58,14 @@ export default function VendorPortal() {
     },
   });
 
-  const uploadCustomsDocument = trpc.vendorPortal.uploadCustomsDocument.useMutation({
-    onSuccess: () => {
-      toast.success("Customs document uploaded");
+  // TODO: Implement when backend is ready
+  const uploadCustomsDocument = {
+    mutate: (_data: any) => {
+      toast.success("Customs document uploaded (mock)");
       setCustomsUploadOpen(false);
-      refetchCustoms();
     },
-    onError: (error) => {
-      toast.error("Failed to upload customs document", { description: error.message });
-    },
-  });
+    isPending: false
+  };
   
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];

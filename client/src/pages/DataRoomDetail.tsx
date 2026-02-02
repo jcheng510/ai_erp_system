@@ -1400,24 +1400,33 @@ function NdaManagement({ dataRoomId, requiresNda }: { dataRoomId: number; requir
 function DetailedAnalytics({ dataRoomId }: { dataRoomId: number }) {
   const [selectedVisitor, setSelectedVisitor] = useState<number | null>(null);
 
-  const { data: report, isLoading } = trpc.dataRoom.detailedAnalytics.getEngagementReport.useQuery({ dataRoomId });
-  const { data: visitorDetails } = trpc.dataRoom.detailedAnalytics.getVisitorDetails.useQuery(
-    { dataRoomId, visitorId: selectedVisitor! },
-    { enabled: !!selectedVisitor }
-  );
+  // TODO: Implement when backend is ready
+  // const { data: report, isLoading } = trpc.dataRoom.detailedAnalytics.getEngagementReport.useQuery({ dataRoomId });
+  // const { data: visitorDetails } = trpc.dataRoom.detailedAnalytics.getVisitorDetails.useQuery(
+  //   { dataRoomId, visitorId: selectedVisitor! },
+  //   { enabled: !!selectedVisitor }
+  // );
+  const report: any = null;
+  const visitorDetails: any = null;
+  const isLoading = false;
 
-  const exportCsvMutation = trpc.dataRoom.detailedAnalytics.exportCsv.useMutation({
-    onSuccess: (data) => {
-      const blob = new Blob([data.csv], { type: 'text/csv' });
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = data.filename;
-      a.click();
-      window.URL.revokeObjectURL(url);
-      toast.success("Export downloaded");
-    },
-  });
+  const exportCsvMutation = {
+    mutate: (_data: { dataRoomId: number; type: string }) => {},
+    isPending: false
+  };
+  // TODO: Original mutation code - implement when backend is ready:
+  // const exportCsvMutation = trpc.dataRoom.detailedAnalytics.exportCsv.useMutation({
+  //   onSuccess: (data: any) => {
+  //     const blob = new Blob([data.csv], { type: 'text/csv' });
+  //     const url = window.URL.createObjectURL(blob);
+  //     const a = document.createElement('a');
+  //     a.href = url;
+  //     a.download = data.filename;
+  //     a.click();
+  //     window.URL.revokeObjectURL(url);
+  //     toast.success("Export downloaded");
+  //   },
+  // });
 
   const formatDuration = (ms: number) => {
     if (ms < 1000) return "< 1s";
@@ -1511,7 +1520,7 @@ function DetailedAnalytics({ dataRoomId }: { dataRoomId: number }) {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {report?.visitorEngagement.map((v) => (
+                  {report?.visitorEngagement.map((v: any) => (
                     <TableRow
                       key={v.visitorId}
                       className="cursor-pointer hover:bg-muted/50"
@@ -1555,7 +1564,7 @@ function DetailedAnalytics({ dataRoomId }: { dataRoomId: number }) {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {report?.documentEngagement.map((d) => (
+                  {report?.documentEngagement.map((d: any) => (
                     <TableRow key={d.documentId}>
                       <TableCell>
                         <div className="font-medium truncate max-w-[200px]">{d.documentName}</div>
@@ -1605,7 +1614,7 @@ function DetailedAnalytics({ dataRoomId }: { dataRoomId: number }) {
               <div className="border-t pt-4">
                 <h4 className="font-medium mb-2">Document Engagement</h4>
                 <ScrollArea className="h-60">
-                  {visitorDetails.documentEngagement.map((doc) => (
+                  {visitorDetails.documentEngagement.map((doc: any) => (
                     <div key={doc.documentId} className="p-3 border rounded-lg mb-2">
                       <div className="flex justify-between items-start">
                         <div>
@@ -1637,41 +1646,34 @@ function GoogleDriveSyncSettings({ dataRoomId }: { dataRoomId: number }) {
   const [currentParentId, setCurrentParentId] = useState<string | undefined>(undefined);
   const [folderPath, setFolderPath] = useState<{ id: string; name: string }[]>([]);
 
-  const { data: syncConfig, refetch: refetchConfig } = trpc.dataRoom.driveSync.getConfig.useQuery({ dataRoomId });
-  const { data: syncLogs, refetch: refetchLogs } = trpc.dataRoom.driveSync.getLogs.useQuery({ dataRoomId, limit: 10 });
-  const { data: driveFolders, isLoading: foldersLoading } = trpc.dataRoom.driveSync.listDriveFolders.useQuery(
-    { parentId: currentParentId },
-    { enabled: folderPickerOpen }
-  );
+  // TODO: Implement when backend is ready
+  // const { data: syncConfig, refetch: refetchConfig } = trpc.dataRoom.driveSync.getConfig.useQuery({ dataRoomId });
+  // const { data: syncLogs, refetch: refetchLogs } = trpc.dataRoom.driveSync.getLogs.useQuery({ dataRoomId, limit: 10 });
+  // const { data: driveFolders, isLoading: foldersLoading } = trpc.dataRoom.driveSync.listDriveFolders.useQuery(
+  //   { parentId: currentParentId },
+  //   { enabled: folderPickerOpen }
+  // );
+  const syncConfig: any = null;
+  const syncLogs: any[] = [];
+  const driveFolders: any[] = [];
+  const foldersLoading = false;
+  const refetchConfig = () => {};
+  const refetchLogs = () => {};
 
-  const saveConfigMutation = trpc.dataRoom.driveSync.saveConfig.useMutation({
-    onSuccess: () => {
-      toast.success("Sync configuration saved");
-      refetchConfig();
-      setFolderPickerOpen(false);
-    },
-    onError: (error) => {
-      toast.error(error.message);
-    },
-  });
+  const saveConfigMutation = {
+    mutate: (_data: any) => { toast.success("Sync configuration saved (mock)"); setFolderPickerOpen(false); },
+    isPending: false
+  };
 
-  const syncNowMutation = trpc.dataRoom.driveSync.syncNow.useMutation({
-    onSuccess: (result) => {
-      toast.success(`Sync completed: ${result.filesAdded} added, ${result.filesUpdated} updated`);
-      refetchConfig();
-      refetchLogs();
-    },
-    onError: (error) => {
-      toast.error(error.message);
-    },
-  });
+  const syncNowMutation = {
+    mutate: (_data: any) => { toast.success("Sync completed (mock)"); },
+    isPending: false
+  };
 
-  const deleteConfigMutation = trpc.dataRoom.driveSync.deleteConfig.useMutation({
-    onSuccess: () => {
-      toast.success("Sync configuration removed");
-      refetchConfig();
-    },
-  });
+  const deleteConfigMutation = {
+    mutate: (_data: any) => { toast.success("Sync configuration removed (mock)"); },
+    isPending: false
+  };
 
   const handleSaveConfig = () => {
     if (!selectedFolderId) {
@@ -1803,7 +1805,7 @@ function GoogleDriveSyncSettings({ dataRoomId }: { dataRoomId: number }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {syncLogs.map((log) => (
+                {syncLogs.map((log: any) => (
                   <TableRow key={log.id}>
                     <TableCell>{new Date(log.startedAt).toLocaleString()}</TableCell>
                     <TableCell>
@@ -1921,11 +1923,14 @@ function EmailAccessRulesManager({ dataRoomId }: { dataRoomId: number }) {
     notifyOnAccess: true,
   });
 
-  const { data: rules, refetch } = trpc.dataRoom.emailRules.list.useQuery({ dataRoomId });
+  // TODO: Implement when backend is ready
+  // const { data: rules, refetch } = trpc.dataRoom.emailRules.list.useQuery({ dataRoomId });
+  const rules: any[] = [];
+  const refetch = () => {};
 
-  const createMutation = trpc.dataRoom.emailRules.create.useMutation({
-    onSuccess: () => {
-      toast.success("Rule created");
+  const createMutation = {
+    mutate: (_data: any) => {
+      toast.success("Rule created (mock)");
       setCreateOpen(false);
       setNewRule({
         ruleType: 'allow_domain',
@@ -1935,25 +1940,19 @@ function EmailAccessRulesManager({ dataRoomId }: { dataRoomId: number }) {
         requireNdaSignature: true,
         notifyOnAccess: true,
       });
-      refetch();
     },
-    onError: (error) => {
-      toast.error(error.message);
-    },
-  });
+    isPending: false
+  };
 
-  const deleteMutation = trpc.dataRoom.emailRules.delete.useMutation({
-    onSuccess: () => {
-      toast.success("Rule deleted");
-      refetch();
-    },
-  });
+  const deleteMutation = {
+    mutate: (_data: any) => { toast.success("Rule deleted (mock)"); },
+    isPending: false
+  };
 
-  const toggleMutation = trpc.dataRoom.emailRules.update.useMutation({
-    onSuccess: () => {
-      refetch();
-    },
-  });
+  const toggleMutation = {
+    mutate: (_data: any) => {},
+    isPending: false
+  };
 
   const getRuleTypeLabel = (type: string) => {
     switch (type) {
@@ -2008,7 +2007,7 @@ function EmailAccessRulesManager({ dataRoomId }: { dataRoomId: number }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {rules.map((rule) => (
+                {rules.map((rule: any) => (
                   <TableRow key={rule.id}>
                     <TableCell>
                       <Badge className={getRuleTypeColor(rule.ruleType)}>

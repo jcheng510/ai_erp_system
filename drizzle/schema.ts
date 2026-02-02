@@ -3503,3 +3503,301 @@ export const crmCampaignRecipients = mysqlTable("crm_campaign_recipients", {
 
 export type CrmCampaignRecipient = typeof crmCampaignRecipients.$inferSelect;
 export type InsertCrmCampaignRecipient = typeof crmCampaignRecipients.$inferInsert;
+
+// ============================================
+// TRANSACTIONAL EMAIL SYSTEM
+// ============================================
+
+// Email message tracking for transactional emails
+export const emailMessages = mysqlTable("email_messages", {
+  id: int("id").autoincrement().primaryKey(),
+  idempotencyKey: varchar("idempotencyKey", { length: 255 }).unique(),
+  templateName: varchar("templateName", { length: 64 }),
+  providerMessageId: varchar("providerMessageId", { length: 255 }),
+
+  // Recipients
+  toEmail: varchar("toEmail", { length: 320 }).notNull(),
+  toName: varchar("toName", { length: 255 }),
+  fromEmail: varchar("fromEmail", { length: 320 }),
+  fromName: varchar("fromName", { length: 255 }),
+  replyToEmail: varchar("replyToEmail", { length: 320 }),
+
+  // Content
+  subject: varchar("subject", { length: 500 }).notNull(),
+  bodyHtml: text("bodyHtml"),
+  bodyText: text("bodyText"),
+
+  // Related entity
+  relatedEntityType: varchar("relatedEntityType", { length: 64 }),
+  relatedEntityId: int("relatedEntityId"),
+
+  // Status
+  status: mysqlEnum("status", ["queued", "sending", "sent", "delivered", "opened", "clicked", "bounced", "failed", "spam_complaint"]).default("queued").notNull(),
+  sentAt: timestamp("sentAt"),
+  deliveredAt: timestamp("deliveredAt"),
+  openedAt: timestamp("openedAt"),
+  clickedAt: timestamp("clickedAt"),
+  bouncedAt: timestamp("bouncedAt"),
+  failedAt: timestamp("failedAt"),
+
+  // Error handling
+  errorMessage: text("errorMessage"),
+  errorJson: text("errorJson"),
+  retryCount: int("retryCount").default(0),
+  nextRetryAt: timestamp("nextRetryAt"),
+  maxRetries: int("maxRetries").default(3),
+
+  // Template variables (JSON)
+  templateVariables: text("templateVariables"),
+
+  // Metadata
+  metadata: json("metadata"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EmailMessage = typeof emailMessages.$inferSelect;
+export type InsertEmailMessage = typeof emailMessages.$inferInsert;
+
+// Email events (webhook events from email providers)
+export const emailEvents = mysqlTable("email_events", {
+  id: int("id").autoincrement().primaryKey(),
+  emailMessageId: int("emailMessageId"),
+  providerMessageId: varchar("providerMessageId", { length: 255 }),
+
+  eventType: varchar("eventType", { length: 64 }).notNull(), // delivered, opened, clicked, bounced, spam_complaint, etc.
+  eventTimestamp: timestamp("eventTimestamp").notNull(),
+
+  // Event details
+  ipAddress: varchar("ipAddress", { length: 45 }),
+  userAgent: text("userAgent"),
+  clickUrl: varchar("clickUrl", { length: 1024 }),
+  bounceType: varchar("bounceType", { length: 64 }), // hard, soft
+  bounceReason: text("bounceReason"),
+
+  // Raw event data
+  rawEventData: json("rawEventData"),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type EmailEvent = typeof emailEvents.$inferSelect;
+export type InsertEmailEvent = typeof emailEvents.$inferInsert;
+
+// Transactional email templates
+export const transactionalEmailTemplates = mysqlTable("transactional_email_templates", {
+  id: int("id").autoincrement().primaryKey(),
+  name: mysqlEnum("name", ["QUOTE", "PO", "SHIPMENT", "ALERT", "RFQ", "INVOICE", "PAYMENT_REMINDER", "WELCOME", "GENERAL"]).notNull().unique(),
+  providerTemplateId: varchar("providerTemplateId", { length: 255 }).notNull(),
+  description: text("description"),
+  variablesSchema: json("variablesSchema"), // JSON schema for template variables
+  defaultSubject: varchar("defaultSubject", { length: 500 }),
+  isActive: boolean("isActive").default(true).notNull(),
+  createdBy: int("createdBy"),
+  updatedBy: int("updatedBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type TransactionalEmailTemplate = typeof transactionalEmailTemplates.$inferSelect;
+export type InsertTransactionalEmailTemplate = typeof transactionalEmailTemplates.$inferInsert;
+
+// ============================================
+// GOOGLE DRIVE SYNC
+// ============================================
+
+// Drive sync configuration per data room
+export const driveSyncConfigs = mysqlTable("drive_sync_configs", {
+  id: int("id").autoincrement().primaryKey(),
+  dataRoomId: int("dataRoomId").notNull().unique(),
+  googleDriveFolderId: varchar("googleDriveFolderId", { length: 255 }).notNull(),
+  googleDriveFolderName: varchar("googleDriveFolderName", { length: 255 }),
+  googleDriveFolderUrl: varchar("googleDriveFolderUrl", { length: 512 }),
+
+  // Sync settings
+  syncEnabled: boolean("syncEnabled").default(true).notNull(),
+  syncFrequencyMinutes: int("syncFrequencyMinutes").default(60).notNull(),
+  syncMode: mysqlEnum("syncMode", ["one_way_import", "one_way_export", "bidirectional"]).default("one_way_import").notNull(),
+  syncSubfolders: boolean("syncSubfolders").default(true).notNull(),
+  includeFileTypes: text("includeFileTypes"), // JSON array
+  excludeFileTypes: text("excludeFileTypes"), // JSON array
+  maxFileSizeMb: int("maxFileSizeMb").default(100),
+
+  // Sync state
+  lastSyncAt: timestamp("lastSyncAt"),
+  lastSyncStatus: mysqlEnum("lastSyncStatus", ["success", "partial", "failed"]),
+  lastSyncError: text("lastSyncError"),
+  lastSyncFileCount: int("lastSyncFileCount"),
+  nextSyncAt: timestamp("nextSyncAt"),
+
+  syncUserId: int("syncUserId"), // User whose OAuth token to use
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type DriveSyncConfig = typeof driveSyncConfigs.$inferSelect;
+export type InsertDriveSyncConfig = typeof driveSyncConfigs.$inferInsert;
+
+// Drive sync logs
+export const driveSyncLogs = mysqlTable("drive_sync_logs", {
+  id: int("id").autoincrement().primaryKey(),
+  dataRoomId: int("dataRoomId").notNull(),
+  syncConfigId: int("syncConfigId"),
+
+  syncType: mysqlEnum("syncType", ["manual", "scheduled", "webhook"]).default("manual").notNull(),
+  status: mysqlEnum("status", ["started", "in_progress", "success", "partial", "failed"]).default("started").notNull(),
+
+  // Stats
+  filesProcessed: int("filesProcessed").default(0),
+  filesAdded: int("filesAdded").default(0),
+  filesUpdated: int("filesUpdated").default(0),
+  filesDeleted: int("filesDeleted").default(0),
+  filesFailed: int("filesFailed").default(0),
+  bytesProcessed: bigint("bytesProcessed", { mode: "number" }).default(0),
+
+  // Timing
+  startedAt: timestamp("startedAt").defaultNow().notNull(),
+  completedAt: timestamp("completedAt"),
+  durationMs: int("durationMs"),
+
+  // Error details
+  errorMessage: text("errorMessage"),
+  errorDetails: text("errorDetails"), // JSON
+
+  triggeredBy: int("triggeredBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type DriveSyncLog = typeof driveSyncLogs.$inferSelect;
+export type InsertDriveSyncLog = typeof driveSyncLogs.$inferInsert;
+
+// ============================================
+// DETAILED PAGE TRACKING
+// ============================================
+
+// Document page views (per-page tracking)
+export const documentPageViews = mysqlTable("document_page_views", {
+  id: int("id").autoincrement().primaryKey(),
+  documentId: int("documentId").notNull(),
+  visitorId: int("visitorId").notNull(),
+  viewSessionId: int("viewSessionId"),
+  linkId: int("linkId"),
+
+  // Page info
+  pageNumber: int("pageNumber").notNull(),
+  pageLabel: varchar("pageLabel", { length: 100 }),
+
+  // Timing
+  entryTime: timestamp("entryTime").defaultNow().notNull(),
+  exitTime: timestamp("exitTime"),
+  durationMs: int("durationMs").default(0),
+
+  // Engagement metrics
+  scrollDepth: decimal("scrollDepth", { precision: 5, scale: 2 }), // 0-100%
+  mouseMovements: int("mouseMovements"),
+  clicks: int("clicks"),
+  zoomLevel: decimal("zoomLevel", { precision: 4, scale: 2 }),
+
+  // Device info
+  deviceType: varchar("deviceType", { length: 32 }),
+  screenWidth: int("screenWidth"),
+  screenHeight: int("screenHeight"),
+  viewportWidth: int("viewportWidth"),
+  viewportHeight: int("viewportHeight"),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type DocumentPageView = typeof documentPageViews.$inferSelect;
+export type InsertDocumentPageView = typeof documentPageViews.$inferInsert;
+
+// Visitor sessions (detailed tracking)
+export const visitorSessions = mysqlTable("visitor_sessions", {
+  id: int("id").autoincrement().primaryKey(),
+  dataRoomId: int("dataRoomId").notNull(),
+  visitorId: int("visitorId").notNull(),
+  linkId: int("linkId"),
+  sessionToken: varchar("sessionToken", { length: 128 }).notNull().unique(),
+
+  // Timing
+  sessionStartAt: timestamp("sessionStartAt").defaultNow().notNull(),
+  sessionEndAt: timestamp("sessionEndAt"),
+  totalDurationMs: int("totalDurationMs").default(0),
+  activeDurationMs: int("activeDurationMs").default(0),
+  idleDurationMs: int("idleDurationMs").default(0),
+
+  // Engagement
+  documentsViewed: int("documentsViewed").default(0),
+  pagesViewed: int("pagesViewed").default(0),
+  totalScrollDistance: int("totalScrollDistance").default(0),
+  totalClicks: int("totalClicks").default(0),
+  downloadsCount: int("downloadsCount").default(0),
+  printsCount: int("printsCount").default(0),
+
+  // Device/Browser info
+  deviceType: varchar("deviceType", { length: 32 }),
+  browser: varchar("browser", { length: 64 }),
+  browserVersion: varchar("browserVersion", { length: 32 }),
+  os: varchar("os", { length: 64 }),
+  osVersion: varchar("osVersion", { length: 32 }),
+  screenResolution: varchar("screenResolution", { length: 32 }),
+
+  // Network/Location
+  ipAddress: varchar("ipAddress", { length: 45 }),
+  country: varchar("country", { length: 64 }),
+  city: varchar("city", { length: 128 }),
+
+  // Source tracking
+  referrer: varchar("referrer", { length: 512 }),
+  utmSource: varchar("utmSource", { length: 128 }),
+  utmMedium: varchar("utmMedium", { length: 128 }),
+  utmCampaign: varchar("utmCampaign", { length: 128 }),
+
+  isActive: boolean("isActive").default(true).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type VisitorSession = typeof visitorSessions.$inferSelect;
+export type InsertVisitorSession = typeof visitorSessions.$inferInsert;
+
+// ============================================
+// EMAIL ACCESS RULES
+// ============================================
+
+// Email access rules for data rooms
+export const emailAccessRules = mysqlTable("email_access_rules", {
+  id: int("id").autoincrement().primaryKey(),
+  dataRoomId: int("dataRoomId").notNull(),
+
+  ruleType: mysqlEnum("ruleType", ["allow_email", "allow_domain", "block_email", "block_domain"]).notNull(),
+  emailPattern: varchar("emailPattern", { length: 320 }).notNull(), // email or domain pattern
+
+  // Permissions
+  allowDownload: boolean("allowDownload").default(true).notNull(),
+  allowPrint: boolean("allowPrint").default(true).notNull(),
+  maxViews: int("maxViews"),
+  expiresAt: timestamp("expiresAt"),
+
+  // Requirements
+  requireNdaSignature: boolean("requireNdaSignature").default(true).notNull(),
+  autoApprove: boolean("autoApprove").default(false).notNull(),
+
+  // Notifications
+  notifyOnAccess: boolean("notifyOnAccess").default(true).notNull(),
+  notifyEmail: varchar("notifyEmail", { length: 320 }),
+
+  // Rule ordering
+  priority: int("priority").default(0).notNull(),
+  isActive: boolean("isActive").default(true).notNull(),
+
+  // Metadata
+  description: text("description"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EmailAccessRule = typeof emailAccessRules.$inferSelect;
+export type InsertEmailAccessRule = typeof emailAccessRules.$inferInsert;

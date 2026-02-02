@@ -86,7 +86,19 @@ import {
   crmContacts, crmTags, crmContactTags, whatsappMessages, crmInteractions,
   crmPipelines, crmDeals, contactCaptures, crmEmailCampaigns, crmCampaignRecipients,
   InsertCrmContact, InsertCrmTag, InsertWhatsappMessage, InsertCrmInteraction,
-  InsertCrmPipeline, InsertCrmDeal, InsertContactCapture, InsertCrmEmailCampaign, InsertCrmCampaignRecipient
+  InsertCrmPipeline, InsertCrmDeal, InsertContactCapture, InsertCrmEmailCampaign, InsertCrmCampaignRecipient,
+  // Transactional email system
+  emailMessages, emailEvents, transactionalEmailTemplates,
+  InsertEmailMessage, InsertEmailEvent, InsertTransactionalEmailTemplate,
+  // Google Drive sync
+  driveSyncConfigs, driveSyncLogs,
+  InsertDriveSyncConfig, InsertDriveSyncLog,
+  // Detailed page tracking
+  documentPageViews, visitorSessions,
+  InsertDocumentPageView, InsertVisitorSession,
+  // Email access rules
+  emailAccessRules,
+  InsertEmailAccessRule
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -7320,12 +7332,14 @@ export async function getCrmPipelines(type?: string) {
   const db = await getDb();
   if (!db) return [];
 
-  let query = db.select().from(crmPipelines).where(eq(crmPipelines.isActive, true));
+  const conditions = [eq(crmPipelines.isActive, true)];
   if (type) {
-    query = query.where(eq(crmPipelines.type, type as any)) as any;
+    conditions.push(eq(crmPipelines.type, type as any));
   }
 
-  return query.orderBy(crmPipelines.name);
+  return db.select().from(crmPipelines)
+    .where(and(...conditions))
+    .orderBy(crmPipelines.name);
 }
 
 export async function getCrmPipelineById(id: number) {
@@ -7537,9 +7551,11 @@ export async function processVCardCapture(captureId: number, vcardData: string, 
       parsedData: JSON.stringify(parsedData),
     });
   } else {
-    // Create new contact
+    // Create new contact - ensure required fields have defaults
     contactId = await createCrmContact({
       ...parsedData,
+      firstName: parsedData.firstName || "Unknown",
+      fullName: parsedData.fullName || parsedData.firstName || "Unknown",
       source: "iphone_bump",
       capturedBy,
       captureData: JSON.stringify({ vcardData, captureId }),
@@ -7607,12 +7623,15 @@ export async function processLinkedInCapture(
       parsedData: JSON.stringify(parsedData),
     });
   } else {
+    // Ensure required fields have defaults
     contactId = await createCrmContact({
       ...parsedData,
+      firstName: parsedData.firstName || "Unknown",
+      fullName: parsedData.fullName || parsedData.firstName || "Unknown",
       source: "linkedin_scan",
       capturedBy,
       captureData: JSON.stringify({ linkedinData, captureId }),
-    } as InsertCrmContact);
+    });
 
     await updateContactCapture(captureId, {
       contactId,
@@ -7964,4 +7983,685 @@ export async function checkAndTriggerLowStockPurchaseOrder(
     purchaseOrderId: poResult.id,
     reason: `Auto-generated PO ${poNumber} for ${orderQty} units`
   };
+}
+
+// ============================================
+// TRANSACTIONAL EMAIL MESSAGE FUNCTIONS
+// ============================================
+
+export async function getEmailMessageByIdempotencyKey(key: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(emailMessages)
+    .where(eq(emailMessages.idempotencyKey, key))
+    .limit(1);
+  return result[0];
+}
+
+export async function createEmailMessage(data: InsertEmailMessage) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(emailMessages).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getEmailMessageById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(emailMessages)
+    .where(eq(emailMessages.id, id))
+    .limit(1);
+  return result[0];
+}
+
+export async function updateEmailMessageStatus(id: number, status: string) {
+  const db = await getDb();
+  if (!db) return;
+
+  const updates: Partial<InsertEmailMessage> & { [key: string]: Date | string | null } = {
+    status: status as any,
+  };
+
+  // Set timestamp based on status
+  switch (status) {
+    case 'sent':
+      updates.sentAt = new Date();
+      break;
+    case 'delivered':
+      updates.deliveredAt = new Date();
+      break;
+    case 'opened':
+      updates.openedAt = new Date();
+      break;
+    case 'clicked':
+      updates.clickedAt = new Date();
+      break;
+    case 'bounced':
+      updates.bouncedAt = new Date();
+      break;
+    case 'failed':
+      updates.failedAt = new Date();
+      break;
+  }
+
+  await db.update(emailMessages).set(updates).where(eq(emailMessages.id, id));
+}
+
+export async function incrementEmailMessageRetry(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(emailMessages)
+    .set({ retryCount: sql`${emailMessages.retryCount} + 1` })
+    .where(eq(emailMessages.id, id));
+}
+
+export async function updateEmailMessage(id: number, data: Partial<InsertEmailMessage>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(emailMessages).set(data).where(eq(emailMessages.id, id));
+}
+
+export async function getEmailMessageByProviderMessageId(providerMessageId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(emailMessages)
+    .where(eq(emailMessages.providerMessageId, providerMessageId))
+    .limit(1);
+  return result[0];
+}
+
+export async function getEmailMessages(filters?: {
+  status?: string;
+  templateName?: string;
+  toEmail?: string;
+  relatedEntityType?: string;
+  relatedEntityId?: number;
+  fromDate?: Date;
+  toDate?: Date;
+  limit?: number;
+  offset?: number;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (filters?.status) {
+    conditions.push(eq(emailMessages.status, filters.status as any));
+  }
+  if (filters?.templateName) {
+    conditions.push(eq(emailMessages.templateName, filters.templateName));
+  }
+  if (filters?.toEmail) {
+    conditions.push(eq(emailMessages.toEmail, filters.toEmail));
+  }
+  if (filters?.relatedEntityType) {
+    conditions.push(eq(emailMessages.relatedEntityType, filters.relatedEntityType));
+  }
+  if (filters?.relatedEntityId) {
+    conditions.push(eq(emailMessages.relatedEntityId, filters.relatedEntityId));
+  }
+  if (filters?.fromDate) {
+    conditions.push(gte(emailMessages.createdAt, filters.fromDate));
+  }
+  if (filters?.toDate) {
+    conditions.push(lte(emailMessages.createdAt, filters.toDate));
+  }
+
+  let query = db.select().from(emailMessages);
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as any;
+  }
+
+  return query
+    .orderBy(desc(emailMessages.createdAt))
+    .limit(filters?.limit || 100)
+    .offset(filters?.offset || 0);
+}
+
+export async function getQueuedEmailMessages() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(emailMessages)
+    .where(eq(emailMessages.status, 'queued'))
+    .orderBy(emailMessages.createdAt)
+    .limit(100);
+}
+
+export async function getEmailMessageStats() {
+  const db = await getDb();
+  if (!db) return { total: 0, sent: 0, delivered: 0, opened: 0, clicked: 0, bounced: 0, failed: 0 };
+
+  const [total] = await db.select({ count: count() }).from(emailMessages);
+  const [sent] = await db.select({ count: count() }).from(emailMessages).where(eq(emailMessages.status, 'sent'));
+  const [delivered] = await db.select({ count: count() }).from(emailMessages).where(eq(emailMessages.status, 'delivered'));
+  const [opened] = await db.select({ count: count() }).from(emailMessages).where(eq(emailMessages.status, 'opened'));
+  const [clicked] = await db.select({ count: count() }).from(emailMessages).where(eq(emailMessages.status, 'clicked'));
+  const [bounced] = await db.select({ count: count() }).from(emailMessages).where(eq(emailMessages.status, 'bounced'));
+  const [failed] = await db.select({ count: count() }).from(emailMessages).where(eq(emailMessages.status, 'failed'));
+
+  return {
+    total: total.count,
+    sent: sent.count,
+    delivered: delivered.count,
+    opened: opened.count,
+    clicked: clicked.count,
+    bounced: bounced.count,
+    failed: failed.count,
+  };
+}
+
+// ============================================
+// EMAIL EVENT FUNCTIONS
+// ============================================
+
+export async function createEmailEvent(data: InsertEmailEvent) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(emailEvents).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getEmailEventsByMessageId(messageId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(emailEvents)
+    .where(eq(emailEvents.emailMessageId, messageId))
+    .orderBy(desc(emailEvents.eventTimestamp));
+}
+
+export async function getEmailEventsByProviderMessageId(providerMessageId: string) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(emailEvents)
+    .where(eq(emailEvents.providerMessageId, providerMessageId))
+    .orderBy(desc(emailEvents.eventTimestamp));
+}
+
+export async function getRecentEmailEvents(limit: number = 100) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(emailEvents)
+    .orderBy(desc(emailEvents.createdAt))
+    .limit(limit);
+}
+
+// ============================================
+// TRANSACTIONAL EMAIL TEMPLATE FUNCTIONS
+// ============================================
+
+export async function getTransactionalEmailTemplateByName(name: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(transactionalEmailTemplates)
+    .where(eq(transactionalEmailTemplates.name, name as any))
+    .limit(1);
+  return result[0];
+}
+
+export async function getTransactionalEmailTemplates() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(transactionalEmailTemplates)
+    .orderBy(transactionalEmailTemplates.name);
+}
+
+export async function getTransactionalEmailTemplateById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(transactionalEmailTemplates)
+    .where(eq(transactionalEmailTemplates.id, id))
+    .limit(1);
+  return result[0];
+}
+
+export async function createTransactionalEmailTemplate(data: InsertTransactionalEmailTemplate) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(transactionalEmailTemplates).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateTransactionalEmailTemplate(id: number, data: Partial<InsertTransactionalEmailTemplate>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(transactionalEmailTemplates).set(data).where(eq(transactionalEmailTemplates.id, id));
+}
+
+export async function deleteTransactionalEmailTemplate(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(transactionalEmailTemplates).where(eq(transactionalEmailTemplates.id, id));
+}
+
+// ============================================
+// GOOGLE DRIVE SYNC FUNCTIONS
+// ============================================
+
+export async function getDriveSyncConfig(dataRoomId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(driveSyncConfigs)
+    .where(eq(driveSyncConfigs.dataRoomId, dataRoomId))
+    .limit(1);
+  return result[0];
+}
+
+export async function getDriveSyncLogs(dataRoomId: number, limit: number = 50) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(driveSyncLogs)
+    .where(eq(driveSyncLogs.dataRoomId, dataRoomId))
+    .orderBy(desc(driveSyncLogs.createdAt))
+    .limit(limit);
+}
+
+export async function createDriveSyncConfig(data: InsertDriveSyncConfig) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(driveSyncConfigs).values(data);
+  return result[0].insertId;
+}
+
+export async function updateDriveSyncConfig(id: number, data: Partial<InsertDriveSyncConfig>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(driveSyncConfigs).set(data).where(eq(driveSyncConfigs.id, id));
+}
+
+export async function deleteDriveSyncConfig(dataRoomId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(driveSyncConfigs).where(eq(driveSyncConfigs.dataRoomId, dataRoomId));
+}
+
+export async function createDriveSyncLog(data: InsertDriveSyncLog) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(driveSyncLogs).values(data);
+  return result[0].insertId;
+}
+
+export async function updateDriveSyncLog(id: number, data: Partial<InsertDriveSyncLog>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(driveSyncLogs).set(data).where(eq(driveSyncLogs.id, id));
+}
+
+// Alias for getGoogleOAuthToken - some code references it with different name
+export async function getGoogleOAuthTokenByUserId(userId: number) {
+  return getGoogleOAuthToken(userId);
+}
+
+// ============================================
+// DOCUMENT PAGE VIEW FUNCTIONS
+// ============================================
+
+export async function createDocumentPageView(data: InsertDocumentPageView) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(documentPageViews).values(data);
+  return result[0].insertId;
+}
+
+export async function updateDocumentPageView(id: number, data: Partial<InsertDocumentPageView>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(documentPageViews).set(data).where(eq(documentPageViews.id, id));
+}
+
+export async function getDocumentPageViews(documentId: number, visitorId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [eq(documentPageViews.documentId, documentId)];
+  if (visitorId) {
+    conditions.push(eq(documentPageViews.visitorId, visitorId));
+  }
+
+  return db.select().from(documentPageViews)
+    .where(and(...conditions))
+    .orderBy(desc(documentPageViews.createdAt));
+}
+
+export async function getPageViewsByVisitor(visitorId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(documentPageViews)
+    .where(eq(documentPageViews.visitorId, visitorId))
+    .orderBy(desc(documentPageViews.createdAt));
+}
+
+// ============================================
+// VISITOR SESSION FUNCTIONS
+// ============================================
+
+export async function createVisitorSession(data: InsertVisitorSession) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(visitorSessions).values(data);
+  return result[0].insertId;
+}
+
+export async function updateVisitorSession(id: number, data: Partial<InsertVisitorSession>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(visitorSessions).set(data).where(eq(visitorSessions.id, id));
+}
+
+export async function getSessionByToken(token: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(visitorSessions)
+    .where(eq(visitorSessions.sessionToken, token))
+    .limit(1);
+  return result[0];
+}
+
+export async function getDataRoomSessions(dataRoomId: number, limit: number = 100) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(visitorSessions)
+    .where(eq(visitorSessions.dataRoomId, dataRoomId))
+    .orderBy(desc(visitorSessions.sessionStartAt))
+    .limit(limit);
+}
+
+export async function getVisitorSessions(visitorId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(visitorSessions)
+    .where(eq(visitorSessions.visitorId, visitorId))
+    .orderBy(desc(visitorSessions.sessionStartAt));
+}
+
+// ============================================
+// EMAIL ACCESS RULES FUNCTIONS
+// ============================================
+
+export async function getEmailAccessRules(dataRoomId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(emailAccessRules)
+    .where(and(
+      eq(emailAccessRules.dataRoomId, dataRoomId),
+      eq(emailAccessRules.isActive, true)
+    ))
+    .orderBy(desc(emailAccessRules.priority));
+}
+
+export async function createEmailAccessRule(data: InsertEmailAccessRule) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(emailAccessRules).values(data);
+  return result[0].insertId;
+}
+
+export async function updateEmailAccessRule(id: number, data: Partial<InsertEmailAccessRule>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(emailAccessRules).set(data).where(eq(emailAccessRules.id, id));
+}
+
+export async function deleteEmailAccessRule(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(emailAccessRules).where(eq(emailAccessRules.id, id));
+}
+
+export async function checkEmailAccess(dataRoomId: number, email: string): Promise<{
+  allowed: boolean;
+  rule: typeof emailAccessRules.$inferSelect | null;
+  reason?: string;
+}> {
+  const db = await getDb();
+  if (!db) return { allowed: false, rule: null, reason: 'Database not available' };
+
+  const rules = await getEmailAccessRules(dataRoomId);
+  const emailDomain = email.split('@')[1]?.toLowerCase();
+
+  // Check rules in priority order
+  for (const rule of rules) {
+    const pattern = rule.emailPattern.toLowerCase();
+
+    if (rule.ruleType === 'allow_email' && email.toLowerCase() === pattern) {
+      return { allowed: true, rule };
+    }
+    if (rule.ruleType === 'block_email' && email.toLowerCase() === pattern) {
+      return { allowed: false, rule, reason: 'Email explicitly blocked' };
+    }
+    if (rule.ruleType === 'allow_domain' && emailDomain === pattern) {
+      return { allowed: true, rule };
+    }
+    if (rule.ruleType === 'block_domain' && emailDomain === pattern) {
+      return { allowed: false, rule, reason: 'Domain explicitly blocked' };
+    }
+  }
+
+  // Default: allow if no rules match (or return false to require explicit allow)
+  return { allowed: false, rule: null, reason: 'No matching rule found' };
+}
+
+// ============================================
+// ANALYTICS FUNCTIONS
+// ============================================
+
+export async function getPageViewAnalytics(dataRoomId: number) {
+  const db = await getDb();
+  if (!db) return { totalViews: 0, uniqueVisitors: 0, avgDuration: 0, pageBreakdown: [] };
+
+  // Get all document IDs for this data room
+  const documents = await db.select({ id: dataRoomDocuments.id })
+    .from(dataRoomDocuments)
+    .where(eq(dataRoomDocuments.dataRoomId, dataRoomId));
+
+  if (documents.length === 0) {
+    return { totalViews: 0, uniqueVisitors: 0, avgDuration: 0, pageBreakdown: [] };
+  }
+
+  const documentIds = documents.map(d => d.id);
+
+  // Get page view stats
+  const pageViews = await db.select().from(documentPageViews)
+    .where(inArray(documentPageViews.documentId, documentIds));
+
+  const uniqueVisitors = new Set(pageViews.map(pv => pv.visitorId)).size;
+  const totalDuration = pageViews.reduce((sum, pv) => sum + (pv.durationMs || 0), 0);
+
+  // Page breakdown
+  const pageStats: Record<string, { views: number; duration: number }> = {};
+  pageViews.forEach(pv => {
+    const key = `${pv.documentId}-${pv.pageNumber}`;
+    if (!pageStats[key]) {
+      pageStats[key] = { views: 0, duration: 0 };
+    }
+    pageStats[key].views++;
+    pageStats[key].duration += pv.durationMs || 0;
+  });
+
+  return {
+    totalViews: pageViews.length,
+    uniqueVisitors,
+    avgDuration: pageViews.length > 0 ? Math.round(totalDuration / pageViews.length) : 0,
+    pageBreakdown: Object.entries(pageStats).map(([key, stats]) => {
+      const [docId, pageNum] = key.split('-');
+      return {
+        documentId: parseInt(docId),
+        pageNumber: parseInt(pageNum),
+        views: stats.views,
+        avgDuration: Math.round(stats.duration / stats.views),
+      };
+    }).sort((a, b) => b.views - a.views),
+  };
+}
+
+export async function getDetailedVisitorAnalytics(dataRoomId: number, visitorId?: number) {
+  const db = await getDb();
+  if (!db) return { visitors: [], sessions: [], pageViews: [] };
+
+  // Get visitors
+  const visitors = await db.select().from(dataRoomVisitors)
+    .where(visitorId
+      ? and(eq(dataRoomVisitors.dataRoomId, dataRoomId), eq(dataRoomVisitors.id, visitorId))
+      : eq(dataRoomVisitors.dataRoomId, dataRoomId)
+    )
+    .orderBy(desc(dataRoomVisitors.lastViewedAt));
+
+  // Get sessions
+  const sessions = await db.select().from(visitorSessions)
+    .where(visitorId
+      ? and(eq(visitorSessions.dataRoomId, dataRoomId), eq(visitorSessions.visitorId, visitorId))
+      : eq(visitorSessions.dataRoomId, dataRoomId)
+    )
+    .orderBy(desc(visitorSessions.sessionStartAt));
+
+  // Get page views
+  const documents = await db.select({ id: dataRoomDocuments.id })
+    .from(dataRoomDocuments)
+    .where(eq(dataRoomDocuments.dataRoomId, dataRoomId));
+
+  let pageViews: typeof documentPageViews.$inferSelect[] = [];
+  if (documents.length > 0) {
+    const documentIds = documents.map(d => d.id);
+    const conditions = [inArray(documentPageViews.documentId, documentIds)];
+    if (visitorId) {
+      conditions.push(eq(documentPageViews.visitorId, visitorId));
+    }
+    pageViews = await db.select().from(documentPageViews)
+      .where(and(...conditions))
+      .orderBy(desc(documentPageViews.createdAt));
+  }
+
+  return { visitors, sessions, pageViews };
+}
+
+export async function getDataRoomEngagementReport(dataRoomId: number, startDate?: Date, endDate?: Date) {
+  const db = await getDb();
+  if (!db) return {
+    totalVisitors: 0,
+    totalSessions: 0,
+    totalPageViews: 0,
+    avgSessionDuration: 0,
+    avgPagesPerSession: 0,
+    topDocuments: [],
+    visitorsByDate: [],
+  };
+
+  // Build date conditions
+  const dateConditions = [];
+  if (startDate) {
+    dateConditions.push(gte(visitorSessions.sessionStartAt, startDate));
+  }
+  if (endDate) {
+    dateConditions.push(lte(visitorSessions.sessionStartAt, endDate));
+  }
+
+  // Get sessions
+  const sessionConditions = [eq(visitorSessions.dataRoomId, dataRoomId), ...dateConditions];
+  const sessions = await db.select().from(visitorSessions)
+    .where(and(...sessionConditions));
+
+  // Get visitors
+  const visitorConditions = [eq(dataRoomVisitors.dataRoomId, dataRoomId)];
+  if (startDate) {
+    visitorConditions.push(gte(dataRoomVisitors.createdAt, startDate));
+  }
+  if (endDate) {
+    visitorConditions.push(lte(dataRoomVisitors.createdAt, endDate));
+  }
+  const visitors = await db.select().from(dataRoomVisitors)
+    .where(and(...visitorConditions));
+
+  // Get documents and page views
+  const documents = await db.select().from(dataRoomDocuments)
+    .where(eq(dataRoomDocuments.dataRoomId, dataRoomId));
+
+  let pageViews: typeof documentPageViews.$inferSelect[] = [];
+  if (documents.length > 0) {
+    const documentIds = documents.map(d => d.id);
+    const pvConditions = [inArray(documentPageViews.documentId, documentIds)];
+    if (startDate) {
+      pvConditions.push(gte(documentPageViews.createdAt, startDate));
+    }
+    if (endDate) {
+      pvConditions.push(lte(documentPageViews.createdAt, endDate));
+    }
+    pageViews = await db.select().from(documentPageViews)
+      .where(and(...pvConditions));
+  }
+
+  // Calculate metrics
+  const totalSessionDuration = sessions.reduce((sum, s) => sum + (s.totalDurationMs || 0), 0);
+  const totalPagesViewed = sessions.reduce((sum, s) => sum + (s.pagesViewed || 0), 0);
+
+  // Top documents
+  const docViews: Record<number, number> = {};
+  pageViews.forEach(pv => {
+    docViews[pv.documentId] = (docViews[pv.documentId] || 0) + 1;
+  });
+
+  const topDocuments = Object.entries(docViews)
+    .map(([docId, views]) => {
+      const doc = documents.find(d => d.id === parseInt(docId));
+      return { documentId: parseInt(docId), name: doc?.name || 'Unknown', views };
+    })
+    .sort((a, b) => b.views - a.views)
+    .slice(0, 10);
+
+  // Visitors by date
+  const visitorsByDateMap: Record<string, number> = {};
+  sessions.forEach(s => {
+    const date = s.sessionStartAt.toISOString().split('T')[0];
+    visitorsByDateMap[date] = (visitorsByDateMap[date] || 0) + 1;
+  });
+
+  const visitorsByDate = Object.entries(visitorsByDateMap)
+    .map(([date, count]) => ({ date, count }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  return {
+    totalVisitors: visitors.length,
+    totalSessions: sessions.length,
+    totalPageViews: pageViews.length,
+    avgSessionDuration: sessions.length > 0 ? Math.round(totalSessionDuration / sessions.length) : 0,
+    avgPagesPerSession: sessions.length > 0 ? Math.round(totalPagesViewed / sessions.length * 10) / 10 : 0,
+    topDocuments,
+    visitorsByDate,
+  };
+}
+
+// ============================================
+// MISC FUNCTIONS
+// ============================================
+
+export async function getShipmentById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(shipments)
+    .where(eq(shipments.id, id))
+    .limit(1);
+  return result[0];
+}
+
+export async function upsertShopifyStore(shopDomain: string, data: Partial<InsertShopifyStore>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const existing = await getShopifyStoreByDomain(shopDomain);
+
+  if (existing) {
+    await db.update(shopifyStores)
+      .set({
+        ...data,
+        updatedAt: new Date(),
+      })
+      .where(eq(shopifyStores.storeDomain, shopDomain));
+    return { id: existing.id, updated: true };
+  } else {
+    const result = await db.insert(shopifyStores).values({
+      storeDomain: shopDomain,
+      storeName: data.storeName || shopDomain,
+      ...data,
+    } as InsertShopifyStore);
+    return { id: result[0].insertId, updated: false };
+  }
 }
