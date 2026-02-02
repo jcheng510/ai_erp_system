@@ -53,6 +53,11 @@ import {
   CircleDot,
   Globe,
   Mail,
+  Upload,
+  RefreshCw,
+  Search,
+  UserPlus,
+  Link as LinkIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Link } from "wouter";
@@ -100,6 +105,11 @@ export default function FundraisingDashboard() {
   const [commitmentDialogOpen, setCommitmentDialogOpen] = useState(false);
   const [checklistDialogOpen, setChecklistDialogOpen] = useState(false);
   const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [csvData, setCsvData] = useState("");
+  const [contactSearch, setContactSearch] = useState("");
+  const [selectedCrmContact, setSelectedCrmContact] = useState<number | null>(null);
+  const [useExistingContact, setUseExistingContact] = useState(false);
 
   const [commitmentForm, setCommitmentForm] = useState({
     investorName: "",
@@ -110,6 +120,7 @@ export default function FundraisingDashboard() {
     instrumentType: "preferred" as "preferred" | "common" | "safe" | "convertible_note",
     isLeadInvestor: false,
     notes: "",
+    crmContactId: null as number | null,
   });
 
   const [checklistForm, setChecklistForm] = useState({
@@ -172,6 +183,50 @@ export default function FundraisingDashboard() {
     { enabled: !!selectedRoundId }
   );
   const { data: checklistTemplates } = trpc.fundraising.checklist.templates.useQuery({});
+
+  // CRM Integration Queries
+  const { data: investorContacts, refetch: refetchContacts } = trpc.fundraising.crmIntegration.getInvestorContacts.useQuery(
+    { search: contactSearch || undefined, limit: 50 },
+    { enabled: true }
+  );
+
+  // CRM Integration Mutations
+  const syncFromEmails = trpc.fundraising.crmIntegration.syncFromEmails.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Synced ${data.created} new contacts, updated ${data.updated}`);
+      refetchContacts();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const importFromCsv = trpc.fundraising.crmIntegration.importFromCsv.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Imported ${data.contactsCreated} contacts, ${data.commitmentsCreated} commitments`);
+      if (data.errors.length > 0) {
+        toast.error(`${data.errors.length} errors during import`);
+      }
+      setImportDialogOpen(false);
+      setCsvData("");
+      refetchContacts();
+      refetchCommitments();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const linkCommitment = trpc.fundraising.crmIntegration.linkCommitment.useMutation({
+    onSuccess: () => {
+      toast.success("Commitment linked to CRM contact");
+      refetchCommitments();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const createDeal = trpc.fundraising.crmIntegration.createDeal.useMutation({
+    onSuccess: () => {
+      toast.success("CRM deal created");
+    },
+    onError: (error) => toast.error(error.message),
+  });
 
   // Mutations
   const createCommitment = trpc.fundraising.commitments.create.useMutation({
@@ -251,7 +306,10 @@ export default function FundraisingDashboard() {
       instrumentType: "preferred",
       isLeadInvestor: false,
       notes: "",
+      crmContactId: null,
     });
+    setSelectedCrmContact(null);
+    setUseExistingContact(false);
   };
 
   const resetChecklistForm = () => {
@@ -288,6 +346,55 @@ export default function FundraisingDashboard() {
       instrumentType: commitmentForm.instrumentType,
       isLeadInvestor: commitmentForm.isLeadInvestor,
       notes: commitmentForm.notes || undefined,
+      crmContactId: selectedCrmContact || undefined,
+    });
+  };
+
+  const handleImportCsv = () => {
+    if (!csvData.trim()) {
+      toast.error("Please enter CSV data");
+      return;
+    }
+
+    try {
+      const lines = csvData.trim().split("\n");
+      const headers = lines[0].split(",").map(h => h.trim().toLowerCase());
+
+      const data = lines.slice(1).map(line => {
+        const values = line.split(",").map(v => v.trim());
+        const row: Record<string, string> = {};
+        headers.forEach((header, i) => {
+          row[header] = values[i] || "";
+        });
+        return {
+          email: row.email || row.e_mail || row["e-mail"],
+          firstName: row.firstname || row.first_name || row["first name"] || row.name?.split(" ")[0] || "",
+          lastName: row.lastname || row.last_name || row["last name"] || row.name?.split(" ").slice(1).join(" "),
+          organization: row.organization || row.company || row.firm,
+          jobTitle: row.jobtitle || row.job_title || row.title || row.position,
+          phone: row.phone || row.telephone,
+          investorType: row.investortype || row.investor_type || row.type,
+          commitmentAmount: row.commitmentamount || row.commitment_amount || row.amount || row.commitment,
+          notes: row.notes || row.note || row.comments,
+        };
+      }).filter(row => row.firstName);
+
+      importFromCsv.mutate({
+        data,
+        fundingRoundId: selectedRoundId || undefined,
+      });
+    } catch (error) {
+      toast.error("Failed to parse CSV data");
+    }
+  };
+
+  const handleSelectCrmContact = (contact: any) => {
+    setSelectedCrmContact(contact.id);
+    setCommitmentForm({
+      ...commitmentForm,
+      investorName: contact.fullName,
+      investorEmail: contact.email || "",
+      crmContactId: contact.id,
     });
   };
 
@@ -490,6 +597,7 @@ export default function FundraisingDashboard() {
               <TabsTrigger value="filings">SEC Filings</TabsTrigger>
               <TabsTrigger value="updates">Investor Updates</TabsTrigger>
               <TabsTrigger value="diligence">Due Diligence</TabsTrigger>
+              <TabsTrigger value="contacts">Investor Contacts</TabsTrigger>
             </TabsList>
 
             {/* Overview Tab */}
@@ -686,15 +794,69 @@ export default function FundraisingDashboard() {
                         </DialogDescription>
                       </DialogHeader>
                       <div className="grid gap-4 py-4">
-                        <div className="space-y-2">
-                          <Label>Investor Name *</Label>
-                          <Input
-                            value={commitmentForm.investorName}
-                            onChange={(e) => setCommitmentForm({ ...commitmentForm, investorName: e.target.value })}
-                            placeholder="John Smith or Acme Ventures"
-                            required
-                          />
+                        {/* CRM Contact Toggle */}
+                        <div className="flex items-center gap-4 p-3 bg-muted/50 rounded-lg">
+                          <label className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              checked={useExistingContact}
+                              onChange={(e) => {
+                                setUseExistingContact(e.target.checked);
+                                if (!e.target.checked) {
+                                  setSelectedCrmContact(null);
+                                  setCommitmentForm({ ...commitmentForm, crmContactId: null });
+                                }
+                              }}
+                              className="rounded"
+                            />
+                            <span className="text-sm font-medium">Select from CRM contacts</span>
+                          </label>
+                          {selectedCrmContact && (
+                            <Badge className="bg-green-500/10 text-green-600">
+                              <LinkIcon className="h-3 w-3 mr-1" />
+                              Linked to CRM
+                            </Badge>
+                          )}
                         </div>
+
+                        {useExistingContact ? (
+                          <div className="space-y-2">
+                            <Label>Select CRM Contact *</Label>
+                            <Select
+                              value={selectedCrmContact?.toString() || ""}
+                              onValueChange={(value) => {
+                                const contact = investorContacts?.find(c => c.id === parseInt(value));
+                                if (contact) handleSelectCrmContact(contact);
+                              }}
+                            >
+                              <SelectTrigger>
+                                <SelectValue placeholder="Choose an investor contact..." />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {investorContacts?.map((contact) => (
+                                  <SelectItem key={contact.id} value={contact.id.toString()}>
+                                    {contact.fullName} {contact.organization ? `(${contact.organization})` : ""} - {contact.email || "No email"}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            {selectedCrmContact && (
+                              <p className="text-sm text-muted-foreground">
+                                This commitment will be linked to the CRM contact record.
+                              </p>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="space-y-2">
+                            <Label>Investor Name *</Label>
+                            <Input
+                              value={commitmentForm.investorName}
+                              onChange={(e) => setCommitmentForm({ ...commitmentForm, investorName: e.target.value })}
+                              placeholder="John Smith or Acme Ventures"
+                              required
+                            />
+                          </div>
+                        )}
                         <div className="grid grid-cols-2 gap-4">
                           <div className="space-y-2">
                             <Label>Investor Type</Label>
@@ -1514,6 +1676,186 @@ export default function FundraisingDashboard() {
                   </TableBody>
                 </Table>
               </Card>
+            </TabsContent>
+
+            {/* Investor Contacts Tab */}
+            <TabsContent value="contacts" className="space-y-6">
+              <div className="flex justify-between items-center">
+                <div>
+                  <h3 className="text-lg font-semibold">Investor Contacts</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Manage investor contacts synced from CRM, email, or imports
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => syncFromEmails.mutate()}
+                    disabled={syncFromEmails.isPending}
+                  >
+                    {syncFromEmails.isPending ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <Mail className="h-4 w-4 mr-2" />
+                    )}
+                    Sync from Email
+                  </Button>
+                  <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
+                    <DialogTrigger asChild>
+                      <Button variant="outline">
+                        <Upload className="h-4 w-4 mr-2" />
+                        Import CSV
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent className="max-w-2xl">
+                      <DialogHeader>
+                        <DialogTitle>Import Investor Contacts</DialogTitle>
+                        <DialogDescription>
+                          Paste CSV data with columns: email, firstName, lastName, organization, phone, investorType, commitmentAmount
+                        </DialogDescription>
+                      </DialogHeader>
+                      <div className="grid gap-4 py-4">
+                        <div className="space-y-2">
+                          <Label>CSV Data</Label>
+                          <Textarea
+                            value={csvData}
+                            onChange={(e) => setCsvData(e.target.value)}
+                            placeholder="email,firstName,lastName,organization,investorType,commitmentAmount&#10;john@acme.vc,John,Smith,Acme Ventures,vc,500000&#10;jane@angel.co,Jane,Doe,Angel Investor,angel,100000"
+                            rows={10}
+                            className="font-mono text-sm"
+                          />
+                        </div>
+                        <div className="text-sm text-muted-foreground">
+                          <p className="font-medium mb-1">Supported columns:</p>
+                          <ul className="list-disc list-inside space-y-1">
+                            <li>email - Investor email address</li>
+                            <li>firstName, lastName - Name (or just "name")</li>
+                            <li>organization / company / firm</li>
+                            <li>phone / telephone</li>
+                            <li>investorType - angel, vc, corporate, family_office, strategic</li>
+                            <li>commitmentAmount / amount - Creates commitment if round selected</li>
+                          </ul>
+                        </div>
+                      </div>
+                      <DialogFooter>
+                        <Button type="button" variant="outline" onClick={() => setImportDialogOpen(false)}>
+                          Cancel
+                        </Button>
+                        <Button onClick={handleImportCsv} disabled={importFromCsv.isPending}>
+                          {importFromCsv.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                          Import
+                        </Button>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
+                  <Link href="/crm/contacts">
+                    <Button variant="outline">
+                      <Users className="h-4 w-4 mr-2" />
+                      View All in CRM
+                    </Button>
+                  </Link>
+                </div>
+              </div>
+
+              {/* Search */}
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1 max-w-sm">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Search investor contacts..."
+                    value={contactSearch}
+                    onChange={(e) => setContactSearch(e.target.value)}
+                    className="pl-10"
+                  />
+                </div>
+                <Button variant="outline" size="icon" onClick={() => refetchContacts()}>
+                  <RefreshCw className="h-4 w-4" />
+                </Button>
+              </div>
+
+              <Card>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Name</TableHead>
+                      <TableHead>Organization</TableHead>
+                      <TableHead>Email</TableHead>
+                      <TableHead>Stage</TableHead>
+                      <TableHead>Source</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {investorContacts?.map((contact) => (
+                      <TableRow key={contact.id}>
+                        <TableCell>
+                          <div className="font-medium">{contact.fullName}</div>
+                          {contact.jobTitle && (
+                            <div className="text-sm text-muted-foreground">{contact.jobTitle}</div>
+                          )}
+                        </TableCell>
+                        <TableCell>{contact.organization || "-"}</TableCell>
+                        <TableCell className="text-sm">{contact.email || "-"}</TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="capitalize">
+                            {contact.pipelineStage?.replace("_", " ")}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground capitalize">
+                          {contact.source?.replace("_", " ")}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              handleSelectCrmContact(contact);
+                              setUseExistingContact(true);
+                              setCommitmentDialogOpen(true);
+                            }}
+                          >
+                            <UserPlus className="h-4 w-4 mr-1" />
+                            Add Commitment
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {(!investorContacts || investorContacts.length === 0) && (
+                      <TableRow>
+                        <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                          No investor contacts found. Sync from email or import a CSV.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </Card>
+
+              {/* Stats */}
+              <div className="grid gap-4 md:grid-cols-3">
+                <Card>
+                  <CardContent className="pt-6">
+                    <div className="text-2xl font-bold">{investorContacts?.length || 0}</div>
+                    <p className="text-sm text-muted-foreground">Total Investor Contacts</p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="pt-6">
+                    <div className="text-2xl font-bold">
+                      {investorContacts?.filter(c => c.pipelineStage === "qualified" || c.pipelineStage === "proposal").length || 0}
+                    </div>
+                    <p className="text-sm text-muted-foreground">Active Prospects</p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="pt-6">
+                    <div className="text-2xl font-bold">
+                      {investorContacts?.filter(c => c.pipelineStage === "won").length || 0}
+                    </div>
+                    <p className="text-sm text-muted-foreground">Converted Investors</p>
+                  </CardContent>
+                </Card>
+              </div>
             </TabsContent>
           </Tabs>
         </>

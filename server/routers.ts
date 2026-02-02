@@ -12548,6 +12548,82 @@ Ask if they received the original request and if they can provide a quote.`;
     })).query(async ({ input }) => {
       return db.getFundraisingDashboardStats(input.fundingRoundId);
     }),
+
+    // CRM Integration
+    crmIntegration: router({
+      // Get investor contacts from CRM
+      getInvestorContacts: financeProcedure.input(z.object({
+        search: z.string().optional(),
+        pipelineStage: z.string().optional(),
+        limit: z.number().optional(),
+      }).optional()).query(async ({ input }) => {
+        return db.getInvestorContacts(input);
+      }),
+
+      // Sync investor contacts from emails
+      syncFromEmails: financeProcedure.mutation(async ({ ctx }) => {
+        return db.syncInvestorContactsFromEmails(ctx.user.id);
+      }),
+
+      // Import investors from CSV
+      importFromCsv: financeProcedure.input(z.object({
+        data: z.array(z.object({
+          email: z.string().optional(),
+          firstName: z.string(),
+          lastName: z.string().optional(),
+          organization: z.string().optional(),
+          jobTitle: z.string().optional(),
+          phone: z.string().optional(),
+          investorType: z.string().optional(),
+          commitmentAmount: z.string().optional(),
+          notes: z.string().optional(),
+        })),
+        fundingRoundId: z.number().optional(),
+      })).mutation(async ({ input, ctx }) => {
+        return db.importInvestorContactsFromCsv(input.data, ctx.user.id, input.fundingRoundId);
+      }),
+
+      // Link commitment to CRM contact
+      linkCommitment: financeProcedure.input(z.object({
+        commitmentId: z.number(),
+        crmContactId: z.number(),
+      })).mutation(async ({ input }) => {
+        return db.linkCommitmentToCrmContact(input.commitmentId, input.crmContactId);
+      }),
+
+      // Create CRM deal from commitment
+      createDeal: financeProcedure.input(z.object({
+        commitmentId: z.number(),
+      })).mutation(async ({ input }) => {
+        const pipelineId = await db.getFundraisingPipeline();
+        const dealId = await db.createDealFromCommitment(input.commitmentId, pipelineId);
+        return { dealId };
+      }),
+
+      // Get or create investor contact
+      getOrCreateContact: financeProcedure.input(z.object({
+        email: z.string().optional(),
+        firstName: z.string(),
+        lastName: z.string().optional(),
+        organization: z.string().optional(),
+        jobTitle: z.string().optional(),
+        phone: z.string().optional(),
+        investorType: z.string().optional(),
+      })).mutation(async ({ input, ctx }) => {
+        const contactId = await db.getOrCreateInvestorContact({
+          ...input,
+          source: 'manual',
+          capturedBy: ctx.user.id,
+        });
+        return { contactId };
+      }),
+
+      // Get fundraising pipeline
+      getPipeline: financeProcedure.query(async () => {
+        const pipelineId = await db.getFundraisingPipeline();
+        return { pipelineId };
+      }),
+    }),
   }),
 });
 

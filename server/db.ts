@@ -9260,3 +9260,441 @@ export async function getFundraisingDashboardStats(fundingRoundId: number) {
     },
   };
 }
+
+// ============================================
+// FUNDRAISING-CRM INTEGRATION
+// ============================================
+
+// Get or create CRM contact for investor
+export async function getOrCreateInvestorContact(data: {
+  email?: string;
+  firstName: string;
+  lastName?: string;
+  organization?: string;
+  jobTitle?: string;
+  phone?: string;
+  investorType?: string;
+  source?: 'email' | 'import' | 'manual';
+  capturedBy?: number;
+}): Promise<number> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Check if contact exists by email
+  if (data.email) {
+    const existing = await db.select()
+      .from(crmContacts)
+      .where(eq(crmContacts.email, data.email))
+      .limit(1);
+
+    if (existing.length > 0) {
+      // Update to investor type if not already
+      if (existing[0].contactType !== 'investor') {
+        await db.update(crmContacts)
+          .set({ contactType: 'investor' })
+          .where(eq(crmContacts.id, existing[0].id));
+      }
+      return existing[0].id;
+    }
+  }
+
+  // Create new investor contact
+  const fullName = `${data.firstName} ${data.lastName || ''}`.trim();
+  const [result] = await db.insert(crmContacts).values({
+    firstName: data.firstName,
+    lastName: data.lastName,
+    fullName,
+    email: data.email,
+    phone: data.phone,
+    organization: data.organization,
+    jobTitle: data.jobTitle,
+    contactType: 'investor',
+    source: data.source === 'email' ? 'cold_outreach' : data.source === 'import' ? 'import' : 'manual',
+    pipelineStage: 'new',
+    capturedBy: data.capturedBy,
+    customFields: data.investorType ? JSON.stringify({ investorType: data.investorType }) : undefined,
+  });
+
+  return result.insertId;
+}
+
+// Sync investors from email threads
+export async function syncInvestorContactsFromEmails(userId: number): Promise<{
+  created: number;
+  updated: number;
+  skipped: number;
+  contacts: Array<{ id: number; email: string; name: string; isNew: boolean }>;
+}> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Get email threads that might contain investor contacts
+  // Look for emails with certain keywords in subject or that have attachments like term sheets
+  const emails = await db.select()
+    .from(emailThreads)
+    .where(
+      or(
+        like(emailThreads.subject, '%invest%'),
+        like(emailThreads.subject, '%funding%'),
+        like(emailThreads.subject, '%term sheet%'),
+        like(emailThreads.subject, '%round%'),
+        like(emailThreads.subject, '%capital%'),
+        like(emailThreads.subject, '%SAFE%'),
+        like(emailThreads.subject, '%series%'),
+      )
+    )
+    .orderBy(desc(emailThreads.lastMessageAt))
+    .limit(500);
+
+  const result = {
+    created: 0,
+    updated: 0,
+    skipped: 0,
+    contacts: [] as Array<{ id: number; email: string; name: string; isNew: boolean }>,
+  };
+
+  const processedEmails = new Set<string>();
+
+  for (const email of emails) {
+    // Extract sender info
+    const fromEmail = email.participants?.split(',')[0]?.trim();
+    if (!fromEmail || processedEmails.has(fromEmail)) continue;
+    processedEmails.add(fromEmail);
+
+    // Skip internal emails
+    if (fromEmail.includes('@') && !fromEmail.includes('gmail.com') && !fromEmail.includes('yahoo.com') && !fromEmail.includes('hotmail.com')) {
+      // Check if already exists
+      const existing = await db.select()
+        .from(crmContacts)
+        .where(eq(crmContacts.email, fromEmail))
+        .limit(1);
+
+      if (existing.length > 0) {
+        // Update to investor if not already
+        if (existing[0].contactType !== 'investor') {
+          await db.update(crmContacts)
+            .set({ contactType: 'investor' })
+            .where(eq(crmContacts.id, existing[0].id));
+          result.updated++;
+        } else {
+          result.skipped++;
+        }
+        result.contacts.push({
+          id: existing[0].id,
+          email: fromEmail,
+          name: existing[0].fullName,
+          isNew: false,
+        });
+      } else {
+        // Extract name from email if possible
+        const nameParts = fromEmail.split('@')[0].split(/[._-]/);
+        const firstName = nameParts[0]?.charAt(0).toUpperCase() + nameParts[0]?.slice(1) || 'Unknown';
+        const lastName = nameParts[1]?.charAt(0).toUpperCase() + nameParts[1]?.slice(1) || '';
+
+        const contactId = await getOrCreateInvestorContact({
+          email: fromEmail,
+          firstName,
+          lastName,
+          source: 'email',
+          capturedBy: userId,
+        });
+
+        result.created++;
+        result.contacts.push({
+          id: contactId,
+          email: fromEmail,
+          name: `${firstName} ${lastName}`.trim(),
+          isNew: true,
+        });
+      }
+    }
+  }
+
+  return result;
+}
+
+// Import investors from CSV data
+export async function importInvestorContactsFromCsv(
+  data: Array<{
+    email?: string;
+    firstName: string;
+    lastName?: string;
+    organization?: string;
+    jobTitle?: string;
+    phone?: string;
+    investorType?: string;
+    commitmentAmount?: string;
+    notes?: string;
+  }>,
+  userId: number,
+  fundingRoundId?: number
+): Promise<{
+  contactsCreated: number;
+  contactsUpdated: number;
+  commitmentsCreated: number;
+  errors: string[];
+}> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const result = {
+    contactsCreated: 0,
+    contactsUpdated: 0,
+    commitmentsCreated: 0,
+    errors: [] as string[],
+  };
+
+  for (let i = 0; i < data.length; i++) {
+    const row = data[i];
+    try {
+      if (!row.firstName) {
+        result.errors.push(`Row ${i + 1}: Missing first name`);
+        continue;
+      }
+
+      // Check if contact exists
+      let contactId: number;
+      let isNew = false;
+
+      if (row.email) {
+        const existing = await db.select()
+          .from(crmContacts)
+          .where(eq(crmContacts.email, row.email))
+          .limit(1);
+
+        if (existing.length > 0) {
+          contactId = existing[0].id;
+          // Update contact type and info
+          await db.update(crmContacts)
+            .set({
+              contactType: 'investor',
+              organization: row.organization || existing[0].organization,
+              jobTitle: row.jobTitle || existing[0].jobTitle,
+              phone: row.phone || existing[0].phone,
+            })
+            .where(eq(crmContacts.id, contactId));
+          result.contactsUpdated++;
+        } else {
+          contactId = await getOrCreateInvestorContact({
+            ...row,
+            source: 'import',
+            capturedBy: userId,
+          });
+          isNew = true;
+          result.contactsCreated++;
+        }
+      } else {
+        contactId = await getOrCreateInvestorContact({
+          ...row,
+          source: 'import',
+          capturedBy: userId,
+        });
+        isNew = true;
+        result.contactsCreated++;
+      }
+
+      // Create commitment if amount provided and round specified
+      if (fundingRoundId && row.commitmentAmount) {
+        const fullName = `${row.firstName} ${row.lastName || ''}`.trim();
+        await createInvestorCommitment({
+          fundingRoundId,
+          investorName: fullName,
+          investorType: (row.investorType as any) || 'angel',
+          investorEmail: row.email,
+          crmContactId: contactId,
+          commitmentType: 'soft',
+          commitmentAmount: row.commitmentAmount,
+          notes: row.notes,
+        });
+        result.commitmentsCreated++;
+      }
+    } catch (error: any) {
+      result.errors.push(`Row ${i + 1}: ${error.message}`);
+    }
+  }
+
+  return result;
+}
+
+// Link existing commitment to CRM contact
+export async function linkCommitmentToCrmContact(
+  commitmentId: number,
+  crmContactId: number
+): Promise<{ success: boolean }> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  await db.update(investorCommitments)
+    .set({ crmContactId })
+    .where(eq(investorCommitments.id, commitmentId));
+
+  return { success: true };
+}
+
+// Create CRM deal from commitment
+export async function createDealFromCommitment(
+  commitmentId: number,
+  pipelineId: number
+): Promise<number> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const [commitment] = await db.select()
+    .from(investorCommitments)
+    .where(eq(investorCommitments.id, commitmentId))
+    .limit(1);
+
+  if (!commitment) throw new Error("Commitment not found");
+
+  // Get or create CRM contact
+  let contactId = commitment.crmContactId;
+  if (!contactId && commitment.investorEmail) {
+    contactId = await getOrCreateInvestorContact({
+      email: commitment.investorEmail,
+      firstName: commitment.investorName.split(' ')[0] || commitment.investorName,
+      lastName: commitment.investorName.split(' ').slice(1).join(' '),
+      source: 'manual',
+    });
+    // Link to commitment
+    await db.update(investorCommitments)
+      .set({ crmContactId: contactId })
+      .where(eq(investorCommitments.id, commitmentId));
+  }
+
+  if (!contactId) throw new Error("No contact to create deal for");
+
+  // Map commitment type to deal stage
+  const stageMap: Record<string, string> = {
+    soft: 'qualified',
+    hard: 'proposal',
+    signed: 'negotiation',
+    wired: 'won',
+  };
+
+  const [result] = await db.insert(crmDeals).values({
+    pipelineId,
+    contactId,
+    name: `Investment: ${commitment.investorName}`,
+    description: `Investment commitment for funding round`,
+    stage: stageMap[commitment.commitmentType || 'soft'] || 'new',
+    amount: commitment.commitmentAmount,
+    currency: 'USD',
+    probability: commitment.commitmentType === 'wired' ? 100 :
+                 commitment.commitmentType === 'signed' ? 90 :
+                 commitment.commitmentType === 'hard' ? 70 : 30,
+    status: commitment.commitmentType === 'wired' ? 'won' : 'open',
+    source: 'fundraising',
+  });
+
+  return result.insertId;
+}
+
+// Sync commitment status to CRM deal
+export async function syncCommitmentStatusToDeal(commitmentId: number): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const [commitment] = await db.select()
+    .from(investorCommitments)
+    .where(eq(investorCommitments.id, commitmentId))
+    .limit(1);
+
+  if (!commitment || !commitment.crmContactId) return;
+
+  // Find the deal for this contact
+  const [deal] = await db.select()
+    .from(crmDeals)
+    .where(
+      and(
+        eq(crmDeals.contactId, commitment.crmContactId),
+        eq(crmDeals.source, 'fundraising')
+      )
+    )
+    .limit(1);
+
+  if (!deal) return;
+
+  const stageMap: Record<string, string> = {
+    soft: 'qualified',
+    hard: 'proposal',
+    signed: 'negotiation',
+    wired: 'won',
+  };
+
+  await db.update(crmDeals)
+    .set({
+      stage: stageMap[commitment.commitmentType || 'soft'] || deal.stage,
+      amount: commitment.commitmentAmount,
+      status: commitment.commitmentType === 'wired' ? 'won' : 'open',
+      wonAt: commitment.commitmentType === 'wired' ? new Date() : deal.wonAt,
+      probability: commitment.commitmentType === 'wired' ? 100 :
+                   commitment.commitmentType === 'signed' ? 90 :
+                   commitment.commitmentType === 'hard' ? 70 : 30,
+    })
+    .where(eq(crmDeals.id, deal.id));
+}
+
+// Get investor contacts for fundraising
+export async function getInvestorContacts(filters?: {
+  search?: string;
+  pipelineStage?: string;
+  limit?: number;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [eq(crmContacts.contactType, 'investor')];
+
+  if (filters?.search) {
+    conditions.push(
+      or(
+        like(crmContacts.fullName, `%${filters.search}%`),
+        like(crmContacts.email, `%${filters.search}%`),
+        like(crmContacts.organization, `%${filters.search}%`)
+      ) as any
+    );
+  }
+
+  if (filters?.pipelineStage) {
+    conditions.push(eq(crmContacts.pipelineStage, filters.pipelineStage as any));
+  }
+
+  return db.select()
+    .from(crmContacts)
+    .where(and(...conditions))
+    .orderBy(desc(crmContacts.createdAt))
+    .limit(filters?.limit || 100);
+}
+
+// Get fundraising pipeline or create default
+export async function getFundraisingPipeline(): Promise<number> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const [existing] = await db.select()
+    .from(crmPipelines)
+    .where(eq(crmPipelines.type, 'fundraising'))
+    .limit(1);
+
+  if (existing) return existing.id;
+
+  // Create default fundraising pipeline
+  const [result] = await db.insert(crmPipelines).values({
+    name: 'Fundraising Pipeline',
+    type: 'fundraising',
+    stages: JSON.stringify([
+      { name: 'New Lead', order: 1 },
+      { name: 'Contacted', order: 2 },
+      { name: 'Qualified', order: 3 },
+      { name: 'Term Sheet Sent', order: 4 },
+      { name: 'Due Diligence', order: 5 },
+      { name: 'Docs Signed', order: 6 },
+      { name: 'Wired', order: 7 },
+      { name: 'Closed', order: 8 },
+    ]),
+    isDefault: true,
+    isActive: true,
+  });
+
+  return result.insertId;
+}
