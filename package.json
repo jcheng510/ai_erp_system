@@ -10,7 +10,8 @@
     "check": "tsc --noEmit",
     "format": "prettier --write .",
     "test": "vitest run",
-    "db:push": "drizzle-kit generate && drizzle-kit migrate"
+    "db:push": "drizzle-kit generate && drizzle-kit migrate",
+    "sync:drive": "tsx scripts/sync-google-drive-data.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.693.0",
