@@ -5033,9 +5033,65 @@ Extract and return as JSON:
           otherFees: z.string().optional(),
           totalAmount: z.string().optional(),
           notes: z.string().optional(),
+          warehouseId: z.number().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
-          const { id, ...data } = input;
+          const { id, warehouseId, ...data } = input;
+
+          // Get clearance to check status transition
+          const clearance = await db.getCustomsClearanceById(id);
+          if (!clearance) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'Customs clearance not found' });
+          }
+
+          // If clearing customs and shipment exists, update inventory
+          if (input.status === 'cleared' && clearance.shipmentId) {
+            // Require warehouseId when clearing customs with inventory update
+            if (!warehouseId) {
+              throw new TRPCError({
+                code: 'BAD_REQUEST',
+                message: 'warehouseId is required when clearing customs with inventory update',
+              });
+            }
+
+            const shipment = await db.getShipmentById(clearance.shipmentId);
+            if (shipment && shipment.purchaseOrderId) {
+              // Get PO items and create inventory entries
+              const poItems = await db.getPurchaseOrderItems(shipment.purchaseOrderId);
+
+              for (const item of poItems) {
+                // Create inventory record
+                await db.createInventory({
+                  productId: item.productId,
+                  warehouseId: warehouseId,
+                  quantity: item.quantity,
+                  companyId: shipment.companyId ?? 1,
+                });
+
+                // Create inventory transaction
+                await db.createInventoryTransaction({
+                  transactionType: 'receive',
+                  productId: item.productId,
+                  toWarehouseId: warehouseId,
+                  quantity: item.quantity,
+                  referenceType: 'customs_clearance',
+                  referenceId: id,
+                  createdBy: ctx.user.id,
+                });
+
+                // Update PO item received quantity
+                await db.updatePurchaseOrderItem(item.id, {
+                  receivedQuantity: item.quantity,
+                });
+              }
+
+              // Update shipment status to delivered
+              await db.updateShipment(clearance.shipmentId, {
+                status: 'delivered',
+              });
+            }
+          }
+
           await db.updateCustomsClearance(id, data);
           await createAuditLog(ctx.user.id, 'update', 'customs_clearance', id);
           return { success: true };
@@ -5420,8 +5476,48 @@ Provide a brief status summary, any missing documents, and next steps.`;
         });
 
         await createAuditLog(ctx.user.id, 'create', 'document', result.id, input.name);
-        
+
         return { id: result.id, url };
+      }),
+
+    // Get customs clearances for copacker (all shipments visible)
+    getCustomsClearances: copackerProcedure.query(async ({ ctx }) => {
+      const allClearances = await db.getCustomsClearances();
+
+      // Admin/ops can see all
+      if (ctx.user.role !== 'copacker') {
+        return allClearances;
+      }
+
+      // Copacker sees all clearances (they work with all shipments)
+      return allClearances;
+    }),
+
+    // Get customs documents for a specific clearance
+    getCustomsDocuments: copackerProcedure
+      .input(z.object({ clearanceId: z.number() }))
+      .query(async ({ input, ctx }) => {
+        const clearance = await db.getCustomsClearanceById(input.clearanceId);
+        if (!clearance) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'Customs clearance not found' });
+        }
+
+        // Admin/ops can access all
+        if (ctx.user.role !== 'copacker') {
+          return db.getCustomsDocuments(input.clearanceId);
+        }
+
+        // Copacker access check - verify shipment exists
+        if (!clearance.shipmentId) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this customs clearance' });
+        }
+
+        const shipment = await db.getShipmentById(clearance.shipmentId);
+        if (!shipment) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this customs clearance' });
+        }
+
+        return db.getCustomsDocuments(input.clearanceId);
       }),
   }),
 
@@ -5524,8 +5620,63 @@ Provide a brief status summary, any missing documents, and next steps.`;
         });
 
         await createAuditLog(ctx.user.id, 'create', 'document', result.id, input.name);
-        
+
         return { id: result.id, url };
+      }),
+
+    // Get customs clearances for vendor's shipments
+    getCustomsClearances: vendorProcedure.query(async ({ ctx }) => {
+      const allClearances = await db.getCustomsClearances();
+
+      // Admin/ops can see all
+      if (ctx.user.role !== 'vendor' || !ctx.user.linkedVendorId) {
+        return allClearances;
+      }
+
+      // Vendor only sees clearances for shipments linked to their POs
+      const allPOs = await db.getPurchaseOrders();
+      const vendorPOIds = allPOs
+        .filter(po => po.vendorId === ctx.user.linkedVendorId)
+        .map(po => po.id);
+
+      const allShipments = await db.getShipments();
+      const vendorShipmentIds = allShipments
+        .filter(s => s.purchaseOrderId && vendorPOIds.includes(s.purchaseOrderId))
+        .map(s => s.id);
+
+      return allClearances.filter(c => c.shipmentId && vendorShipmentIds.includes(c.shipmentId));
+    }),
+
+    // Get customs documents for a specific clearance
+    getCustomsDocuments: vendorProcedure
+      .input(z.object({ clearanceId: z.number() }))
+      .query(async ({ input, ctx }) => {
+        const clearance = await db.getCustomsClearanceById(input.clearanceId);
+        if (!clearance) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'Customs clearance not found' });
+        }
+
+        // Admin/ops can access all
+        if (ctx.user.role !== 'vendor' || !ctx.user.linkedVendorId) {
+          return db.getCustomsDocuments(input.clearanceId);
+        }
+
+        // Vendor access check
+        if (!clearance.shipmentId) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this customs clearance' });
+        }
+
+        const shipment = await db.getShipmentById(clearance.shipmentId);
+        if (!shipment || !shipment.purchaseOrderId) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this customs clearance' });
+        }
+
+        const po = await db.getPurchaseOrderById(shipment.purchaseOrderId);
+        if (!po || po.vendorId !== ctx.user.linkedVendorId) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this customs clearance' });
+        }
+
+        return db.getCustomsDocuments(input.clearanceId);
       }),
   }),
 
@@ -9556,15 +9707,9 @@ Ask if they received the original request and if they can provide a quote.`;
         pollingIntervalMinutes: z.number().min(5).default(15),
       }))
       .mutation(async ({ input, ctx }) => {
-        // Encrypt password
-        const crypto = await import('crypto');
-        const key = process.env.JWT_SECRET || 'default-key';
-        const cipher = crypto.createCipheriv('aes-256-cbc', 
-          crypto.createHash('sha256').update(key).digest().slice(0, 32),
-          Buffer.alloc(16, 0)
-        );
-        let encrypted = cipher.update(input.password, 'utf8', 'hex');
-        encrypted += cipher.final('hex');
+        // Encrypt password using secure crypto utility
+        const { encrypt } = await import('./_core/crypto');
+        const encrypted = encrypt(input.password);
 
         const { id } = await db.createImapCredential({
           ...input,
@@ -9616,15 +9761,9 @@ Ask if they received the original request and if they can provide a quote.`;
           throw new TRPCError({ code: 'NOT_FOUND' });
         }
 
-        // Decrypt password
-        const crypto = await import('crypto');
-        const key = process.env.JWT_SECRET || 'default-key';
-        const decipher = crypto.createDecipheriv('aes-256-cbc',
-          crypto.createHash('sha256').update(key).digest().slice(0, 32),
-          Buffer.alloc(16, 0)
-        );
-        let decrypted = decipher.update(credential.encryptedPassword, 'hex', 'utf8');
-        decrypted += decipher.final('utf8');
+        // Decrypt password using secure crypto utility with fallback for legacy format
+        const { decryptWithFallback } = await import('./_core/crypto');
+        const decrypted = decryptWithFallback(credential.encryptedPassword);
 
         return {
           ...credential,
@@ -9669,17 +9808,11 @@ Ask if they received the original request and if they can provide a quote.`;
         maxEmailsPerScan: z.number().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
-        // Encrypt password if provided
+        // Encrypt password if provided using secure crypto utility
         let encryptedPassword = input.imapPassword;
         if (input.imapPassword) {
-          const crypto = await import('crypto');
-          const key = process.env.JWT_SECRET || 'default-key';
-          const cipher = crypto.createCipheriv('aes-256-cbc',
-            crypto.createHash('sha256').update(key).digest().slice(0, 32),
-            Buffer.alloc(16, 0)
-          );
-          encryptedPassword = cipher.update(input.imapPassword, 'utf8', 'hex');
-          encryptedPassword += cipher.final('hex');
+          const { encrypt } = await import('./_core/crypto');
+          encryptedPassword = encrypt(input.imapPassword);
         }
 
         const { id } = await db.createEmailCredential({
@@ -9715,17 +9848,10 @@ Ask if they received the original request and if they can provide a quote.`;
         const { id, imapPassword, ...data } = input;
         let updateData: any = data;
 
-        // Encrypt new password if provided
+        // Encrypt new password if provided using secure crypto utility
         if (imapPassword) {
-          const crypto = await import('crypto');
-          const key = process.env.JWT_SECRET || 'default-key';
-          const cipher = crypto.createCipheriv('aes-256-cbc',
-            crypto.createHash('sha256').update(key).digest().slice(0, 32),
-            Buffer.alloc(16, 0)
-          );
-          let encrypted = cipher.update(imapPassword, 'utf8', 'hex');
-          encrypted += cipher.final('hex');
-          updateData.imapPassword = encrypted;
+          const { encrypt } = await import('./_core/crypto');
+          updateData.imapPassword = encrypt(imapPassword);
         }
 
         await db.updateEmailCredential(id, updateData);
@@ -9763,16 +9889,10 @@ Ask if they received the original request and if they can provide a quote.`;
             throw new TRPCError({ code: 'NOT_FOUND' });
           }
 
-          // Decrypt password
+          // Decrypt password using secure crypto utility with fallback for legacy format
           if (credential.imapPassword) {
-            const crypto = await import('crypto');
-            const key = process.env.JWT_SECRET || 'default-key';
-            const decipher = crypto.createDecipheriv('aes-256-cbc',
-              crypto.createHash('sha256').update(key).digest().slice(0, 32),
-              Buffer.alloc(16, 0)
-            );
-            let decrypted = decipher.update(credential.imapPassword, 'hex', 'utf8');
-            decrypted += decipher.final('utf8');
+            const { decryptWithFallback } = await import('./_core/crypto');
+            const decrypted = decryptWithFallback(credential.imapPassword);
             config = { ...credential, imapPassword: decrypted };
           }
         }

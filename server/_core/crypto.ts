@@ -59,3 +59,48 @@ export function decrypt(encryptedText: string, secret?: string): string {
   decrypted += decipher.final('utf8');
   return decrypted;
 }
+
+/**
+ * Decrypts a string using legacy zero IV format (for backward compatibility)
+ * WARNING: This uses a zero IV which is cryptographically weak. Use only for
+ * migrating data encrypted with the old method.
+ * @param encryptedText - The encrypted text in hex format (no IV prefix)
+ * @param secret - The encryption secret
+ * @returns Decrypted string
+ */
+export function decryptLegacy(encryptedText: string, secret?: string): string {
+  const key = secret || process.env.JWT_SECRET;
+  if (!key) {
+    throw new Error('Decryption secret is required. Set JWT_SECRET environment variable.');
+  }
+
+  // Use zero IV for backward compatibility with legacy encrypted data
+  const iv = Buffer.alloc(16, 0);
+
+  const decipher = crypto.createDecipheriv(
+    'aes-256-cbc',
+    crypto.createHash('sha256').update(key).digest().slice(0, 32),
+    iv
+  );
+
+  let decrypted = decipher.update(encryptedText, 'hex', 'utf8');
+  decrypted += decipher.final('utf8');
+  return decrypted;
+}
+
+/**
+ * Decrypts a string, automatically detecting the format (new with IV prefix or legacy)
+ * This provides backward compatibility while supporting the new secure format
+ * @param encryptedText - The encrypted text (either "iv:data" or plain hex)
+ * @param secret - The encryption secret
+ * @returns Decrypted string
+ */
+export function decryptWithFallback(encryptedText: string, secret?: string): string {
+  // Check if it's the new format (contains colon separator for IV)
+  if (encryptedText.includes(':')) {
+    return decrypt(encryptedText, secret);
+  }
+  // Fall back to legacy zero IV decryption
+  console.warn('[Crypto] Decrypting data in legacy format. Consider re-encrypting with new format.');
+  return decryptLegacy(encryptedText, secret);
+}
