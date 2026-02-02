@@ -86,7 +86,18 @@ import {
   crmContacts, crmTags, crmContactTags, whatsappMessages, crmInteractions,
   crmPipelines, crmDeals, contactCaptures, crmEmailCampaigns, crmCampaignRecipients,
   InsertCrmContact, InsertCrmTag, InsertWhatsappMessage, InsertCrmInteraction,
-  InsertCrmPipeline, InsertCrmDeal, InsertContactCapture, InsertCrmEmailCampaign, InsertCrmCampaignRecipient
+  InsertCrmPipeline, InsertCrmDeal, InsertContactCapture, InsertCrmEmailCampaign, InsertCrmCampaignRecipient,
+  // Sales Automation types
+  salesTerritories, salesQuotas, commissionPlans, commissionAssignments, commissionTransactions,
+  leadScoringRules, leadScoreHistory, salesAutomationRules, salesAutomationExecutions,
+  emailSequences, emailSequenceSteps, emailSequenceEnrollments, emailSequenceEvents,
+  salesActivities, dealStageHistory, salesForecasts, salesGoals, salesPlaybooks,
+  dealPlaybookAssignments, salesCoachingNotes, salesLeaderboardSnapshots, dealCompetitors, salesMetricsDaily,
+  InsertSalesTerritory, InsertSalesQuota, InsertCommissionPlan, InsertCommissionAssignment, InsertCommissionTransaction,
+  InsertLeadScoringRule, InsertLeadScoreHistory, InsertSalesAutomationRule, InsertSalesAutomationExecution,
+  InsertEmailSequence, InsertEmailSequenceStep, InsertEmailSequenceEnrollment, InsertEmailSequenceEvent,
+  InsertSalesActivity, InsertDealStageHistory, InsertSalesForecast, InsertSalesGoal, InsertSalesPlaybook,
+  InsertDealPlaybookAssignment, InsertSalesCoachingNote, InsertSalesLeaderboardSnapshot, InsertDealCompetitor, InsertSalesMetricsDaily
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -7964,4 +7975,659 @@ export async function checkAndTriggerLowStockPurchaseOrder(
     purchaseOrderId: poResult.id,
     reason: `Auto-generated PO ${poNumber} for ${orderQty} units`
   };
+}
+
+// ============================================
+// SALES AUTOMATION DATABASE FUNCTIONS
+// ============================================
+
+// --- LEAD SCORING ---
+export async function getLeadScoringRules(filters?: { category?: string; isActive?: boolean }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.category) conditions.push(eq(leadScoringRules.category, filters.category as any));
+  if (filters?.isActive !== undefined) conditions.push(eq(leadScoringRules.isActive, filters.isActive));
+  return db.select().from(leadScoringRules).where(conditions.length > 0 ? and(...conditions) : undefined).orderBy(desc(leadScoringRules.priority));
+}
+
+export async function createLeadScoringRule(data: Omit<InsertLeadScoringRule, 'id'>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(leadScoringRules).values(data as any);
+  return result.insertId;
+}
+
+export async function updateLeadScoringRule(id: number, data: Partial<InsertLeadScoringRule>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(leadScoringRules).set(data as any).where(eq(leadScoringRules.id, id));
+}
+
+export async function getLeadScoreHistory(contactId: number, limit?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(leadScoreHistory).where(eq(leadScoreHistory.contactId, contactId)).orderBy(desc(leadScoreHistory.createdAt)).limit(limit || 50);
+}
+
+// --- SALES AUTOMATION RULES ---
+export async function getSalesAutomationRules(filters?: { triggerType?: string; isActive?: boolean }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.triggerType) conditions.push(eq(salesAutomationRules.triggerType, filters.triggerType as any));
+  if (filters?.isActive !== undefined) conditions.push(eq(salesAutomationRules.isActive, filters.isActive));
+  return db.select().from(salesAutomationRules).where(conditions.length > 0 ? and(...conditions) : undefined).orderBy(desc(salesAutomationRules.priority));
+}
+
+export async function getSalesAutomationRuleById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [rule] = await db.select().from(salesAutomationRules).where(eq(salesAutomationRules.id, id));
+  return rule || null;
+}
+
+export async function createSalesAutomationRule(data: Omit<InsertSalesAutomationRule, 'id'>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(salesAutomationRules).values(data as any);
+  return result.insertId;
+}
+
+export async function updateSalesAutomationRule(id: number, data: Partial<InsertSalesAutomationRule>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(salesAutomationRules).set(data as any).where(eq(salesAutomationRules.id, id));
+}
+
+export async function deleteSalesAutomationRule(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(salesAutomationRules).where(eq(salesAutomationRules.id, id));
+}
+
+export async function getSalesAutomationExecutions(filters?: { ruleId?: number; contactId?: number; dealId?: number; status?: string; limit?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.ruleId) conditions.push(eq(salesAutomationExecutions.ruleId, filters.ruleId));
+  if (filters?.contactId) conditions.push(eq(salesAutomationExecutions.contactId, filters.contactId));
+  if (filters?.dealId) conditions.push(eq(salesAutomationExecutions.dealId, filters.dealId));
+  if (filters?.status) conditions.push(eq(salesAutomationExecutions.status, filters.status as any));
+  return db.select().from(salesAutomationExecutions).where(conditions.length > 0 ? and(...conditions) : undefined).orderBy(desc(salesAutomationExecutions.createdAt)).limit(filters?.limit || 100);
+}
+
+// --- EMAIL SEQUENCES ---
+export async function getEmailSequences(filters?: { type?: string; isActive?: boolean }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.type) conditions.push(eq(emailSequences.type, filters.type as any));
+  if (filters?.isActive !== undefined) conditions.push(eq(emailSequences.isActive, filters.isActive));
+  return db.select().from(emailSequences).where(conditions.length > 0 ? and(...conditions) : undefined).orderBy(desc(emailSequences.createdAt));
+}
+
+export async function getEmailSequenceWithSteps(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [sequence] = await db.select().from(emailSequences).where(eq(emailSequences.id, id));
+  if (!sequence) return null;
+  const steps = await db.select().from(emailSequenceSteps).where(eq(emailSequenceSteps.sequenceId, id)).orderBy(emailSequenceSteps.stepNumber);
+  return { ...sequence, steps };
+}
+
+export async function createEmailSequence(data: Omit<InsertEmailSequence, 'id'>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(emailSequences).values(data as any);
+  return result.insertId;
+}
+
+export async function updateEmailSequence(id: number, data: Partial<InsertEmailSequence>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(emailSequences).set(data as any).where(eq(emailSequences.id, id));
+}
+
+export async function deleteEmailSequence(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(emailSequenceSteps).where(eq(emailSequenceSteps.sequenceId, id));
+  await db.delete(emailSequences).where(eq(emailSequences.id, id));
+}
+
+export async function createEmailSequenceStep(data: Omit<InsertEmailSequenceStep, 'id'>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(emailSequenceSteps).values(data as any);
+  return result.insertId;
+}
+
+export async function updateEmailSequenceStep(id: number, data: Partial<InsertEmailSequenceStep>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(emailSequenceSteps).set(data as any).where(eq(emailSequenceSteps.id, id));
+}
+
+export async function deleteEmailSequenceStep(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(emailSequenceSteps).where(eq(emailSequenceSteps.id, id));
+}
+
+export async function getEmailSequenceEnrollments(filters?: { sequenceId?: number; contactId?: number; status?: string; limit?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.sequenceId) conditions.push(eq(emailSequenceEnrollments.sequenceId, filters.sequenceId));
+  if (filters?.contactId) conditions.push(eq(emailSequenceEnrollments.contactId, filters.contactId));
+  if (filters?.status) conditions.push(eq(emailSequenceEnrollments.status, filters.status as any));
+  return db.select().from(emailSequenceEnrollments).where(conditions.length > 0 ? and(...conditions) : undefined).orderBy(desc(emailSequenceEnrollments.enrolledAt)).limit(filters?.limit || 100);
+}
+
+export async function updateEmailSequenceEnrollment(id: number, data: Partial<InsertEmailSequenceEnrollment>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(emailSequenceEnrollments).set(data as any).where(eq(emailSequenceEnrollments.id, id));
+}
+
+export async function getEmailSequenceEvents(enrollmentId: number, limit?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(emailSequenceEvents).where(eq(emailSequenceEvents.enrollmentId, enrollmentId)).orderBy(desc(emailSequenceEvents.createdAt)).limit(limit || 100);
+}
+
+export async function getEmailSequenceStats(sequenceId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [stats] = await db.select({
+    totalEnrolled: sql<number>`COUNT(*)`,
+    activeCount: sql<number>`SUM(CASE WHEN ${emailSequenceEnrollments.status} = 'active' THEN 1 ELSE 0 END)`,
+    completedCount: sql<number>`SUM(CASE WHEN ${emailSequenceEnrollments.status} = 'completed' THEN 1 ELSE 0 END)`,
+    exitedCount: sql<number>`SUM(CASE WHEN ${emailSequenceEnrollments.status} = 'exited' THEN 1 ELSE 0 END)`,
+    totalEmailsSent: sql<number>`SUM(${emailSequenceEnrollments.emailsSent})`,
+    totalEmailsOpened: sql<number>`SUM(${emailSequenceEnrollments.emailsOpened})`,
+    totalEmailsClicked: sql<number>`SUM(${emailSequenceEnrollments.emailsClicked})`,
+    totalEmailsReplied: sql<number>`SUM(${emailSequenceEnrollments.emailsReplied})`,
+    goalsAchieved: sql<number>`SUM(CASE WHEN ${emailSequenceEnrollments.goalAchieved} = true THEN 1 ELSE 0 END)`,
+  }).from(emailSequenceEnrollments).where(eq(emailSequenceEnrollments.sequenceId, sequenceId));
+  return stats;
+}
+
+// --- TERRITORIES ---
+export async function getSalesTerritories(filters?: { isActive?: boolean }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.isActive !== undefined) conditions.push(eq(salesTerritories.isActive, filters.isActive));
+  return db.select().from(salesTerritories).where(conditions.length > 0 ? and(...conditions) : undefined).orderBy(salesTerritories.name);
+}
+
+export async function getSalesTerritoryById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [territory] = await db.select().from(salesTerritories).where(eq(salesTerritories.id, id));
+  return territory || null;
+}
+
+export async function createSalesTerritory(data: Omit<InsertSalesTerritory, 'id'>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(salesTerritories).values(data as any);
+  return result.insertId;
+}
+
+export async function updateSalesTerritory(id: number, data: Partial<InsertSalesTerritory>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(salesTerritories).set(data as any).where(eq(salesTerritories.id, id));
+}
+
+// --- QUOTAS ---
+export async function getSalesQuotas(filters?: { userId?: number; territoryId?: number; periodType?: string; fiscalYear?: number; status?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.userId) conditions.push(eq(salesQuotas.userId, filters.userId));
+  if (filters?.territoryId) conditions.push(eq(salesQuotas.territoryId, filters.territoryId));
+  if (filters?.periodType) conditions.push(eq(salesQuotas.periodType, filters.periodType as any));
+  if (filters?.fiscalYear) conditions.push(eq(salesQuotas.fiscalYear, filters.fiscalYear));
+  if (filters?.status) conditions.push(eq(salesQuotas.status, filters.status as any));
+  return db.select().from(salesQuotas).where(conditions.length > 0 ? and(...conditions) : undefined).orderBy(desc(salesQuotas.periodStart));
+}
+
+export async function getSalesQuotaById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [quota] = await db.select().from(salesQuotas).where(eq(salesQuotas.id, id));
+  return quota || null;
+}
+
+export async function createSalesQuota(data: Omit<InsertSalesQuota, 'id'>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(salesQuotas).values(data as any);
+  return result.insertId;
+}
+
+export async function updateSalesQuota(id: number, data: Partial<InsertSalesQuota>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(salesQuotas).set(data as any).where(eq(salesQuotas.id, id));
+}
+
+export async function getQuotaAttainmentSummary(filters?: { userId?: number; fiscalYear?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [eq(salesQuotas.status, "active")];
+  if (filters?.userId) conditions.push(eq(salesQuotas.userId, filters.userId));
+  if (filters?.fiscalYear) conditions.push(eq(salesQuotas.fiscalYear, filters.fiscalYear));
+  return db.select({
+    id: salesQuotas.id,
+    userId: salesQuotas.userId,
+    periodType: salesQuotas.periodType,
+    periodStart: salesQuotas.periodStart,
+    periodEnd: salesQuotas.periodEnd,
+    revenueQuota: salesQuotas.revenueQuota,
+    revenueAchieved: salesQuotas.revenueAchieved,
+    attainmentPercent: salesQuotas.attainmentPercent,
+    dealCountQuota: salesQuotas.dealCountQuota,
+    dealCountAchieved: salesQuotas.dealCountAchieved,
+  }).from(salesQuotas).where(and(...conditions)).orderBy(desc(salesQuotas.periodStart));
+}
+
+// --- COMMISSION PLANS ---
+export async function getCommissionPlans(filters?: { isActive?: boolean }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.isActive !== undefined) conditions.push(eq(commissionPlans.isActive, filters.isActive));
+  return db.select().from(commissionPlans).where(conditions.length > 0 ? and(...conditions) : undefined).orderBy(desc(commissionPlans.createdAt));
+}
+
+export async function getCommissionPlanById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [plan] = await db.select().from(commissionPlans).where(eq(commissionPlans.id, id));
+  return plan || null;
+}
+
+export async function createCommissionPlan(data: Omit<InsertCommissionPlan, 'id'>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(commissionPlans).values(data as any);
+  return result.insertId;
+}
+
+export async function updateCommissionPlan(id: number, data: Partial<InsertCommissionPlan>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(commissionPlans).set(data as any).where(eq(commissionPlans.id, id));
+}
+
+// --- COMMISSION ASSIGNMENTS ---
+export async function getCommissionAssignments(filters?: { userId?: number; planId?: number; isActive?: boolean }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.userId) conditions.push(eq(commissionAssignments.userId, filters.userId));
+  if (filters?.planId) conditions.push(eq(commissionAssignments.planId, filters.planId));
+  if (filters?.isActive !== undefined) conditions.push(eq(commissionAssignments.isActive, filters.isActive));
+  return db.select().from(commissionAssignments).where(conditions.length > 0 ? and(...conditions) : undefined);
+}
+
+export async function createCommissionAssignment(data: Omit<InsertCommissionAssignment, 'id'>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(commissionAssignments).values(data as any);
+  return result.insertId;
+}
+
+// --- COMMISSION TRANSACTIONS ---
+export async function getCommissionTransactions(filters?: { userId?: number; status?: string; earnedPeriod?: string; limit?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.userId) conditions.push(eq(commissionTransactions.userId, filters.userId));
+  if (filters?.status) conditions.push(eq(commissionTransactions.status, filters.status as any));
+  if (filters?.earnedPeriod) conditions.push(eq(commissionTransactions.earnedPeriod, filters.earnedPeriod));
+  return db.select().from(commissionTransactions).where(conditions.length > 0 ? and(...conditions) : undefined).orderBy(desc(commissionTransactions.createdAt)).limit(filters?.limit || 100);
+}
+
+export async function updateCommissionTransaction(id: number, data: Partial<InsertCommissionTransaction>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(commissionTransactions).set(data as any).where(eq(commissionTransactions.id, id));
+}
+
+export async function getCommissionSummary(userId: number, period?: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const conditions = [eq(commissionTransactions.userId, userId)];
+  if (period) conditions.push(eq(commissionTransactions.earnedPeriod, period));
+  const [summary] = await db.select({
+    totalEarned: sql<number>`SUM(CASE WHEN ${commissionTransactions.transactionType} = 'earned' THEN ${commissionTransactions.commissionAmount} ELSE 0 END)`,
+    totalPaid: sql<number>`SUM(CASE WHEN ${commissionTransactions.status} = 'paid' THEN ${commissionTransactions.commissionAmount} ELSE 0 END)`,
+    totalPending: sql<number>`SUM(CASE WHEN ${commissionTransactions.status} = 'pending' THEN ${commissionTransactions.commissionAmount} ELSE 0 END)`,
+    totalApproved: sql<number>`SUM(CASE WHEN ${commissionTransactions.status} = 'approved' THEN ${commissionTransactions.commissionAmount} ELSE 0 END)`,
+    dealCount: sql<number>`COUNT(DISTINCT ${commissionTransactions.dealId})`,
+  }).from(commissionTransactions).where(and(...conditions));
+  return summary;
+}
+
+// --- FORECASTING ---
+export async function getSalesForecasts(filters?: { userId?: number; territoryId?: number; periodType?: string; limit?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.userId) conditions.push(eq(salesForecasts.userId, filters.userId));
+  if (filters?.territoryId) conditions.push(eq(salesForecasts.territoryId, filters.territoryId));
+  if (filters?.periodType) conditions.push(eq(salesForecasts.periodType, filters.periodType as any));
+  return db.select().from(salesForecasts).where(conditions.length > 0 ? and(...conditions) : undefined).orderBy(desc(salesForecasts.forecastPeriod)).limit(filters?.limit || 12);
+}
+
+export async function getSalesForecastById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [forecast] = await db.select().from(salesForecasts).where(eq(salesForecasts.id, id));
+  return forecast || null;
+}
+
+export async function updateSalesForecast(id: number, data: Partial<InsertSalesForecast>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(salesForecasts).set(data as any).where(eq(salesForecasts.id, id));
+}
+
+export async function getForecastAccuracy(filters?: { userId?: number; periods?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.userId) conditions.push(eq(salesForecasts.userId, filters.userId));
+  conditions.push(sql`${salesForecasts.actualAmount} IS NOT NULL`);
+  return db.select({
+    forecastPeriod: salesForecasts.forecastPeriod,
+    commitAmount: salesForecasts.commitAmount,
+    weightedAmount: salesForecasts.weightedAmount,
+    aiPredictedAmount: salesForecasts.aiPredictedAmount,
+    actualAmount: salesForecasts.actualAmount,
+    forecastAccuracy: salesForecasts.forecastAccuracy,
+  }).from(salesForecasts).where(and(...conditions)).orderBy(desc(salesForecasts.forecastPeriod)).limit(filters?.periods || 12);
+}
+
+// --- GOALS ---
+export async function getSalesGoals(filters?: { userId?: number; teamId?: number; goalType?: string; status?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.userId) conditions.push(eq(salesGoals.userId, filters.userId));
+  if (filters?.teamId) conditions.push(eq(salesGoals.teamId, filters.teamId));
+  if (filters?.goalType) conditions.push(eq(salesGoals.goalType, filters.goalType as any));
+  if (filters?.status) conditions.push(eq(salesGoals.status, filters.status as any));
+  return db.select().from(salesGoals).where(conditions.length > 0 ? and(...conditions) : undefined).orderBy(desc(salesGoals.endDate));
+}
+
+export async function getSalesGoalById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [goal] = await db.select().from(salesGoals).where(eq(salesGoals.id, id));
+  return goal || null;
+}
+
+export async function createSalesGoal(data: Omit<InsertSalesGoal, 'id'>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(salesGoals).values(data as any);
+  return result.insertId;
+}
+
+export async function updateSalesGoal(id: number, data: Partial<InsertSalesGoal>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(salesGoals).set(data as any).where(eq(salesGoals.id, id));
+}
+
+// --- PLAYBOOKS ---
+export async function getSalesPlaybooks(filters?: { dealType?: string; isActive?: boolean }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.dealType) conditions.push(eq(salesPlaybooks.dealType, filters.dealType as any));
+  if (filters?.isActive !== undefined) conditions.push(eq(salesPlaybooks.isActive, filters.isActive));
+  return db.select().from(salesPlaybooks).where(conditions.length > 0 ? and(...conditions) : undefined).orderBy(salesPlaybooks.name);
+}
+
+export async function getSalesPlaybookById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [playbook] = await db.select().from(salesPlaybooks).where(eq(salesPlaybooks.id, id));
+  return playbook || null;
+}
+
+export async function createSalesPlaybook(data: Omit<InsertSalesPlaybook, 'id'>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(salesPlaybooks).values(data as any);
+  return result.insertId;
+}
+
+export async function updateSalesPlaybook(id: number, data: Partial<InsertSalesPlaybook>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(salesPlaybooks).set(data as any).where(eq(salesPlaybooks.id, id));
+}
+
+export async function createDealPlaybookAssignment(data: Omit<InsertDealPlaybookAssignment, 'id'>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(dealPlaybookAssignments).values(data as any);
+  return result.insertId;
+}
+
+export async function updateDealPlaybookAssignment(id: number, data: Partial<InsertDealPlaybookAssignment>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(dealPlaybookAssignments).set(data as any).where(eq(dealPlaybookAssignments.id, id));
+}
+
+// --- ACTIVITIES ---
+export async function getSalesActivities(filters?: { contactId?: number; dealId?: number; activityType?: string; performedBy?: number; startDate?: Date; endDate?: Date; limit?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.contactId) conditions.push(eq(salesActivities.contactId, filters.contactId));
+  if (filters?.dealId) conditions.push(eq(salesActivities.dealId, filters.dealId));
+  if (filters?.activityType) conditions.push(eq(salesActivities.activityType, filters.activityType as any));
+  if (filters?.performedBy) conditions.push(eq(salesActivities.performedBy, filters.performedBy));
+  if (filters?.startDate) conditions.push(gte(salesActivities.activityDate, filters.startDate));
+  if (filters?.endDate) conditions.push(lte(salesActivities.activityDate, filters.endDate));
+  return db.select().from(salesActivities).where(conditions.length > 0 ? and(...conditions) : undefined).orderBy(desc(salesActivities.activityDate)).limit(filters?.limit || 100);
+}
+
+export async function createSalesActivity(data: Omit<InsertSalesActivity, 'id'>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(salesActivities).values(data as any);
+  return result.insertId;
+}
+
+// --- DEAL STAGE HISTORY ---
+export async function getDealStageHistory(dealId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(dealStageHistory).where(eq(dealStageHistory.dealId, dealId)).orderBy(desc(dealStageHistory.createdAt));
+}
+
+// --- COMPETITORS ---
+export async function getDealCompetitors(dealId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(dealCompetitors).where(eq(dealCompetitors.dealId, dealId));
+}
+
+export async function createDealCompetitor(data: Omit<InsertDealCompetitor, 'id'>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(dealCompetitors).values(data as any);
+  return result.insertId;
+}
+
+// --- COACHING ---
+export async function getSalesCoachingNotes(filters?: { repUserId?: number; coachUserId?: number; type?: string; limit?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.repUserId) conditions.push(eq(salesCoachingNotes.repUserId, filters.repUserId));
+  if (filters?.coachUserId) conditions.push(eq(salesCoachingNotes.coachUserId, filters.coachUserId));
+  if (filters?.type) conditions.push(eq(salesCoachingNotes.type, filters.type as any));
+  return db.select().from(salesCoachingNotes).where(conditions.length > 0 ? and(...conditions) : undefined).orderBy(desc(salesCoachingNotes.createdAt)).limit(filters?.limit || 50);
+}
+
+export async function createSalesCoachingNote(data: Omit<InsertSalesCoachingNote, 'id'>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(salesCoachingNotes).values(data as any);
+  return result.insertId;
+}
+
+export async function updateSalesCoachingNote(id: number, data: Partial<InsertSalesCoachingNote>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(salesCoachingNotes).set(data as any).where(eq(salesCoachingNotes.id, id));
+}
+
+// --- LEADERBOARD ---
+export async function getCurrentLeaderboard(periodType: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const [snapshot] = await db.select().from(salesLeaderboardSnapshots).where(eq(salesLeaderboardSnapshots.periodType, periodType as any)).orderBy(desc(salesLeaderboardSnapshots.snapshotAt)).limit(1);
+  return snapshot || null;
+}
+
+export async function getLeaderboardHistory(periodType: string, limit?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(salesLeaderboardSnapshots).where(eq(salesLeaderboardSnapshots.periodType, periodType as any)).orderBy(desc(salesLeaderboardSnapshots.snapshotAt)).limit(limit || 10);
+}
+
+// --- METRICS ---
+export async function getDailyMetrics(userId: number, startDate?: Date, endDate?: Date) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [eq(salesMetricsDaily.userId, userId)];
+  if (startDate) conditions.push(gte(salesMetricsDaily.metricDate, startDate));
+  if (endDate) conditions.push(lte(salesMetricsDaily.metricDate, endDate));
+  return db.select().from(salesMetricsDaily).where(and(...conditions)).orderBy(desc(salesMetricsDaily.metricDate)).limit(90);
+}
+
+export async function getSalesDashboardMetrics(userId: number, period?: string) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const now = new Date();
+  let startDate: Date;
+  switch (period) {
+    case "today":
+      startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      break;
+    case "week":
+      startDate = new Date(now);
+      startDate.setDate(now.getDate() - 7);
+      break;
+    case "quarter":
+      startDate = new Date(now.getFullYear(), Math.floor(now.getMonth() / 3) * 3, 1);
+      break;
+    case "year":
+      startDate = new Date(now.getFullYear(), 0, 1);
+      break;
+    default:
+      startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+  }
+
+  const [metrics] = await db.select({
+    totalDeals: sql<number>`COUNT(*)`,
+    wonDeals: sql<number>`SUM(CASE WHEN ${crmDeals.status} = 'won' THEN 1 ELSE 0 END)`,
+    lostDeals: sql<number>`SUM(CASE WHEN ${crmDeals.status} = 'lost' THEN 1 ELSE 0 END)`,
+    openDeals: sql<number>`SUM(CASE WHEN ${crmDeals.status} = 'open' THEN 1 ELSE 0 END)`,
+    totalRevenue: sql<number>`SUM(CASE WHEN ${crmDeals.status} = 'won' THEN ${crmDeals.amount} ELSE 0 END)`,
+    pipelineValue: sql<number>`SUM(CASE WHEN ${crmDeals.status} = 'open' THEN ${crmDeals.amount} ELSE 0 END)`,
+    weightedPipeline: sql<number>`SUM(CASE WHEN ${crmDeals.status} = 'open' THEN ${crmDeals.amount} * ${crmDeals.probability} / 100 ELSE 0 END)`,
+    avgDealSize: sql<number>`AVG(CASE WHEN ${crmDeals.status} = 'won' THEN ${crmDeals.amount} ELSE NULL END)`,
+  }).from(crmDeals).where(and(eq(crmDeals.assignedTo, userId), gte(crmDeals.createdAt, startDate)));
+
+  const [activities] = await db.select({
+    totalActivities: sql<number>`COUNT(*)`,
+    emailsSent: sql<number>`SUM(CASE WHEN ${salesActivities.activityType} = 'email_sent' THEN 1 ELSE 0 END)`,
+    callsMade: sql<number>`SUM(CASE WHEN ${salesActivities.activityType} IN ('call_made', 'call_received') THEN 1 ELSE 0 END)`,
+    meetingsCompleted: sql<number>`SUM(CASE WHEN ${salesActivities.activityType} = 'meeting_completed' THEN 1 ELSE 0 END)`,
+  }).from(salesActivities).where(and(eq(salesActivities.performedBy, userId), gte(salesActivities.activityDate, startDate)));
+
+  return { ...metrics, ...activities, period, startDate };
+}
+
+export async function getPipelineHealthMetrics(filters?: { pipelineId?: number; userId?: number }) {
+  const db = await getDb();
+  if (!db) return null;
+  const conditions = [eq(crmDeals.status, "open")];
+  if (filters?.pipelineId) conditions.push(eq(crmDeals.pipelineId, filters.pipelineId));
+  if (filters?.userId) conditions.push(eq(crmDeals.assignedTo, filters.userId));
+
+  const [metrics] = await db.select({
+    totalDeals: sql<number>`COUNT(*)`,
+    totalValue: sql<number>`SUM(${crmDeals.amount})`,
+    weightedValue: sql<number>`SUM(${crmDeals.amount} * ${crmDeals.probability} / 100)`,
+    avgProbability: sql<number>`AVG(${crmDeals.probability})`,
+    avgDealAge: sql<number>`AVG(DATEDIFF(NOW(), ${crmDeals.createdAt}))`,
+    dealsAtRisk: sql<number>`SUM(CASE WHEN ${crmDeals.probability} < 30 AND DATEDIFF(NOW(), ${crmDeals.createdAt}) > 30 THEN 1 ELSE 0 END)`,
+  }).from(crmDeals).where(and(...conditions));
+
+  const stageDistribution = await db.select({
+    stage: crmDeals.stage,
+    count: sql<number>`COUNT(*)`,
+    value: sql<number>`SUM(${crmDeals.amount})`,
+  }).from(crmDeals).where(and(...conditions)).groupBy(crmDeals.stage);
+
+  return { ...metrics, stageDistribution };
+}
+
+export async function getSalesVelocityMetrics(filters?: { userId?: number; pipelineId?: number; period?: string }) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const now = new Date();
+  let startDate: Date;
+  switch (filters?.period) {
+    case "quarter":
+      startDate = new Date(now.getFullYear(), Math.floor(now.getMonth() / 3) * 3, 1);
+      break;
+    case "year":
+      startDate = new Date(now.getFullYear(), 0, 1);
+      break;
+    default:
+      startDate = new Date(now.getFullYear(), now.getMonth() - 3, 1);
+  }
+
+  const conditions = [eq(crmDeals.status, "won"), gte(crmDeals.wonAt, startDate)];
+  if (filters?.userId) conditions.push(eq(crmDeals.assignedTo, filters.userId));
+  if (filters?.pipelineId) conditions.push(eq(crmDeals.pipelineId, filters.pipelineId));
+
+  const [velocity] = await db.select({
+    totalDeals: sql<number>`COUNT(*)`,
+    totalRevenue: sql<number>`SUM(${crmDeals.amount})`,
+    avgDealSize: sql<number>`AVG(${crmDeals.amount})`,
+    avgSalesCycle: sql<number>`AVG(DATEDIFF(${crmDeals.wonAt}, ${crmDeals.createdAt}))`,
+  }).from(crmDeals).where(and(...conditions));
+
+  const [winRate] = await db.select({
+    total: sql<number>`COUNT(*)`,
+    won: sql<number>`SUM(CASE WHEN ${crmDeals.status} = 'won' THEN 1 ELSE 0 END)`,
+    lost: sql<number>`SUM(CASE WHEN ${crmDeals.status} = 'lost' THEN 1 ELSE 0 END)`,
+  }).from(crmDeals).where(and(or(eq(crmDeals.status, "won"), eq(crmDeals.status, "lost")), gte(crmDeals.createdAt, startDate)));
+
+  const winRatePercent = winRate?.total > 0 ? (winRate.won / winRate.total) * 100 : 0;
+  const salesVelocity = velocity?.avgSalesCycle > 0
+    ? ((velocity.totalDeals || 0) * (velocity.avgDealSize || 0) * (winRatePercent / 100)) / (velocity.avgSalesCycle || 1)
+    : 0;
+
+  return { ...velocity, winRatePercent, salesVelocity, period: filters?.period || "quarter" };
 }

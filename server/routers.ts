@@ -11,6 +11,7 @@ import * as emailService from "./_core/emailService";
 import * as sendgridProvider from "./_core/sendgridProvider";
 import { parseUploadedDocument, importPurchaseOrder, importFreightInvoice, matchLineItemsToMaterials } from "./documentImportService";
 import { processAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingActions, type AIAgentContext } from "./aiAgentService";
+import * as salesAutomation from "./salesAutomationService";
 import * as db from "./db";
 import { storagePut } from "./storage";
 import { nanoid } from "nanoid";
@@ -12152,6 +12153,1041 @@ Ask if they received the original request and if they can provide a quote.`;
           await db.updateCrmEmailCampaign(id, data);
           await createAuditLog(ctx.user.id, 'update', 'crm_campaign', id);
           return { success: true };
+        }),
+    }),
+  }),
+
+  // ============================================
+  // SALES AUTOMATION SYSTEM - Million Dollar Sales Machine
+  // ============================================
+  salesAutomation: router({
+    // --- LEAD SCORING ---
+    leadScoring: router({
+      // Calculate lead score for a contact
+      calculateScore: protectedProcedure
+        .input(z.object({ contactId: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await salesAutomation.calculateLeadScore(input.contactId, {
+            userId: ctx.user.id,
+            userName: ctx.user.name,
+          });
+          return result;
+        }),
+
+      // Bulk recalculate lead scores
+      bulkCalculate: protectedProcedure
+        .input(z.object({ contactIds: z.array(z.number()) }))
+        .mutation(async ({ input, ctx }) => {
+          const results = [];
+          for (const contactId of input.contactIds) {
+            try {
+              const result = await salesAutomation.calculateLeadScore(contactId, {
+                userId: ctx.user.id,
+              });
+              results.push({ contactId, success: true, newScore: result.newScore });
+            } catch (error: any) {
+              results.push({ contactId, success: false, error: error.message });
+            }
+          }
+          return { results };
+        }),
+
+      // List scoring rules
+      listRules: protectedProcedure
+        .input(z.object({
+          category: z.string().optional(),
+          isActive: z.boolean().optional(),
+        }).optional())
+        .query(({ input }) => db.getLeadScoringRules(input)),
+
+      // Create scoring rule
+      createRule: protectedProcedure
+        .input(z.object({
+          name: z.string().min(1),
+          description: z.string().optional(),
+          category: z.enum(["demographic", "firmographic", "behavioral", "engagement", "fit", "custom"]),
+          criteria: z.string(), // JSON
+          scoreValue: z.number(),
+          scoreType: z.enum(["add", "subtract", "multiply", "set"]).optional(),
+          decayEnabled: z.boolean().optional(),
+          decayDays: z.number().optional(),
+          decayRate: z.string().optional(),
+          maxApplications: z.number().optional(),
+          priority: z.number().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const id = await db.createLeadScoringRule({ ...input, createdBy: ctx.user.id });
+          await createAuditLog(ctx.user.id, 'create', 'lead_scoring_rule', id, input.name);
+          return { id };
+        }),
+
+      // Update scoring rule
+      updateRule: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          description: z.string().optional(),
+          criteria: z.string().optional(),
+          scoreValue: z.number().optional(),
+          scoreType: z.enum(["add", "subtract", "multiply", "set"]).optional(),
+          isActive: z.boolean().optional(),
+          priority: z.number().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateLeadScoringRule(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'lead_scoring_rule', id);
+          return { success: true };
+        }),
+
+      // Get score history for a contact
+      getHistory: protectedProcedure
+        .input(z.object({ contactId: z.number(), limit: z.number().optional() }))
+        .query(({ input }) => db.getLeadScoreHistory(input.contactId, input.limit)),
+    }),
+
+    // --- AUTOMATION RULES ---
+    rules: router({
+      list: protectedProcedure
+        .input(z.object({
+          triggerType: z.string().optional(),
+          isActive: z.boolean().optional(),
+        }).optional())
+        .query(({ input }) => db.getSalesAutomationRules(input)),
+
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getSalesAutomationRuleById(input.id)),
+
+      create: protectedProcedure
+        .input(z.object({
+          name: z.string().min(1),
+          description: z.string().optional(),
+          triggerType: z.enum([
+            "deal_created", "deal_stage_changed", "deal_won", "deal_lost", "deal_stalled",
+            "contact_created", "contact_updated", "contact_score_changed",
+            "email_opened", "email_clicked", "email_replied",
+            "no_activity", "follow_up_due", "meeting_scheduled", "meeting_completed",
+            "quote_sent", "quote_viewed", "quote_accepted",
+            "invoice_sent", "invoice_paid", "invoice_overdue",
+            "custom_field_changed", "tag_added", "tag_removed", "schedule"
+          ]),
+          triggerConditions: z.string().optional(), // JSON
+          schedule: z.string().optional(),
+          actions: z.string(), // JSON array
+          delayMinutes: z.number().optional(),
+          onlyDuringBusinessHours: z.boolean().optional(),
+          businessHoursTimezone: z.string().optional(),
+          applyToPipelines: z.string().optional(),
+          applyToContactTypes: z.string().optional(),
+          applyToTags: z.string().optional(),
+          maxExecutionsPerContact: z.number().optional(),
+          cooldownMinutes: z.number().optional(),
+          priority: z.number().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const id = await db.createSalesAutomationRule({ ...input, createdBy: ctx.user.id });
+          await createAuditLog(ctx.user.id, 'create', 'sales_automation_rule', id, input.name);
+          return { id };
+        }),
+
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          description: z.string().optional(),
+          triggerConditions: z.string().optional(),
+          actions: z.string().optional(),
+          isActive: z.boolean().optional(),
+          priority: z.number().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateSalesAutomationRule(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'sales_automation_rule', id);
+          return { success: true };
+        }),
+
+      delete: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteSalesAutomationRule(input.id);
+          await createAuditLog(ctx.user.id, 'delete', 'sales_automation_rule', input.id);
+          return { success: true };
+        }),
+
+      // Get execution history
+      getExecutions: protectedProcedure
+        .input(z.object({
+          ruleId: z.number().optional(),
+          contactId: z.number().optional(),
+          dealId: z.number().optional(),
+          status: z.string().optional(),
+          limit: z.number().optional(),
+        }))
+        .query(({ input }) => db.getSalesAutomationExecutions(input)),
+    }),
+
+    // --- EMAIL SEQUENCES ---
+    sequences: router({
+      list: protectedProcedure
+        .input(z.object({
+          type: z.string().optional(),
+          isActive: z.boolean().optional(),
+        }).optional())
+        .query(({ input }) => db.getEmailSequences(input)),
+
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getEmailSequenceWithSteps(input.id)),
+
+      create: protectedProcedure
+        .input(z.object({
+          name: z.string().min(1),
+          description: z.string().optional(),
+          type: z.enum(["nurture", "onboarding", "re_engagement", "upsell", "follow_up", "event", "custom"]).optional(),
+          entryTriggers: z.string().optional(),
+          exitTriggers: z.string().optional(),
+          sendOnWeekends: z.boolean().optional(),
+          sendingWindow: z.string().optional(),
+          goalType: z.enum(["reply", "click", "meeting_booked", "deal_created", "deal_won", "custom"]).optional(),
+          goalCondition: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const id = await db.createEmailSequence({ ...input, createdBy: ctx.user.id });
+          await createAuditLog(ctx.user.id, 'create', 'email_sequence', id, input.name);
+          return { id };
+        }),
+
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          description: z.string().optional(),
+          entryTriggers: z.string().optional(),
+          exitTriggers: z.string().optional(),
+          sendOnWeekends: z.boolean().optional(),
+          sendingWindow: z.string().optional(),
+          isActive: z.boolean().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateEmailSequence(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'email_sequence', id);
+          return { success: true };
+        }),
+
+      delete: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteEmailSequence(input.id);
+          await createAuditLog(ctx.user.id, 'delete', 'email_sequence', input.id);
+          return { success: true };
+        }),
+
+      // Steps management
+      addStep: protectedProcedure
+        .input(z.object({
+          sequenceId: z.number(),
+          stepNumber: z.number(),
+          name: z.string().optional(),
+          stepType: z.enum(["email", "task", "wait", "condition", "webhook"]).optional(),
+          delayDays: z.number().optional(),
+          delayHours: z.number().optional(),
+          delayMinutes: z.number().optional(),
+          emailTemplateId: z.number().optional(),
+          subject: z.string().optional(),
+          bodyHtml: z.string().optional(),
+          bodyText: z.string().optional(),
+          taskTitle: z.string().optional(),
+          taskDescription: z.string().optional(),
+          taskAssignTo: z.enum(["owner", "specific_user", "round_robin"]).optional(),
+          taskAssignUserId: z.number().optional(),
+          conditionType: z.string().optional(),
+          conditionConfig: z.string().optional(),
+          trueNextStep: z.number().optional(),
+          falseNextStep: z.number().optional(),
+          webhookUrl: z.string().optional(),
+          webhookPayload: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const id = await db.createEmailSequenceStep(input);
+          await createAuditLog(ctx.user.id, 'create', 'email_sequence_step', id);
+          return { id };
+        }),
+
+      updateStep: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          delayDays: z.number().optional(),
+          delayHours: z.number().optional(),
+          subject: z.string().optional(),
+          bodyHtml: z.string().optional(),
+          isActive: z.boolean().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateEmailSequenceStep(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'email_sequence_step', id);
+          return { success: true };
+        }),
+
+      deleteStep: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteEmailSequenceStep(input.id);
+          await createAuditLog(ctx.user.id, 'delete', 'email_sequence_step', input.id);
+          return { success: true };
+        }),
+
+      // Enrollment management
+      enroll: protectedProcedure
+        .input(z.object({
+          contactId: z.number(),
+          sequenceId: z.number(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await salesAutomation.enrollInSequence(input.contactId, input.sequenceId, {
+            userId: ctx.user.id,
+          });
+          await createAuditLog(ctx.user.id, 'create', 'sequence_enrollment', result.enrollmentId);
+          return result;
+        }),
+
+      bulkEnroll: protectedProcedure
+        .input(z.object({
+          contactIds: z.array(z.number()),
+          sequenceId: z.number(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const results = [];
+          for (const contactId of input.contactIds) {
+            try {
+              const result = await salesAutomation.enrollInSequence(contactId, input.sequenceId, {
+                userId: ctx.user.id,
+              });
+              results.push({ contactId, success: true, enrollmentId: result.enrollmentId });
+            } catch (error: any) {
+              results.push({ contactId, success: false, error: error.message });
+            }
+          }
+          return { results, enrolled: results.filter(r => r.success).length };
+        }),
+
+      unenroll: protectedProcedure
+        .input(z.object({ enrollmentId: z.number(), reason: z.string().optional() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.updateEmailSequenceEnrollment(input.enrollmentId, {
+            status: "exited",
+            exitReason: input.reason || "manually_removed",
+            exitedAt: new Date(),
+          });
+          await createAuditLog(ctx.user.id, 'update', 'sequence_enrollment', input.enrollmentId);
+          return { success: true };
+        }),
+
+      getEnrollments: protectedProcedure
+        .input(z.object({
+          sequenceId: z.number().optional(),
+          contactId: z.number().optional(),
+          status: z.string().optional(),
+          limit: z.number().optional(),
+        }))
+        .query(({ input }) => db.getEmailSequenceEnrollments(input)),
+
+      getEnrollmentEvents: protectedProcedure
+        .input(z.object({ enrollmentId: z.number(), limit: z.number().optional() }))
+        .query(({ input }) => db.getEmailSequenceEvents(input.enrollmentId, input.limit)),
+
+      // Stats
+      getStats: protectedProcedure
+        .input(z.object({ sequenceId: z.number() }))
+        .query(({ input }) => db.getEmailSequenceStats(input.sequenceId)),
+    }),
+
+    // --- TERRITORIES ---
+    territories: router({
+      list: protectedProcedure
+        .input(z.object({ isActive: z.boolean().optional() }).optional())
+        .query(({ input }) => db.getSalesTerritories(input)),
+
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getSalesTerritoryById(input.id)),
+
+      create: protectedProcedure
+        .input(z.object({
+          name: z.string().min(1),
+          description: z.string().optional(),
+          type: z.enum(["geographic", "industry", "account_size", "product", "named_accounts", "custom"]).optional(),
+          rules: z.string().optional(),
+          ownerId: z.number().optional(),
+          teamMembers: z.string().optional(),
+          annualTarget: z.string().optional(),
+          quarterlyTarget: z.string().optional(),
+          monthlyTarget: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const id = await db.createSalesTerritory(input);
+          await createAuditLog(ctx.user.id, 'create', 'sales_territory', id, input.name);
+          return { id };
+        }),
+
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          description: z.string().optional(),
+          ownerId: z.number().optional(),
+          teamMembers: z.string().optional(),
+          annualTarget: z.string().optional(),
+          isActive: z.boolean().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateSalesTerritory(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'sales_territory', id);
+          return { success: true };
+        }),
+    }),
+
+    // --- QUOTAS ---
+    quotas: router({
+      list: protectedProcedure
+        .input(z.object({
+          userId: z.number().optional(),
+          territoryId: z.number().optional(),
+          periodType: z.string().optional(),
+          fiscalYear: z.number().optional(),
+          status: z.string().optional(),
+        }).optional())
+        .query(({ input }) => db.getSalesQuotas(input)),
+
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getSalesQuotaById(input.id)),
+
+      create: protectedProcedure
+        .input(z.object({
+          userId: z.number().optional(),
+          territoryId: z.number().optional(),
+          teamId: z.number().optional(),
+          periodType: z.enum(["monthly", "quarterly", "annual"]),
+          periodStart: z.date(),
+          periodEnd: z.date(),
+          fiscalYear: z.number(),
+          fiscalQuarter: z.number().optional(),
+          fiscalMonth: z.number().optional(),
+          revenueQuota: z.string(),
+          dealCountQuota: z.number().optional(),
+          newBusinessQuota: z.string().optional(),
+          renewalQuota: z.string().optional(),
+          upsellQuota: z.string().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const id = await db.createSalesQuota({ ...input, createdBy: ctx.user.id });
+          await createAuditLog(ctx.user.id, 'create', 'sales_quota', id);
+          return { id };
+        }),
+
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          revenueQuota: z.string().optional(),
+          dealCountQuota: z.number().optional(),
+          status: z.enum(["draft", "active", "closed"]).optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateSalesQuota(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'sales_quota', id);
+          return { success: true };
+        }),
+
+      // Get quota attainment summary
+      getAttainmentSummary: protectedProcedure
+        .input(z.object({
+          userId: z.number().optional(),
+          fiscalYear: z.number().optional(),
+        }))
+        .query(({ input }) => db.getQuotaAttainmentSummary(input)),
+    }),
+
+    // --- COMMISSIONS ---
+    commissions: router({
+      // Plans
+      listPlans: protectedProcedure
+        .input(z.object({ isActive: z.boolean().optional() }).optional())
+        .query(({ input }) => db.getCommissionPlans(input)),
+
+      getPlan: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getCommissionPlanById(input.id)),
+
+      createPlan: adminProcedure
+        .input(z.object({
+          name: z.string().min(1),
+          description: z.string().optional(),
+          type: z.enum(["flat_rate", "tiered", "accelerator", "draw", "hybrid"]),
+          rateStructure: z.string(), // JSON
+          dealTypeRates: z.string().optional(),
+          productRates: z.string().optional(),
+          minPayout: z.string().optional(),
+          maxPayout: z.string().optional(),
+          calculationFrequency: z.enum(["realtime", "daily", "weekly", "monthly"]).optional(),
+          payoutFrequency: z.enum(["weekly", "biweekly", "monthly", "quarterly"]).optional(),
+          clawbackEnabled: z.boolean().optional(),
+          clawbackPeriodDays: z.number().optional(),
+          clawbackRules: z.string().optional(),
+          effectiveDate: z.date(),
+          expirationDate: z.date().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const id = await db.createCommissionPlan({ ...input, createdBy: ctx.user.id });
+          await createAuditLog(ctx.user.id, 'create', 'commission_plan', id, input.name);
+          return { id };
+        }),
+
+      updatePlan: adminProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          rateStructure: z.string().optional(),
+          isActive: z.boolean().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateCommissionPlan(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'commission_plan', id);
+          return { success: true };
+        }),
+
+      // Assignments
+      listAssignments: protectedProcedure
+        .input(z.object({
+          userId: z.number().optional(),
+          planId: z.number().optional(),
+          isActive: z.boolean().optional(),
+        }).optional())
+        .query(({ input }) => db.getCommissionAssignments(input)),
+
+      createAssignment: adminProcedure
+        .input(z.object({
+          userId: z.number(),
+          planId: z.number(),
+          customRateStructure: z.string().optional(),
+          drawAmount: z.string().optional(),
+          effectiveDate: z.date(),
+          expirationDate: z.date().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const id = await db.createCommissionAssignment({ ...input, createdBy: ctx.user.id });
+          await createAuditLog(ctx.user.id, 'create', 'commission_assignment', id);
+          return { id };
+        }),
+
+      // Transactions
+      listTransactions: protectedProcedure
+        .input(z.object({
+          userId: z.number().optional(),
+          status: z.string().optional(),
+          earnedPeriod: z.string().optional(),
+          limit: z.number().optional(),
+        }).optional())
+        .query(({ input }) => db.getCommissionTransactions(input)),
+
+      approveTransaction: adminProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.updateCommissionTransaction(input.id, {
+            status: "approved",
+            approvedBy: ctx.user.id,
+            approvedAt: new Date(),
+          });
+          await createAuditLog(ctx.user.id, 'approve', 'commission_transaction', input.id);
+          return { success: true };
+        }),
+
+      markPaid: adminProcedure
+        .input(z.object({
+          ids: z.array(z.number()),
+          payoutPeriod: z.string(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          for (const id of input.ids) {
+            await db.updateCommissionTransaction(id, {
+              status: "paid",
+              paidAt: new Date(),
+              payoutPeriod: input.payoutPeriod,
+            });
+            await createAuditLog(ctx.user.id, 'update', 'commission_transaction', id);
+          }
+          return { success: true, count: input.ids.length };
+        }),
+
+      // Calculate commission for a deal
+      calculateForDeal: protectedProcedure
+        .input(z.object({ dealId: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await salesAutomation.calculateDealCommission(input.dealId, {
+            userId: ctx.user.id,
+          });
+          return result;
+        }),
+
+      // Get commission summary for a user
+      getSummary: protectedProcedure
+        .input(z.object({
+          userId: z.number().optional(),
+          period: z.string().optional(), // YYYY-MM
+        }))
+        .query(({ input, ctx }) => db.getCommissionSummary(input.userId || ctx.user.id, input.period)),
+    }),
+
+    // --- FORECASTING ---
+    forecasting: router({
+      // Generate/update forecast
+      generate: protectedProcedure
+        .input(z.object({
+          period: z.string(), // YYYY-MM or YYYY-Q1
+          userId: z.number().optional(),
+          territoryId: z.number().optional(),
+          pipelineId: z.number().optional(),
+          useAI: z.boolean().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await salesAutomation.generateSalesForecast(input.period, {
+            userId: input.userId,
+            territoryId: input.territoryId,
+            pipelineId: input.pipelineId,
+            useAI: input.useAI,
+          }, { userId: ctx.user.id });
+          return result;
+        }),
+
+      // Get forecasts
+      list: protectedProcedure
+        .input(z.object({
+          userId: z.number().optional(),
+          territoryId: z.number().optional(),
+          periodType: z.string().optional(),
+          limit: z.number().optional(),
+        }).optional())
+        .query(({ input }) => db.getSalesForecasts(input)),
+
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getSalesForecastById(input.id)),
+
+      // Manual override
+      setOverride: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          manualOverride: z.string(),
+          overrideReason: z.string(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          await db.updateSalesForecast(input.id, {
+            manualOverride: input.manualOverride,
+            overrideReason: input.overrideReason,
+            overrideBy: ctx.user.id,
+          });
+          await createAuditLog(ctx.user.id, 'update', 'sales_forecast', input.id);
+          return { success: true };
+        }),
+
+      // Get forecast accuracy
+      getAccuracy: protectedProcedure
+        .input(z.object({
+          userId: z.number().optional(),
+          periods: z.number().optional(), // Number of past periods
+        }))
+        .query(({ input }) => db.getForecastAccuracy(input)),
+    }),
+
+    // --- GOALS ---
+    goals: router({
+      list: protectedProcedure
+        .input(z.object({
+          userId: z.number().optional(),
+          teamId: z.number().optional(),
+          goalType: z.string().optional(),
+          status: z.string().optional(),
+        }).optional())
+        .query(({ input }) => db.getSalesGoals(input)),
+
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getSalesGoalById(input.id)),
+
+      create: protectedProcedure
+        .input(z.object({
+          userId: z.number().optional(),
+          teamId: z.number().optional(),
+          name: z.string().min(1),
+          description: z.string().optional(),
+          goalType: z.enum([
+            "revenue", "deal_count", "calls", "meetings", "demos", "proposals",
+            "new_customers", "upsells", "renewals", "win_rate", "avg_deal_size",
+            "activity_count", "response_time", "custom"
+          ]),
+          targetValue: z.string(),
+          targetUnit: z.string().optional(),
+          startDate: z.date(),
+          endDate: z.date(),
+          milestones: z.string().optional(),
+          rewardDescription: z.string().optional(),
+          rewardValue: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const id = await db.createSalesGoal({ ...input, createdBy: ctx.user.id });
+          await createAuditLog(ctx.user.id, 'create', 'sales_goal', id, input.name);
+          return { id };
+        }),
+
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          currentValue: z.string().optional(),
+          status: z.enum(["not_started", "in_progress", "at_risk", "on_track", "achieved", "missed"]).optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateSalesGoal(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'sales_goal', id);
+          return { success: true };
+        }),
+    }),
+
+    // --- PLAYBOOKS ---
+    playbooks: router({
+      list: protectedProcedure
+        .input(z.object({
+          dealType: z.string().optional(),
+          isActive: z.boolean().optional(),
+        }).optional())
+        .query(({ input }) => db.getSalesPlaybooks(input)),
+
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getSalesPlaybookById(input.id)),
+
+      create: protectedProcedure
+        .input(z.object({
+          name: z.string().min(1),
+          description: z.string().optional(),
+          dealType: z.enum(["new_business", "upsell", "renewal", "expansion", "all"]).optional(),
+          dealSizeMin: z.string().optional(),
+          dealSizeMax: z.string().optional(),
+          industryFocus: z.string().optional(),
+          stages: z.string(), // JSON
+          avgDealCycleTarget: z.number().optional(),
+          winRateTarget: z.string().optional(),
+          isDefault: z.boolean().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const id = await db.createSalesPlaybook({ ...input, createdBy: ctx.user.id });
+          await createAuditLog(ctx.user.id, 'create', 'sales_playbook', id, input.name);
+          return { id };
+        }),
+
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          stages: z.string().optional(),
+          isActive: z.boolean().optional(),
+          isDefault: z.boolean().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateSalesPlaybook(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'sales_playbook', id);
+          return { success: true };
+        }),
+
+      // Assign playbook to deal
+      assignToDeal: protectedProcedure
+        .input(z.object({
+          dealId: z.number(),
+          playbookId: z.number(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const id = await db.createDealPlaybookAssignment(input);
+          await createAuditLog(ctx.user.id, 'create', 'deal_playbook_assignment', id);
+          return { id };
+        }),
+
+      // Update playbook progress
+      updateProgress: protectedProcedure
+        .input(z.object({
+          assignmentId: z.number(),
+          currentStageIndex: z.number().optional(),
+          completedTasks: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { assignmentId, ...data } = input;
+          await db.updateDealPlaybookAssignment(assignmentId, data);
+          await createAuditLog(ctx.user.id, 'update', 'deal_playbook_assignment', assignmentId);
+          return { success: true };
+        }),
+    }),
+
+    // --- ACTIVITIES ---
+    activities: router({
+      list: protectedProcedure
+        .input(z.object({
+          contactId: z.number().optional(),
+          dealId: z.number().optional(),
+          activityType: z.string().optional(),
+          performedBy: z.number().optional(),
+          startDate: z.date().optional(),
+          endDate: z.date().optional(),
+          limit: z.number().optional(),
+        }).optional())
+        .query(({ input }) => db.getSalesActivities(input)),
+
+      create: protectedProcedure
+        .input(z.object({
+          contactId: z.number().optional(),
+          dealId: z.number().optional(),
+          activityType: z.enum([
+            "email_sent", "email_received", "email_opened", "email_clicked",
+            "call_made", "call_received", "call_missed", "voicemail_left",
+            "meeting_scheduled", "meeting_completed", "meeting_cancelled", "meeting_no_show",
+            "demo_scheduled", "demo_completed",
+            "proposal_sent", "proposal_viewed", "proposal_accepted", "proposal_rejected",
+            "contract_sent", "contract_signed",
+            "note_added", "task_created", "task_completed",
+            "stage_changed", "deal_created", "deal_won", "deal_lost",
+            "document_shared", "document_viewed",
+            "linkedin_message", "linkedin_connection",
+            "sms_sent", "sms_received",
+            "whatsapp_sent", "whatsapp_received",
+            "chat_message", "form_submitted", "page_visited", "custom"
+          ]),
+          subject: z.string().optional(),
+          description: z.string().optional(),
+          outcome: z.string().optional(),
+          durationMinutes: z.number().optional(),
+          activityDate: z.date().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const id = await db.createSalesActivity({ ...input, performedBy: ctx.user.id });
+          return { id };
+        }),
+    }),
+
+    // --- DEAL OPERATIONS ---
+    deals: router({
+      // Move deal to stage (with automation)
+      moveStage: protectedProcedure
+        .input(z.object({
+          dealId: z.number(),
+          newStage: z.string(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await salesAutomation.processDealStageChange(input.dealId, input.newStage, {
+            userId: ctx.user.id,
+            userName: ctx.user.name,
+          });
+          await createAuditLog(ctx.user.id, 'update', 'crm_deal', input.dealId);
+          return result;
+        }),
+
+      // Mark deal as won
+      markWon: protectedProcedure
+        .input(z.object({ dealId: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await salesAutomation.processDealWon(input.dealId, { userId: ctx.user.id });
+          await createAuditLog(ctx.user.id, 'update', 'crm_deal', input.dealId);
+          return { success: true };
+        }),
+
+      // Mark deal as lost
+      markLost: protectedProcedure
+        .input(z.object({
+          dealId: z.number(),
+          lostReason: z.string(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          await salesAutomation.processDealLost(input.dealId, input.lostReason, { userId: ctx.user.id });
+          await createAuditLog(ctx.user.id, 'update', 'crm_deal', input.dealId);
+          return { success: true };
+        }),
+
+      // Get deal stage history
+      getStageHistory: protectedProcedure
+        .input(z.object({ dealId: z.number() }))
+        .query(({ input }) => db.getDealStageHistory(input.dealId)),
+
+      // Add competitor
+      addCompetitor: protectedProcedure
+        .input(z.object({
+          dealId: z.number(),
+          competitorName: z.string(),
+          status: z.enum(["identified", "actively_competing", "eliminated", "won_against", "lost_to"]).optional(),
+          threatLevel: z.enum(["low", "medium", "high", "critical"]).optional(),
+          estimatedPrice: z.string().optional(),
+          priceConfidence: z.enum(["rumor", "estimate", "confirmed"]).optional(),
+          strengths: z.string().optional(),
+          weaknesses: z.string().optional(),
+          ourAdvantages: z.string().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const id = await db.createDealCompetitor({ ...input, createdBy: ctx.user.id });
+          return { id };
+        }),
+
+      getCompetitors: protectedProcedure
+        .input(z.object({ dealId: z.number() }))
+        .query(({ input }) => db.getDealCompetitors(input.dealId)),
+    }),
+
+    // --- COACHING ---
+    coaching: router({
+      list: protectedProcedure
+        .input(z.object({
+          repUserId: z.number().optional(),
+          coachUserId: z.number().optional(),
+          type: z.string().optional(),
+          limit: z.number().optional(),
+        }).optional())
+        .query(({ input }) => db.getSalesCoachingNotes(input)),
+
+      create: protectedProcedure
+        .input(z.object({
+          repUserId: z.number(),
+          dealId: z.number().optional(),
+          callRecordingId: z.number().optional(),
+          activityId: z.number().optional(),
+          type: z.enum(["deal_review", "call_coaching", "pipeline_review", "skill_development", "performance_review", "win_analysis", "loss_analysis"]),
+          title: z.string().optional(),
+          notes: z.string(),
+          actionItems: z.string().optional(),
+          overallRating: z.number().optional(),
+          ratings: z.string().optional(),
+          followUpDate: z.date().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const id = await db.createSalesCoachingNote({ ...input, coachUserId: ctx.user.id });
+          return { id };
+        }),
+
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          notes: z.string().optional(),
+          actionItems: z.string().optional(),
+          followUpCompleted: z.boolean().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateSalesCoachingNote(id, data);
+          return { success: true };
+        }),
+    }),
+
+    // --- LEADERBOARD ---
+    leaderboard: router({
+      getCurrent: protectedProcedure
+        .input(z.object({
+          periodType: z.enum(["daily", "weekly", "monthly", "quarterly", "annual"]),
+        }))
+        .query(({ input }) => db.getCurrentLeaderboard(input.periodType)),
+
+      getHistory: protectedProcedure
+        .input(z.object({
+          periodType: z.enum(["daily", "weekly", "monthly", "quarterly", "annual"]),
+          limit: z.number().optional(),
+        }))
+        .query(({ input }) => db.getLeaderboardHistory(input.periodType, input.limit)),
+
+      // Generate snapshot (admin only, usually called by scheduler)
+      generateSnapshot: adminProcedure
+        .input(z.object({
+          periodType: z.enum(["daily", "weekly", "monthly", "quarterly", "annual"]),
+        }))
+        .mutation(async ({ input }) => {
+          await salesAutomation.generateLeaderboardSnapshot(input.periodType);
+          return { success: true };
+        }),
+    }),
+
+    // --- METRICS ---
+    metrics: router({
+      getDaily: protectedProcedure
+        .input(z.object({
+          userId: z.number().optional(),
+          startDate: z.date().optional(),
+          endDate: z.date().optional(),
+        }))
+        .query(({ input, ctx }) => db.getDailyMetrics(input.userId || ctx.user.id, input.startDate, input.endDate)),
+
+      getDashboard: protectedProcedure
+        .input(z.object({
+          userId: z.number().optional(),
+          period: z.enum(["today", "week", "month", "quarter", "year"]).optional(),
+        }))
+        .query(({ input, ctx }) => db.getSalesDashboardMetrics(input.userId || ctx.user.id, input.period)),
+
+      // Pipeline health metrics
+      getPipelineHealth: protectedProcedure
+        .input(z.object({
+          pipelineId: z.number().optional(),
+          userId: z.number().optional(),
+        }))
+        .query(({ input }) => db.getPipelineHealthMetrics(input)),
+
+      // Sales velocity metrics
+      getSalesVelocity: protectedProcedure
+        .input(z.object({
+          userId: z.number().optional(),
+          pipelineId: z.number().optional(),
+          period: z.enum(["month", "quarter", "year"]).optional(),
+        }))
+        .query(({ input }) => db.getSalesVelocityMetrics(input)),
+
+      // Aggregate daily metrics (admin only)
+      aggregateDaily: adminProcedure
+        .input(z.object({ date: z.date().optional() }))
+        .mutation(async ({ input }) => {
+          await salesAutomation.aggregateDailyMetrics(input.date);
+          return { success: true };
+        }),
+    }),
+
+    // --- SCHEDULER OPERATIONS (Admin) ---
+    scheduler: router({
+      // Process sequence steps
+      processSequences: adminProcedure.mutation(async () => {
+        const result = await salesAutomation.processSequenceSteps();
+        return result;
+      }),
+
+      // Execute pending automations
+      executeAutomations: adminProcedure.mutation(async () => {
+        const result = await salesAutomation.executePendingAutomations();
+        return result;
+      }),
+
+      // Process follow-up reminders
+      processFollowUps: adminProcedure.mutation(async () => {
+        const result = await salesAutomation.processFollowUpReminders();
+        return result;
+      }),
+
+      // Detect stalled deals
+      detectStalledDeals: adminProcedure
+        .input(z.object({ stalledDays: z.number().optional() }))
+        .mutation(async ({ input }) => {
+          const result = await salesAutomation.detectStalledDeals(input.stalledDays);
+          return result;
         }),
     }),
   }),

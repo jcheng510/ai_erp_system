@@ -26,6 +26,7 @@ import OrderDetail from "./pages/sales/OrderDetail";
 import Customers from "./pages/sales/Customers";
 import CustomerDetail from "./pages/sales/CustomerDetail";
 import SalesHub from "./pages/sales/SalesHub";
+import SalesAutomationHub from "./pages/sales/SalesAutomationHub";
 import CRMDashboard from "./pages/sales/CRMDashboard";
 import CRMInvestors from "./pages/sales/CRMInvestors";
 import FundraisingCampaigns from "./pages/sales/FundraisingCampaigns";
@@ -133,6 +134,7 @@ function Router() {
         <Route path="/sales/customers/:id" component={CustomerDetail} />
         <Route path="/sales/customers" component={Customers} />
         <Route path="/sales/hub" component={SalesHub} />
+        <Route path="/sales/automation" component={SalesAutomationHub} />
         <Route path="/crm" component={CRMDashboard} />
         <Route path="/crm/investors" component={CRMInvestors} />
         <Route path="/crm/campaigns" component={FundraisingCampaigns} />
