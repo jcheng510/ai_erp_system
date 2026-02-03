@@ -204,6 +204,7 @@ export const invoices = mysqlTable("invoices", {
   companyId: int("companyId"),
   invoiceNumber: varchar("invoiceNumber", { length: 64 }).notNull(),
   customerId: int("customerId"),
+  salesOrderId: int("salesOrderId"), // Links invoice to sales order
   type: mysqlEnum("type", ["invoice", "credit_note", "quote"]).default("invoice").notNull(),
   status: mysqlEnum("status", ["draft", "sent", "paid", "partial", "overdue", "cancelled"]).default("draft").notNull(),
   issueDate: timestamp("issueDate").notNull(),
@@ -472,7 +473,8 @@ export const shipments = mysqlTable("shipments", {
   companyId: int("companyId"),
   shipmentNumber: varchar("shipmentNumber", { length: 64 }).notNull(),
   type: mysqlEnum("type", ["inbound", "outbound"]).notNull(),
-  orderId: int("orderId"),
+  orderId: int("orderId"), // Legacy orders table
+  salesOrderId: int("salesOrderId"), // New salesOrders table link
   purchaseOrderId: int("purchaseOrderId"),
   carrier: varchar("carrier", { length: 128 }),
   trackingNumber: varchar("trackingNumber", { length: 128 }),

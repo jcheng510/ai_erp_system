@@ -506,6 +506,16 @@ export async function createInvoiceItem(data: typeof invoiceItems.$inferInsert) 
   return { id: result[0].insertId };
 }
 
+// Get invoices by sales order ID (connects invoices to sales orders)
+export async function getInvoicesBySalesOrderId(salesOrderId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(invoices)
+    .leftJoin(customers, eq(invoices.customerId, customers.id))
+    .where(eq(invoices.salesOrderId, salesOrderId))
+    .orderBy(desc(invoices.createdAt));
+}
+
 // ============================================
 // FINANCE - PAYMENTS
 // ============================================
@@ -898,6 +908,15 @@ export async function updateShipment(id: number, data: Partial<typeof shipments.
   const db = await getDb();
   if (!db) return;
   await db.update(shipments).set(data).where(eq(shipments.id, id));
+}
+
+// Get shipments by sales order ID (connects shipments to sales orders)
+export async function getShipmentsBySalesOrderId(salesOrderId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(shipments)
+    .where(eq(shipments.salesOrderId, salesOrderId))
+    .orderBy(desc(shipments.createdAt));
 }
 
 // ============================================
@@ -1507,6 +1526,15 @@ export async function getFreightRfqById(id: number) {
   if (!db) return undefined;
   const result = await db.select().from(freightRfqs).where(eq(freightRfqs.id, id)).limit(1);
   return result[0];
+}
+
+// Get freight RFQs by purchase order ID (connects freight to purchase orders)
+export async function getFreightRfqsByPurchaseOrderId(purchaseOrderId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(freightRfqs)
+    .where(eq(freightRfqs.purchaseOrderId, purchaseOrderId))
+    .orderBy(desc(freightRfqs.createdAt));
 }
 
 export async function createFreightRfq(data: Omit<InsertFreightRfq, 'rfqNumber'>) {
@@ -3219,33 +3247,59 @@ export async function createForecastAccuracyRecord(data: InsertForecastAccuracy)
   return { id: result[0].id };
 }
 
-// Get historical sales data for forecasting
+// Get historical sales data for forecasting (combines legacy orders + new salesOrders)
 export async function getHistoricalSalesData(productId?: number, months?: number) {
   const db = await getDb();
   if (!db) return [];
-  
+
   const monthsBack = months || 12;
   const startDate = new Date();
   startDate.setMonth(startDate.getMonth() - monthsBack);
-  
-  const conditions = [gte(orders.orderDate, startDate)];
+
+  // Get data from legacy orders table
+  const legacyConditions = [gte(orders.orderDate, startDate)];
   if (productId) {
-    conditions.push(eq(orderItems.productId, productId));
+    legacyConditions.push(eq(orderItems.productId, productId));
   }
-  
-  // Get order items with dates
-  const result = await db.select({
+
+  const legacyResult = await db.select({
     productId: orderItems.productId,
     quantity: orderItems.quantity,
     orderDate: orders.orderDate,
     totalAmount: orderItems.totalAmount,
+    source: sql<string>`'legacy'`.as('source'),
   })
   .from(orderItems)
   .innerJoin(orders, eq(orderItems.orderId, orders.id))
-  .where(and(...conditions))
+  .where(and(...legacyConditions))
   .orderBy(orders.orderDate);
-  
-  return result;
+
+  // Get data from new salesOrders table (connects sales to forecasting)
+  const salesConditions = [gte(salesOrders.orderDate, startDate)];
+  if (productId) {
+    salesConditions.push(eq(salesOrderLines.productId, productId));
+  }
+
+  const salesResult = await db.select({
+    productId: salesOrderLines.productId,
+    quantity: salesOrderLines.quantity,
+    orderDate: salesOrders.orderDate,
+    totalAmount: salesOrderLines.totalPrice,
+    source: sql<string>`'salesOrders'`.as('source'),
+  })
+  .from(salesOrderLines)
+  .innerJoin(salesOrders, eq(salesOrderLines.salesOrderId, salesOrders.id))
+  .where(and(...salesConditions))
+  .orderBy(salesOrders.orderDate);
+
+  // Combine and sort by date
+  const combined = [...legacyResult, ...salesResult].sort((a, b) => {
+    const dateA = a.orderDate ? new Date(a.orderDate).getTime() : 0;
+    const dateB = b.orderDate ? new Date(b.orderDate).getTime() : 0;
+    return dateA - dateB;
+  });
+
+  return combined;
 }
 
 // Get pending POs for a raw material (on order but not received)

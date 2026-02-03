@@ -602,6 +602,7 @@ export const appRouter = router({
       .input(z.object({
         companyId: z.number().optional(),
         customerId: z.number().optional(),
+        salesOrderId: z.number().optional(), // Links invoice to sales order
         type: z.enum(['invoice', 'credit_note', 'quote']).optional(),
         issueDate: z.date(),
         dueDate: z.date().optional(),
@@ -1508,6 +1509,13 @@ export const appRouter = router({
         
         return { success: true, shipmentId, rfqId, portalToken };
       }),
+
+    // Get freight RFQs linked to a purchase order (connects purchase orders to freight)
+    getFreightRfqs: opsProcedure
+      .input(z.object({ purchaseOrderId: z.number() }))
+      .query(async ({ input }) => {
+        return db.getFreightRfqsByPurchaseOrderId(input.purchaseOrderId);
+      }),
   }),
 
   // ============================================
@@ -1526,6 +1534,7 @@ export const appRouter = router({
         companyId: z.number().optional(),
         type: z.enum(['inbound', 'outbound']),
         orderId: z.number().optional(),
+        salesOrderId: z.number().optional(), // Links shipment to sales order
         purchaseOrderId: z.number().optional(),
         carrier: z.string().optional(),
         trackingNumber: z.string().optional(),
@@ -7794,6 +7803,20 @@ Ask if they received the original request and if they can provide a quote.`;
       .mutation(async ({ input }) => {
         await db.updateSalesOrder(input.id, { status: input.status });
         return { success: true };
+      }),
+
+    // Get shipments linked to a sales order (connects sales orders to shipments)
+    getShipments: protectedProcedure
+      .input(z.object({ salesOrderId: z.number() }))
+      .query(async ({ input }) => {
+        return db.getShipmentsBySalesOrderId(input.salesOrderId);
+      }),
+
+    // Get invoices linked to a sales order (connects sales orders to invoices)
+    getInvoices: protectedProcedure
+      .input(z.object({ salesOrderId: z.number() }))
+      .query(async ({ input }) => {
+        return db.getInvoicesBySalesOrderId(input.salesOrderId);
       }),
   }),
 
