@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,7 +12,7 @@ import {
   ShoppingCart, Users, FileText, TruckIcon, Factory, Layers,
   Plus, ChevronRight, Eye
 } from "lucide-react";
-import { Link } from "wouter";
+import { Link, useSearch } from "wouter";
 
 // Status options
 const workOrderStatuses = [
@@ -59,11 +59,25 @@ function CompactRow({ children, onClick, className = "" }: { children: React.Rea
 
 export default function OperationsHub() {
   const [searchTerm, setSearchTerm] = useState("");
+  const searchString = useSearch();
 
   // Dialog states
   const [showPoDialog, setShowPoDialog] = useState(false);
   const [showWorkOrderDialog, setShowWorkOrderDialog] = useState(false);
   const [showMaterialDialog, setShowMaterialDialog] = useState(false);
+
+  // Handle URL action parameters
+  useEffect(() => {
+    const params = new URLSearchParams(searchString);
+    const action = params.get("action");
+    if (action === "new-po") {
+      setShowPoDialog(true);
+      window.history.replaceState({}, "", "/operations");
+    } else if (action === "new-wo") {
+      setShowWorkOrderDialog(true);
+      window.history.replaceState({}, "", "/operations");
+    }
+  }, [searchString]);
 
   // Queries - load all data
   const { data: purchaseOrders, isLoading: posLoading, refetch: refetchPos } = trpc.purchaseOrders.list.useQuery();
@@ -608,7 +622,7 @@ export default function OperationsHub() {
       <QuickCreateDialog
         open={showMaterialDialog}
         onOpenChange={setShowMaterialDialog}
-        entityType="rawMaterial"
+        entityType="material"
         onCreated={() => refetchMaterials()}
       />
     </div>

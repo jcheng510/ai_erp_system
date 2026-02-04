@@ -6,6 +6,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -66,6 +67,7 @@ import {
   Target,
   MessageSquare,
   Heart,
+  Plus,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -494,6 +496,79 @@ function DashboardLayoutContent({
               </kbd>
             </button>
           </div>
+
+          {/* Quick Actions Toolbar */}
+          <div className="hidden md:flex items-center gap-1">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="h-8 gap-1.5">
+                  <Plus className="h-3.5 w-3.5" />
+                  <span className="hidden lg:inline">New</span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-48">
+                <DropdownMenuLabel>Create New</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => setLocation("/operations?action=new-po")} className="cursor-pointer">
+                  <ShoppingCart className="mr-2 h-4 w-4" />
+                  Purchase Order
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setLocation("/operations?action=new-wo")} className="cursor-pointer">
+                  <Warehouse className="mr-2 h-4 w-4" />
+                  Work Order
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => setLocation("/crm/contacts?action=new")} className="cursor-pointer">
+                  <Users className="mr-2 h-4 w-4" />
+                  Contact
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setLocation("/sales/hub?action=new")} className="cursor-pointer">
+                  <FileText className="mr-2 h-4 w-4" />
+                  Sales Order
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            <div className="h-6 w-px bg-border mx-1" />
+
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 px-2"
+              onClick={() => setLocation("/operations")}
+              title="Operations"
+            >
+              <Package className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 px-2"
+              onClick={() => setLocation("/sales/hub")}
+              title="Sales"
+            >
+              <ShoppingCart className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 px-2"
+              onClick={() => setLocation("/finance/accounts")}
+              title="Finance"
+            >
+              <DollarSign className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 px-2"
+              onClick={() => setLocation("/ai/approvals")}
+              title="Approvals"
+            >
+              <ClipboardList className="h-4 w-4" />
+            </Button>
+          </div>
+
           <div className="flex items-center gap-2">
             <NotificationCenter />
           </div>
