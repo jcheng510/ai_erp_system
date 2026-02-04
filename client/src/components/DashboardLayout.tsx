@@ -104,9 +104,9 @@ const menuGroups = [
   {
     label: "CRM",
     items: [
-      { icon: Target, label: "CRM Hub", path: "/crm" },
-      { icon: Users, label: "Contacts", path: "/crm" },
-      { icon: MessageSquare, label: "Messaging", path: "/crm" },
+      { icon: Target, label: "CRM Hub", path: "/crm/hub" },
+      { icon: Users, label: "Contacts", path: "/crm/contacts" },
+      { icon: MessageSquare, label: "Messaging", path: "/crm/messaging" },
     ],
   },
   {

@@ -809,3 +809,7 @@
 - [x] Fix missing 'mode' property error on shipment objects in InventoryHub.tsx line 1663
 - [x] Verify shipment type definition includes all required properties
 - [x] Updated getFreightBookings to include quote and carrier relations
+
+## Fix Duplicate Key Error in Navigation
+- [x] Fix duplicate `/crm` key in DashboardLayout navigation
+- [x] Ensure all navigation items have unique keys
