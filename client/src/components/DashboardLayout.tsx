@@ -87,26 +87,7 @@ const menuGroups = [
     items: [
       { icon: LayoutDashboard, label: "Dashboard", path: "/" },
       { icon: Bot, label: "AI Assistant", path: "/ai" },
-      { icon: ClipboardList, label: "Approval Queue", path: "/ai/approvals" },
-    ],
-  },
-  {
-    label: "Sales & Finance",
-    items: [
-      { icon: ShoppingCart, label: "Sales Hub", path: "/sales/hub" },
-      { icon: Heart, label: "Fundraising CRM", path: "/crm" },
-      { icon: Users, label: "Investors", path: "/crm/investors" },
-      { icon: Target, label: "Campaigns", path: "/crm/campaigns" },
-      { icon: DollarSign, label: "Accounts", path: "/finance/accounts" },
-      { icon: TrendingUp, label: "Transactions", path: "/finance/transactions" },
-    ],
-  },
-  {
-    label: "CRM",
-    items: [
-      { icon: Target, label: "CRM Hub", path: "/crm/hub" },
-      { icon: Users, label: "Contacts", path: "/crm/contacts" },
-      { icon: MessageSquare, label: "Messaging", path: "/crm/messaging" },
+      { icon: ClipboardList, label: "Approvals", path: "/ai/approvals" },
     ],
   },
   {
@@ -114,31 +95,58 @@ const menuGroups = [
     items: [
       { icon: Package, label: "Operations Hub", path: "/operations" },
       { icon: Truck, label: "Logistics", path: "/operations/logistics-hub" },
-      { icon: Mail, label: "Email Inbox", path: "/operations/email-inbox" },
-      { icon: FileSpreadsheet, label: "Document Import", path: "/operations/document-import" },
+    ],
+  },
+  {
+    label: "Sales & CRM",
+    items: [
+      { icon: ShoppingCart, label: "Sales", path: "/sales/hub" },
+      { icon: Users, label: "Contacts", path: "/crm/contacts" },
+      { icon: MessageSquare, label: "Messaging", path: "/crm/messaging" },
+      { icon: Target, label: "Campaigns", path: "/crm/campaigns" },
+    ],
+  },
+  {
+    label: "Fundraising",
+    items: [
+      { icon: Heart, label: "Fundraising Hub", path: "/crm" },
+      { icon: Users, label: "Investors", path: "/crm/investors" },
+      { icon: FolderLock, label: "Data Rooms", path: "/datarooms" },
+    ],
+  },
+  {
+    label: "Finance",
+    items: [
+      { icon: DollarSign, label: "Accounts", path: "/finance/accounts" },
+      { icon: TrendingUp, label: "Transactions", path: "/finance/transactions" },
     ],
   },
   {
     label: "People & Legal",
     items: [
       { icon: UserCog, label: "Team & Payroll", path: "/hr/employees" },
-      { icon: FileSignature, label: "Contracts & Legal", path: "/legal/contracts" },
+      { icon: FileSignature, label: "Contracts", path: "/legal/contracts" },
     ],
   },
   {
-    label: "Projects & Data",
+    label: "Projects",
     items: [
       { icon: FolderKanban, label: "Projects", path: "/projects" },
-      { icon: FolderLock, label: "Data Rooms", path: "/datarooms" },
+    ],
+  },
+  {
+    label: "Tools",
+    items: [
+      { icon: Mail, label: "Email Inbox", path: "/operations/email-inbox" },
+      { icon: FileSpreadsheet, label: "Document Import", path: "/operations/document-import" },
     ],
   },
   {
     label: "Settings",
     items: [
+      { icon: Settings, label: "Settings", path: "/settings" },
       { icon: Users, label: "Team", path: "/settings/team" },
       { icon: Plug, label: "Integrations", path: "/settings/integrations" },
-      { icon: FileSpreadsheet, label: "Import Data", path: "/import" },
-      { icon: Settings, label: "Settings", path: "/settings" },
     ],
   },
 ];
