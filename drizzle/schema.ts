@@ -2999,7 +2999,10 @@ export const vendorRfqs = mysqlTable("vendorRfqs", {
   id: int("id").autoincrement().primaryKey(),
   rfqNumber: varchar("rfqNumber", { length: 50 }).notNull(),
   status: mysqlEnum("status", ["draft", "sent", "partially_received", "all_received", "awarded", "cancelled", "expired"]).default("draft").notNull(),
-  
+
+  // Sourcing category - enables vendor sourcing for different material types
+  sourcingCategory: mysqlEnum("sourcingCategory", ["raw_material", "packaging", "freight"]).default("raw_material").notNull(),
+
   // Material details
   rawMaterialId: int("rawMaterialId"),
   materialName: varchar("materialName", { length: 255 }).notNull(),

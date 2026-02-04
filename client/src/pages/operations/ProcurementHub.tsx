@@ -105,6 +105,7 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
     notes: '',
   });
   const [rfqForm, setRfqForm] = useState({
+    sourcingCategory: 'raw_material' as 'raw_material' | 'packaging' | 'freight',
     materialName: '',
     rawMaterialId: '',
     materialDescription: '',
@@ -117,6 +118,7 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
     priority: 'normal',
     notes: '',
   });
+  const [categoryFilter, setCategoryFilter] = useState<'all' | 'raw_material' | 'packaging' | 'freight'>('all');
 
   // Queries
   const { data: rfqs, isLoading: rfqsLoading } = trpc.vendorQuotes.rfqs.list.useQuery();
@@ -136,7 +138,7 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
       toast.success('RFQ created successfully');
       utils.vendorQuotes.rfqs.list.invalidate();
       setIsCreateRfqOpen(false);
-      setRfqForm({ materialName: '', rawMaterialId: '', materialDescription: '', quantity: '', unit: 'kg', specifications: '', requiredDeliveryDate: '', deliveryLocation: '', quoteDueDate: '', priority: 'normal', notes: '' });
+      setRfqForm({ sourcingCategory: 'raw_material', materialName: '', rawMaterialId: '', materialDescription: '', quantity: '', unit: 'kg', specifications: '', requiredDeliveryDate: '', deliveryLocation: '', quoteDueDate: '', priority: 'normal', notes: '' });
     },
     onError: (err) => toast.error(err.message),
   });
@@ -244,6 +246,42 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
       </div>
 
       {activeSubTab === 'rfqs' && (
+        <>
+        {/* Category Filter */}
+        <div className="flex items-center gap-2 mb-4">
+          <span className="text-sm text-muted-foreground">Filter by category:</span>
+          <Button
+            variant={categoryFilter === 'all' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setCategoryFilter('all')}
+          >
+            All
+          </Button>
+          <Button
+            variant={categoryFilter === 'raw_material' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setCategoryFilter('raw_material')}
+          >
+            <Package className="h-3 w-3 mr-1" />
+            Raw Materials
+          </Button>
+          <Button
+            variant={categoryFilter === 'packaging' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setCategoryFilter('packaging')}
+          >
+            <ShoppingBag className="h-3 w-3 mr-1" />
+            Packaging
+          </Button>
+          <Button
+            variant={categoryFilter === 'freight' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setCategoryFilter('freight')}
+          >
+            <TruckIcon className="h-3 w-3 mr-1" />
+            Freight
+          </Button>
+        </div>
         <div className="grid grid-cols-3 gap-4">
           {/* RFQ List */}
           <Card className="col-span-1">
@@ -256,12 +294,12 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
                   <div className="flex items-center justify-center p-8">
                     <Loader2 className="h-6 w-6 animate-spin" />
                   </div>
-                ) : rfqs?.length === 0 ? (
+                ) : rfqs?.filter((rfq: any) => categoryFilter === 'all' || rfq.sourcingCategory === categoryFilter).length === 0 ? (
                   <div className="text-center text-muted-foreground p-8">
-                    No RFQs yet. Create one to get started.
+                    No RFQs found{categoryFilter !== 'all' ? ` for ${categoryFilter.replace('_', ' ')}` : ''}. Create one to get started.
                   </div>
                 ) : (
-                  rfqs?.map((rfq: any) => (
+                  rfqs?.filter((rfq: any) => categoryFilter === 'all' || rfq.sourcingCategory === categoryFilter).map((rfq: any) => (
                     <div
                       key={rfq.id}
                       className={`p-3 border-b cursor-pointer hover:bg-muted/50 ${selectedRfqId === rfq.id ? 'bg-muted' : ''}`}
@@ -273,7 +311,14 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
                           {rfq.status?.replace(/_/g, ' ')}
                         </Badge>
                       </div>
-                      <div className="text-sm text-muted-foreground mt-1">{rfq.materialName}</div>
+                      <div className="flex items-center gap-2 mt-1">
+                        <Badge variant="secondary" className="text-xs">
+                          {rfq.sourcingCategory === 'raw_material' ? 'Raw Material' :
+                           rfq.sourcingCategory === 'packaging' ? 'Packaging' :
+                           rfq.sourcingCategory === 'freight' ? 'Freight' : 'Material'}
+                        </Badge>
+                        <span className="text-sm text-muted-foreground truncate">{rfq.materialName}</span>
+                      </div>
                       <div className="text-xs text-muted-foreground">{rfq.quantity} {rfq.unit}</div>
                     </div>
                   ))
@@ -482,6 +527,7 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
             </CardContent>
           </Card>
         </div>
+        </>
       )}
 
       {activeSubTab === 'quotes' && (
@@ -540,11 +586,42 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Create Request for Quote</DialogTitle>
-            <DialogDescription>Send an RFQ to vendors for material pricing</DialogDescription>
+            <DialogDescription>Send an RFQ to vendors for sourcing materials, packaging, or freight</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <Label>Material *</Label>
+              <Label>Sourcing Category *</Label>
+              <Select
+                value={rfqForm.sourcingCategory}
+                onValueChange={(v) => setRfqForm({ ...rfqForm, sourcingCategory: v as 'raw_material' | 'packaging' | 'freight' })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select sourcing category" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="raw_material">
+                    <div className="flex items-center gap-2">
+                      <Package className="h-4 w-4" />
+                      Raw Materials
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="packaging">
+                    <div className="flex items-center gap-2">
+                      <ShoppingBag className="h-4 w-4" />
+                      Packaging
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="freight">
+                    <div className="flex items-center gap-2">
+                      <Truck className="h-4 w-4" />
+                      Freight
+                    </div>
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>{rfqForm.sourcingCategory === 'freight' ? 'Service Description' : 'Material'} *</Label>
               <Select
                 value={rfqForm.rawMaterialId}
                 onValueChange={(v) => {
@@ -647,10 +724,11 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
             <Button
               onClick={() => {
                 if (!rfqForm.materialName || !rfqForm.quantity) {
-                  toast.error('Material and quantity are required');
+                  toast.error('Material/service name and quantity are required');
                   return;
                 }
                 createRfq.mutate({
+                  sourcingCategory: rfqForm.sourcingCategory,
                   materialName: rfqForm.materialName,
                   rawMaterialId: rfqForm.rawMaterialId ? parseInt(rfqForm.rawMaterialId) : undefined,
                   materialDescription: rfqForm.materialDescription || undefined,

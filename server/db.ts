@@ -6720,7 +6720,7 @@ export async function createVendorRfq(data: InsertVendorRfq) {
   return { id: result[0].insertId, ...data };
 }
 
-export async function getVendorRfqs(filters?: { status?: string; rawMaterialId?: number; createdById?: number }) {
+export async function getVendorRfqs(filters?: { status?: string; rawMaterialId?: number; createdById?: number; sourcingCategory?: 'raw_material' | 'packaging' | 'freight' }) {
   const db = await getDb();
   if (!db) return [];
   let query = db.select().from(vendorRfqs);
@@ -6728,6 +6728,7 @@ export async function getVendorRfqs(filters?: { status?: string; rawMaterialId?:
   if (filters?.status) conditions.push(eq(vendorRfqs.status, filters.status as any));
   if (filters?.rawMaterialId) conditions.push(eq(vendorRfqs.rawMaterialId, filters.rawMaterialId));
   if (filters?.createdById) conditions.push(eq(vendorRfqs.createdById, filters.createdById));
+  if (filters?.sourcingCategory) conditions.push(eq(vendorRfqs.sourcingCategory, filters.sourcingCategory as any));
   if (conditions.length > 0) query = query.where(and(...conditions)) as any;
   return query.orderBy(desc(vendorRfqs.createdAt));
 }

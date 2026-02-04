@@ -6712,13 +6712,18 @@ Provide your forecast in JSON format with the following structure:
     // RFQs
     rfqs: router({
       list: protectedProcedure
-        .input(z.object({ status: z.string().optional(), rawMaterialId: z.number().optional() }).optional())
+        .input(z.object({
+          status: z.string().optional(),
+          rawMaterialId: z.number().optional(),
+          sourcingCategory: z.enum(['raw_material', 'packaging', 'freight']).optional(),
+        }).optional())
         .query(({ input }) => db.getVendorRfqs(input)),
       get: protectedProcedure
         .input(z.object({ id: z.number() }))
         .query(({ input }) => db.getVendorRfqById(input.id)),
       create: opsProcedure
         .input(z.object({
+          sourcingCategory: z.enum(['raw_material', 'packaging', 'freight']).default('raw_material'),
           materialName: z.string().min(1),
           rawMaterialId: z.number().optional(),
           materialDescription: z.string().optional(),
