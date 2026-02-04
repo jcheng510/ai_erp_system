@@ -506,9 +506,8 @@ function DashboardLayoutContent({
                   <span className="hidden lg:inline">New</span>
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-48">
-                <DropdownMenuLabel>Create New</DropdownMenuLabel>
-                <DropdownMenuSeparator />
+              <DropdownMenuContent align="end" className="w-52">
+                <DropdownMenuLabel>Operations</DropdownMenuLabel>
                 <DropdownMenuItem onClick={() => setLocation("/operations?action=new-po")} className="cursor-pointer">
                   <ShoppingCart className="mr-2 h-4 w-4" />
                   Purchase Order
@@ -517,14 +516,39 @@ function DashboardLayoutContent({
                   <Warehouse className="mr-2 h-4 w-4" />
                   Work Order
                 </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setLocation("/operations/procurement-hub?action=new-rfq")} className="cursor-pointer">
+                  <FileText className="mr-2 h-4 w-4" />
+                  RFQ (Request for Quote)
+                </DropdownMenuItem>
                 <DropdownMenuSeparator />
+                <DropdownMenuLabel>Logistics</DropdownMenuLabel>
+                <DropdownMenuItem onClick={() => setLocation("/operations/logistics-hub?action=new-freight")} className="cursor-pointer">
+                  <Ship className="mr-2 h-4 w-4" />
+                  Freight RFP
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setLocation("/operations?action=new-transfer")} className="cursor-pointer">
+                  <ArrowRightLeft className="mr-2 h-4 w-4" />
+                  Inventory Transfer
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel>Sales & CRM</DropdownMenuLabel>
                 <DropdownMenuItem onClick={() => setLocation("/crm/contacts?action=new")} className="cursor-pointer">
                   <Users className="mr-2 h-4 w-4" />
-                  Contact
+                  Customer / Contact
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setLocation("/sales/hub?action=new")} className="cursor-pointer">
-                  <FileText className="mr-2 h-4 w-4" />
+                  <FileCheck className="mr-2 h-4 w-4" />
                   Sales Order
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel>Other</DropdownMenuLabel>
+                <DropdownMenuItem onClick={() => setLocation("/operations?action=new-vendor")} className="cursor-pointer">
+                  <Building2 className="mr-2 h-4 w-4" />
+                  Vendor
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setLocation("/operations?action=new-product")} className="cursor-pointer">
+                  <Package className="mr-2 h-4 w-4" />
+                  Product
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>

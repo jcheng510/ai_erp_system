@@ -65,6 +65,8 @@ export default function OperationsHub() {
   const [showPoDialog, setShowPoDialog] = useState(false);
   const [showWorkOrderDialog, setShowWorkOrderDialog] = useState(false);
   const [showMaterialDialog, setShowMaterialDialog] = useState(false);
+  const [showVendorDialog, setShowVendorDialog] = useState(false);
+  const [showProductDialog, setShowProductDialog] = useState(false);
 
   // Handle URL action parameters
   useEffect(() => {
@@ -76,18 +78,28 @@ export default function OperationsHub() {
     } else if (action === "new-wo") {
       setShowWorkOrderDialog(true);
       window.history.replaceState({}, "", "/operations");
+    } else if (action === "new-vendor") {
+      setShowVendorDialog(true);
+      window.history.replaceState({}, "", "/operations");
+    } else if (action === "new-product") {
+      setShowProductDialog(true);
+      window.history.replaceState({}, "", "/operations");
+    } else if (action === "new-transfer") {
+      // Navigate to transfers page for now
+      window.location.href = "/operations/transfers";
     }
   }, [searchString]);
 
   // Queries - load all data
   const { data: purchaseOrders, isLoading: posLoading, refetch: refetchPos } = trpc.purchaseOrders.list.useQuery();
-  const { data: vendors } = trpc.vendors.list.useQuery();
+  const { data: vendors, refetch: refetchVendors } = trpc.vendors.list.useQuery();
   const { data: rawMaterials, refetch: refetchMaterials } = trpc.rawMaterials.list.useQuery();
   const { data: workOrders, refetch: refetchWorkOrders } = trpc.workOrders.list.useQuery();
   const { data: boms } = trpc.bom.list.useQuery();
   const { data: locations } = trpc.warehouses.list.useQuery();
   const { data: inventory, refetch: refetchInventory } = trpc.inventory.list.useQuery();
   const { data: alerts } = trpc.alerts.list.useQuery({ status: "open" });
+  const { data: products, refetch: refetchProducts } = trpc.products.list.useQuery();
 
   // Mutations
   const startProduction = trpc.workOrders.startProduction.useMutation({
@@ -624,6 +636,18 @@ export default function OperationsHub() {
         onOpenChange={setShowMaterialDialog}
         entityType="material"
         onCreated={() => refetchMaterials()}
+      />
+      <QuickCreateDialog
+        open={showVendorDialog}
+        onOpenChange={setShowVendorDialog}
+        entityType="vendor"
+        onCreated={() => refetchVendors()}
+      />
+      <QuickCreateDialog
+        open={showProductDialog}
+        onOpenChange={setShowProductDialog}
+        entityType="product"
+        onCreated={() => refetchProducts()}
       />
     </div>
   );
