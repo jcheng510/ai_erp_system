@@ -119,6 +119,43 @@ Example log flow for scanned PDF:
 [DocumentImport] PDF converted to image, using vision OCR
 ```
 
+## System Requirements
+
+The OCR functionality requires these system dependencies to be installed:
+
+- **ImageMagick** (version 6.9+): Required for PDF to image conversion
+  ```bash
+  apt-get install imagemagick
+  ```
+- **Ghostscript** (version 9.0+): Required for PDF processing
+  ```bash
+  apt-get install ghostscript
+  ```
+
+**Note**: The system is configured to use ImageMagick (not GraphicsMagick). The `pdf2pic` library is configured via `convert.setGMClass(true)` to use ImageMagick's `convert` command.
+
+## Testing
+
+Run the comprehensive OCR test suite:
+```bash
+node test_ocr_functionality.mjs
+```
+
+This verifies:
+- ✅ PDF text extraction using pdfjs-dist
+- ✅ Scanned PDF detection
+- ✅ PDF to image conversion using pdf2pic
+- ✅ Base64 encoding for vision API
+- ✅ Temporary file cleanup
+- ✅ All required dependencies
+
+Run the integration workflow test:
+```bash
+node test_document_import_workflow.mjs
+```
+
+This demonstrates the complete end-to-end document import flow.
+
 ## Future Enhancements
 
 Potential improvements:
@@ -135,6 +172,12 @@ Potential improvements:
 - Verify PDF is not corrupted or password-protected
 - Ensure LLM API is configured and accessible
 
+### OCR Conversion Fails
+- Verify ImageMagick is installed: `convert --version`
+- Verify Ghostscript is installed: `gs --version`
+- Check that pdf2pic is configured to use ImageMagick (not GraphicsMagick)
+- Ensure the system has sufficient disk space for temporary files
+
 ### OCR Returns Poor Results
 - Original scan quality may be too low
 - Try re-scanning at higher DPI (300+)
@@ -144,3 +187,10 @@ Potential improvements:
 - Normal for scanned PDFs (2-5 seconds)
 - If consistently slow, check LLM API latency
 - Consider implementing caching layer
+
+## Recent Fixes
+
+**January 2026**: Fixed OCR fallback configuration
+- Added `convert.setGMClass(true)` to configure pdf2pic to use ImageMagick instead of GraphicsMagick
+- This resolves "Could not execute GraphicsMagick/ImageMagick" errors
+- See `OCR_FIX_SUMMARY.md` for details
