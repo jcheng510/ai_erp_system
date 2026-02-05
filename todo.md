@@ -788,3 +788,28 @@
 - [x] Debug "Could not determine document type" error still occurring for user uploads
 - [x] Root cause: pdftoppm command-line tool not available in production environment
 - [x] Solution: Use pdfjs-dist pure JavaScript library for PDF text extraction
+
+## Bug Fix: Document Import Google Connection Error
+- [x] Fix "Google account not connected" error on /operations/document-import page
+- [x] Make Google Drive integration optional for basic document upload
+- [x] Ensure upload tab works without Google connection
+
+## Consolidate Operations Pages
+- [x] Design unified Operations page structure with tabs for Inventory, Manufacturing, and Procurement
+- [x] Create new consolidated Operations page component
+- [x] Move Inventory content to Operations/Inventory tab
+- [x] Move Manufacturing content to Operations/Manufacturing tab
+- [x] Move Procurement content to Operations/Procurement tab
+- [x] Update sidebar navigation to remove separate Inventory, Manufacturing, Procurement items
+- [x] Add single "Operations" menu item in sidebar
+- [x] Update routing in App.tsx
+- [x] Test all functionality in consolidated view
+
+## Fix TypeScript Error in InventoryHub
+- [x] Fix missing 'mode' property error on shipment objects in InventoryHub.tsx line 1663
+- [x] Verify shipment type definition includes all required properties
+- [x] Updated getFreightBookings to include quote and carrier relations
+
+## Fix Duplicate Key Error in Navigation
+- [x] Fix duplicate `/crm` key in DashboardLayout navigation
+- [x] Ensure all navigation items have unique keys

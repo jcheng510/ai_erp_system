@@ -63,6 +63,9 @@ jspm_packages/
 # Optional npm cache directory
 .npm
 
+# Lock files (project uses pnpm)
+package-lock.json
+
 # Optional eslint cache
 .eslintcache
 
@@ -106,3 +109,6 @@ temp/
 *.db
 *.sqlite
 *.sqlite3
+
+# Test files (temporary)
+test_ocr_fallback.mjs

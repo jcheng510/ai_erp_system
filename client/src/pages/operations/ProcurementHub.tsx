@@ -29,10 +29,10 @@ import {
 } from "@/components/ui/tabs";
 import { SpreadsheetTable, Column } from "@/components/SpreadsheetTable";
 import { QuickCreateButton } from "@/components/QuickCreateDialog";
-import { 
-  ShoppingCart, 
-  Users, 
-  Package, 
+import {
+  ShoppingCart,
+  Users,
+  Package,
   TruckIcon,
   Loader2,
   Send,
@@ -48,7 +48,21 @@ import {
   XCircle,
   Bot,
   Sparkles,
+  Plug,
+  CloudUpload,
+  FileSpreadsheet,
+  RefreshCw,
+  ShoppingBag,
 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Link } from "wouter";
 import { toast } from "sonner";
 
 function formatCurrency(value: string | number | null | undefined) {
@@ -1059,6 +1073,9 @@ export default function ProcurementHub() {
   const { data: vendors, isLoading: vendorsLoading, refetch: refetchVendors } = trpc.vendors.list.useQuery();
   const { data: rawMaterials, isLoading: materialsLoading, refetch: refetchMaterials } = trpc.rawMaterials.list.useQuery();
 
+  // Integration status
+  const { data: integrationStatus } = trpc.integrations.getStatus.useQuery();
+
   // Mutations
   const createPo = trpc.purchaseOrders.create.useMutation({
     onSuccess: () => {
@@ -1370,6 +1387,70 @@ export default function ProcurementHub() {
             <p className="text-muted-foreground mt-1">
               Click any row to expand details and take actions
             </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {/* Integration Dropdown */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline">
+                  <Plug className="h-4 w-4 mr-2" />
+                  Integrations
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuLabel className="flex items-center gap-2">
+                  External Services
+                  {(integrationStatus?.sendgrid?.configured || integrationStatus?.google?.configured) && (
+                    <Badge variant="outline" className="ml-auto text-xs bg-green-50 text-green-700">Active</Badge>
+                  )}
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem asChild>
+                  <Link href="/import">
+                    <CloudUpload className="h-4 w-4 mr-2" />
+                    Import from Google Sheets
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link href="/settings/integrations">
+                    <FileSpreadsheet className="h-4 w-4 mr-2" />
+                    Export to Google Sheets
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem asChild>
+                  <Link href="/settings/integrations">
+                    <Mail className="h-4 w-4 mr-2" />
+                    Email Settings (SendGrid)
+                    {integrationStatus?.sendgrid?.configured && (
+                      <Badge variant="outline" className="ml-auto text-xs bg-green-50 text-green-700">On</Badge>
+                    )}
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link href="/settings/integrations">
+                    <ShoppingBag className="h-4 w-4 mr-2" />
+                    Shopify Settings
+                    {integrationStatus?.shopify?.configured && (
+                      <Badge variant="outline" className="ml-auto text-xs bg-green-50 text-green-700">On</Badge>
+                    )}
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem asChild>
+                  <Link href="/settings/integrations">
+                    <Plug className="h-4 w-4 mr-2" />
+                    All Integrations
+                  </Link>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            <Button variant="outline" onClick={() => { refetchPos(); refetchVendors(); refetchMaterials(); }}>
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Refresh
+            </Button>
           </div>
         </div>
 

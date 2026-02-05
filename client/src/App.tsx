@@ -4,6 +4,7 @@ import NotFound from "@/pages/NotFound";
 import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
+import { AIAgentProvider } from "./contexts/AIAgentContext";
 import DashboardLayout from "./components/DashboardLayout";
 
 // Pages
@@ -21,14 +22,20 @@ import Transactions from "./pages/finance/Transactions";
 
 // Sales
 import Orders from "./pages/sales/Orders";
+import OrderDetail from "./pages/sales/OrderDetail";
 import Customers from "./pages/sales/Customers";
+import CustomerDetail from "./pages/sales/CustomerDetail";
 import SalesHub from "./pages/sales/SalesHub";
 import CRMDashboard from "./pages/sales/CRMDashboard";
 import CRMInvestors from "./pages/sales/CRMInvestors";
 import FundraisingCampaigns from "./pages/sales/FundraisingCampaigns";
 
+// CRM
+import CRMHub from "./pages/crm/CRMHub";
+
 // Operations
 import Products from "./pages/operations/Products";
+import ProductDetail from "./pages/operations/ProductDetail";
 import Inventory from "./pages/operations/Inventory";
 import Vendors from "./pages/operations/Vendors";
 import PurchaseOrders from "./pages/operations/PurchaseOrders";
@@ -51,6 +58,8 @@ import ManufacturingHub from "./pages/operations/ManufacturingHub";
 import ProcurementHub from "./pages/operations/ProcurementHub";
 import LogisticsHub from "./pages/operations/LogisticsHub";
 import InventoryHub from "./pages/operations/InventoryHub";
+import OperationsHub from "./pages/operations/OperationsHub";
+import InventoryManagementHub from "./pages/operations/InventoryManagementHub";
 import DocumentImport from "./pages/operations/DocumentImport";
 import SupplierPortal from "./pages/SupplierPortal";
 
@@ -74,6 +83,7 @@ import Documents from "./pages/legal/Documents";
 // Settings
 import Integrations from "./pages/settings/Integrations";
 import NotificationSettings from "./pages/settings/Notifications";
+import TransactionalEmails from "./pages/settings/TransactionalEmails";
 
 // Projects
 import Projects from "./pages/projects/Projects";
@@ -96,6 +106,12 @@ import DataRoomPublic from "./pages/DataRoomPublic";
 // AI Agent
 import ApprovalQueue from "./pages/ai/ApprovalQueue";
 
+// Autonomous Supply Chain
+import AutonomousDashboard from "./pages/autonomous/Dashboard";
+import AutonomousApprovals from "./pages/autonomous/Approvals";
+import AutonomousExceptions from "./pages/autonomous/Exceptions";
+import AutonomousSettings from "./pages/autonomous/Settings";
+
 function Router() {
   return (
     <DashboardLayout>
@@ -105,10 +121,17 @@ function Router() {
         <Route path="/ai" component={AIAssistant} />
         <Route path="/ai/approvals" component={ApprovalQueue} />
         <Route path="/search" component={GlobalSearch} />
+
+        {/* Autonomous Supply Chain */}
+        <Route path="/autonomous-dashboard" component={AutonomousDashboard} />
+        <Route path="/approvals" component={AutonomousApprovals} />
+        <Route path="/exceptions" component={AutonomousExceptions} />
+        <Route path="/autonomous-settings" component={AutonomousSettings} />
         <Route path="/notifications" component={Notifications} />
         <Route path="/settings" component={Settings} />
         <Route path="/settings/integrations" component={Integrations} />
         <Route path="/settings/notifications" component={NotificationSettings} />
+        <Route path="/settings/emails" component={TransactionalEmails} />
 
         {/* Finance */}
         <Route path="/finance/accounts" component={Accounts} />
@@ -117,14 +140,22 @@ function Router() {
         <Route path="/finance/transactions" component={Transactions} />
 
         {/* Sales */}
+        <Route path="/sales/orders/:id" component={OrderDetail} />
         <Route path="/sales/orders" component={Orders} />
+        <Route path="/sales/customers/:id" component={CustomerDetail} />
         <Route path="/sales/customers" component={Customers} />
         <Route path="/sales/hub" component={SalesHub} />
         <Route path="/crm" component={CRMDashboard} />
         <Route path="/crm/investors" component={CRMInvestors} />
         <Route path="/crm/campaigns" component={FundraisingCampaigns} />
 
+        {/* CRM */}
+        <Route path="/crm" component={CRMHub} />
+        <Route path="/crm/hub" component={CRMHub} />
+
         {/* Operations */}
+        <Route path="/operations" component={OperationsHub} />
+        <Route path="/operations/products/:id" component={ProductDetail} />
         <Route path="/operations/products" component={Products} />
         <Route path="/operations/inventory" component={Inventory} />
         <Route path="/operations/vendors" component={Vendors} />
@@ -148,6 +179,7 @@ function Router() {
         <Route path="/operations/procurement-hub" component={ProcurementHub} />
         <Route path="/operations/logistics-hub" component={LogisticsHub} />
         <Route path="/operations/inventory-hub" component={InventoryHub} />
+        <Route path="/operations/inventory-management" component={InventoryManagementHub} />
         <Route path="/operations/document-import" component={DocumentImport} />
 
         {/* Freight */}
@@ -196,17 +228,19 @@ function App() {
   return (
     <ErrorBoundary>
       <ThemeProvider defaultTheme="light">
-        <TooltipProvider>
-          <Toaster />
-          <Switch>
-            {/* Public Data Room Access (outside dashboard) */}
-            <Route path="/share/:code" component={DataRoomPublic} />
-            {/* Supplier Portal (public) */}
-            <Route path="/supplier-portal/:token" component={SupplierPortal} />
-            {/* All other routes go through dashboard */}
-            <Route component={Router} />
-          </Switch>
-        </TooltipProvider>
+        <AIAgentProvider>
+          <TooltipProvider>
+            <Toaster />
+            <Switch>
+              {/* Public Data Room Access (outside dashboard) */}
+              <Route path="/share/:code" component={DataRoomPublic} />
+              {/* Supplier Portal (public) */}
+              <Route path="/supplier-portal/:token" component={SupplierPortal} />
+              {/* All other routes go through dashboard */}
+              <Route component={Router} />
+            </Switch>
+          </TooltipProvider>
+        </AIAgentProvider>
       </ThemeProvider>
     </ErrorBoundary>
   );

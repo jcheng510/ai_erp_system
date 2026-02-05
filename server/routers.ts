@@ -7,7 +7,11 @@ import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
 import { invokeLLM } from "./_core/llm";
 import { sendEmail, isEmailConfigured, formatEmailHtml } from "./_core/email";
 import { processEmailReply, analyzeEmail, generateEmailReply } from "./emailReplyService";
-import { parseUploadedDocument, importPurchaseOrder, importFreightInvoice, matchLineItemsToMaterials } from "./documentImportService";
+import * as emailService from "./_core/emailService";
+import * as sendgridProvider from "./_core/sendgridProvider";
+import { parseUploadedDocument, importPurchaseOrder, importFreightInvoice, importVendorInvoice, importCustomsDocument, matchLineItemsToMaterials } from "./documentImportService";
+import { processAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingActions, type AIAgentContext } from "./aiAgentService";
+import { autonomousWorkflowRouter } from "./autonomousWorkflowRouter";
 import * as db from "./db";
 import { storagePut } from "./storage";
 import { nanoid } from "nanoid";
@@ -153,7 +157,10 @@ function generateNumber(prefix: string) {
 
 export const appRouter = router({
   system: systemRouter,
-  
+
+  // Autonomous Supply Chain Workflows
+  autonomousWorkflows: autonomousWorkflowRouter,
+
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),
     logout: publicProcedure.mutation(({ ctx }) => {
@@ -989,17 +996,17 @@ export const appRouter = router({
         const [oldInventory] = await db.getInventory({ id } as any) || [];
         await db.updateInventory(id, data);
         await createAuditLog(ctx.user.id, 'update', 'inventory', id);
-        
+
         // Check for low stock and create notification
         if (data.quantity && oldInventory) {
           const newQty = parseFloat(data.quantity);
           const reorderLevel = parseFloat(oldInventory.reorderLevel || '0');
-          
+
           if (newQty <= reorderLevel && newQty > 0) {
             const allUsers = await db.getAllUsers();
             const opsUsers = allUsers.filter(u => ['admin', 'ops', 'exec'].includes(u.role));
             const product = await db.getProductById(oldInventory.productId);
-            
+
             await db.notifyUsersOfEvent({
               type: 'inventory_low',
               title: `Low Stock Alert: ${product?.name || 'Product'}`,
@@ -1012,9 +1019,96 @@ export const appRouter = router({
             }, opsUsers.map(u => u.id));
           }
         }
-        
+
         return { success: true };
       }),
+    bulkUpdate: opsProcedure
+      .input(z.object({
+        ids: z.array(z.number()),
+        action: z.enum(['adjust_quantity', 'change_location', 'update_reorder_point']),
+        quantityAdjustment: z.number().optional(),
+        warehouseId: z.number().optional(),
+        reorderLevel: z.string().optional(),
+        reorderQuantity: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { ids, action, ...data } = input;
+
+        // Build the update data based on action
+        const updateData: {
+          quantityAdjustment?: number;
+          warehouseId?: number;
+          reorderLevel?: string;
+          reorderQuantity?: string;
+        } = {};
+
+        switch (action) {
+          case 'adjust_quantity':
+            if (data.quantityAdjustment !== undefined) {
+              updateData.quantityAdjustment = data.quantityAdjustment;
+            }
+            break;
+          case 'change_location':
+            if (data.warehouseId !== undefined) {
+              updateData.warehouseId = data.warehouseId;
+            }
+            break;
+          case 'update_reorder_point':
+            if (data.reorderLevel !== undefined) {
+              updateData.reorderLevel = data.reorderLevel;
+            }
+            if (data.reorderQuantity !== undefined) {
+              updateData.reorderQuantity = data.reorderQuantity;
+            }
+            break;
+        }
+
+        const results = await db.bulkUpdateInventory(ids, updateData);
+
+        // Create audit logs for each updated item
+        for (const result of results.filter(r => r.success)) {
+          await createAuditLog(ctx.user.id, 'bulk_update', 'inventory', result.id);
+        }
+
+        // Check for low stock alerts on quantity adjustments
+        if (action === 'adjust_quantity' && data.quantityAdjustment !== undefined) {
+          const updatedItems = await db.getInventoryByIds(ids);
+          const allUsers = await db.getAllUsers();
+          const opsUsers = allUsers.filter(u => ['admin', 'ops', 'exec'].includes(u.role));
+
+          for (const item of updatedItems) {
+            const qty = parseFloat(item.quantity || '0');
+            const reorderLevel = parseFloat(item.reorderLevel || '0');
+
+            if (qty <= reorderLevel && qty > 0) {
+              const product = await db.getProductById(item.productId);
+              await db.notifyUsersOfEvent({
+                type: 'inventory_low',
+                title: `Low Stock Alert: ${product?.name || 'Product'}`,
+                message: `Inventory for ${product?.name} is at ${qty} units, below reorder level of ${reorderLevel}`,
+                entityType: 'inventory',
+                entityId: item.id,
+                severity: 'warning',
+                link: `/operations/inventory`,
+                metadata: { productId: item.productId, quantity: qty, reorderLevel },
+              }, opsUsers.map(u => u.id));
+            }
+          }
+        }
+
+        return {
+          success: true,
+          results,
+          totalUpdated: results.filter(r => r.success).length,
+          totalFailed: results.filter(r => !r.success).length,
+        };
+      }),
+    // Get pending inventory from POs (on order or in transit)
+    getPendingFromPOs: opsProcedure
+      .query(() => db.getPendingInventoryFromPOs()),
+    // Get inbound shipments from POs
+    getInboundShipments: opsProcedure
+      .query(() => db.getInboundShipmentsFromPOs()),
   }),
 
   // ============================================
@@ -1257,13 +1351,30 @@ export const appRouter = router({
         const { items, ...poData } = input;
         const poNumber = generateNumber('PO');
         const result = await db.createPurchaseOrder({ ...poData, poNumber, createdBy: ctx.user.id });
-        
+
         if (items && items.length > 0) {
           for (const item of items) {
-            await db.createPurchaseOrderItem({ ...item, purchaseOrderId: result.id });
+            const poItem = await db.createPurchaseOrderItem({ ...item, purchaseOrderId: result.id });
+
+            // Try to link to raw material if productId is provided
+            if (item.productId) {
+              const product = await db.getProductById(item.productId);
+              if (product) {
+                // Try to find matching raw material by name or SKU
+                const rawMaterial = await db.getRawMaterialByNameOrSku(product.name, product.sku || '');
+                if (rawMaterial) {
+                  await db.createPurchaseOrderRawMaterialLink({
+                    purchaseOrderItemId: poItem.id,
+                    rawMaterialId: rawMaterial.id,
+                    orderedQuantity: item.quantity,
+                    unit: rawMaterial.unit || 'EA',
+                  });
+                }
+              }
+            }
           }
         }
-        
+
         await createAuditLog(ctx.user.id, 'create', 'purchaseOrder', result.id, poNumber);
         return result;
       }),
@@ -1790,13 +1901,14 @@ export const appRouter = router({
         tags: z.array(z.string()).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
-        const { fileData, mimeType, ...docData } = input;
-        
+        const { fileData, mimeType: inputMimeType, ...docData } = input;
+        const mimeType = inputMimeType || 'application/octet-stream';
+
         // Decode base64 and upload to S3
         const buffer = Buffer.from(fileData, 'base64');
         const fileKey = `documents/${ctx.user.id}/${nanoid()}-${input.name}`;
         const { url } = await storagePut(fileKey, buffer, mimeType);
-        
+
         const result = await db.createDocument({
           ...docData,
           fileUrl: url,
@@ -2116,6 +2228,337 @@ export const appRouter = router({
       await db.clearSyncHistory();
       return { success: true };
     }),
+  }),
+
+  // ============================================
+  // TRANSACTIONAL EMAIL SYSTEM (SendGrid)
+  // ============================================
+  transactionalEmail: router({
+    // Get email service status
+    getStatus: protectedProcedure.query(() => {
+      return emailService.getStatus();
+    }),
+
+    // Get email message stats
+    getStats: protectedProcedure.query(async () => {
+      return db.getEmailMessageStats();
+    }),
+
+    // Template management
+    templates: router({
+      list: protectedProcedure.query(() => db.getTransactionalEmailTemplates()),
+
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getTransactionalEmailTemplateById(input.id)),
+
+      getByName: protectedProcedure
+        .input(z.object({ name: z.string() }))
+        .query(({ input }) => db.getTransactionalEmailTemplateByName(input.name)),
+
+      create: adminProcedure
+        .input(z.object({
+          name: z.enum(['QUOTE', 'PO', 'SHIPMENT', 'ALERT', 'RFQ', 'INVOICE', 'PAYMENT_REMINDER', 'WELCOME', 'GENERAL']),
+          providerTemplateId: z.string().min(1),
+          description: z.string().optional(),
+          variablesSchema: z.any().optional(),
+          defaultSubject: z.string().optional(),
+          isActive: z.boolean().default(true),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createTransactionalEmailTemplate({
+            ...input,
+            name: input.name as any,
+            createdBy: ctx.user.id,
+          });
+          await createAuditLog(ctx.user.id, 'create', 'transactional_email_template', result.id, input.name);
+          return result;
+        }),
+
+      update: adminProcedure
+        .input(z.object({
+          id: z.number(),
+          providerTemplateId: z.string().optional(),
+          description: z.string().optional(),
+          variablesSchema: z.any().optional(),
+          defaultSubject: z.string().optional(),
+          isActive: z.boolean().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateTransactionalEmailTemplate(id, {
+            ...data,
+            updatedBy: ctx.user.id,
+          });
+          await createAuditLog(ctx.user.id, 'update', 'transactional_email_template', id);
+          return { success: true };
+        }),
+
+      delete: adminProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteTransactionalEmailTemplate(input.id);
+          await createAuditLog(ctx.user.id, 'delete', 'transactional_email_template', input.id);
+          return { success: true };
+        }),
+    }),
+
+    // Email messages (logs)
+    messages: router({
+      list: protectedProcedure
+        .input(z.object({
+          status: z.string().optional(),
+          templateName: z.string().optional(),
+          toEmail: z.string().optional(),
+          relatedEntityType: z.string().optional(),
+          relatedEntityId: z.number().optional(),
+          fromDate: z.date().optional(),
+          toDate: z.date().optional(),
+          limit: z.number().default(100),
+          offset: z.number().default(0),
+        }).optional())
+        .query(({ input }) => db.getEmailMessages(input)),
+
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(async ({ input }) => {
+          const message = await db.getEmailMessageById(input.id);
+          if (!message) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'Email message not found' });
+          }
+          const events = await db.getEmailEventsByMessageId(input.id);
+          return { message, events };
+        }),
+
+      getByProvider: protectedProcedure
+        .input(z.object({ providerMessageId: z.string() }))
+        .query(({ input }) => db.getEmailMessageByProviderMessageId(input.providerMessageId)),
+
+      retry: adminProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const message = await db.getEmailMessageById(input.id);
+          if (!message) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'Email message not found' });
+          }
+          if (message.status !== 'failed') {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'Can only retry failed emails' });
+          }
+
+          // Reset status to queued for retry
+          await db.updateEmailMessage(input.id, {
+            status: 'queued' as any,
+            retryCount: 0,
+            nextRetryAt: null,
+            errorJson: null,
+          });
+
+          await createAuditLog(ctx.user.id, 'update', 'email_message', input.id, undefined, undefined, { action: 'retry' });
+          return { success: true };
+        }),
+    }),
+
+    // Events (webhook events)
+    events: router({
+      list: protectedProcedure
+        .input(z.object({
+          emailMessageId: z.number().optional(),
+          providerMessageId: z.string().optional(),
+          limit: z.number().default(100),
+        }).optional())
+        .query(async ({ input }) => {
+          if (input?.emailMessageId) {
+            return db.getEmailEventsByMessageId(input.emailMessageId);
+          }
+          if (input?.providerMessageId) {
+            return db.getEmailEventsByProviderMessageId(input.providerMessageId);
+          }
+          return db.getRecentEmailEvents(input?.limit);
+        }),
+    }),
+
+    // Queue and send emails
+    queueEmail: protectedProcedure
+      .input(z.object({
+        templateName: z.enum(['QUOTE', 'PO', 'SHIPMENT', 'ALERT', 'RFQ', 'INVOICE', 'PAYMENT_REMINDER', 'WELCOME', 'GENERAL']),
+        toEmail: z.string().email(),
+        toName: z.string().optional(),
+        subject: z.string(),
+        payload: z.record(z.any()),
+        idempotencyKey: z.string().optional(),
+        relatedEntityType: z.string().optional(),
+        relatedEntityId: z.number().optional(),
+        scheduledAt: z.date().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await emailService.queueEmail({
+          templateName: input.templateName,
+          to: { email: input.toEmail, name: input.toName },
+          subject: input.subject,
+          payload: input.payload,
+          idempotencyKey: input.idempotencyKey,
+          relatedEntityType: input.relatedEntityType,
+          relatedEntityId: input.relatedEntityId,
+          triggeredBy: ctx.user.id,
+          scheduledAt: input.scheduledAt,
+        });
+
+        if (result.success && result.emailMessageId && !result.isDuplicate) {
+          await createAuditLog(ctx.user.id, 'create', 'email_message', result.emailMessageId, input.subject, undefined, {
+            templateName: input.templateName,
+            toEmail: input.toEmail,
+          });
+        }
+
+        return result;
+      }),
+
+    // Send entity-specific emails
+    sendQuoteEmail: protectedProcedure
+      .input(z.object({
+        quoteId: z.number(),
+        customSubject: z.string().optional(),
+        customPayload: z.record(z.any()).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await emailService.sendQuoteEmail(input.quoteId, {
+          triggeredBy: ctx.user.id,
+          customSubject: input.customSubject,
+          customPayload: input.customPayload,
+        });
+
+        if (result.success && result.emailMessageId) {
+          await createAuditLog(ctx.user.id, 'create', 'email_message', result.emailMessageId, 'Quote Email', undefined, {
+            quoteId: input.quoteId,
+          });
+        }
+
+        return result;
+      }),
+
+    sendPOEmail: protectedProcedure
+      .input(z.object({
+        poId: z.number(),
+        customSubject: z.string().optional(),
+        customPayload: z.record(z.any()).optional(),
+        pdfUrl: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await emailService.sendPOEmail(input.poId, {
+          triggeredBy: ctx.user.id,
+          customSubject: input.customSubject,
+          customPayload: input.customPayload,
+          pdfUrl: input.pdfUrl,
+        });
+
+        if (result.success && result.emailMessageId) {
+          await createAuditLog(ctx.user.id, 'create', 'email_message', result.emailMessageId, 'PO Email', undefined, {
+            poId: input.poId,
+          });
+        }
+
+        return result;
+      }),
+
+    sendShipmentEmail: protectedProcedure
+      .input(z.object({
+        shipmentId: z.number(),
+        recipientEmail: z.string().email().optional(),
+        recipientName: z.string().optional(),
+        customSubject: z.string().optional(),
+        customPayload: z.record(z.any()).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await emailService.sendShipmentEmail(input.shipmentId, {
+          triggeredBy: ctx.user.id,
+          recipientEmail: input.recipientEmail,
+          recipientName: input.recipientName,
+          customSubject: input.customSubject,
+          customPayload: input.customPayload,
+        });
+
+        if (result.success && result.emailMessageId) {
+          await createAuditLog(ctx.user.id, 'create', 'email_message', result.emailMessageId, 'Shipment Email', undefined, {
+            shipmentId: input.shipmentId,
+          });
+        }
+
+        return result;
+      }),
+
+    sendAlertEmail: protectedProcedure
+      .input(z.object({
+        alertId: z.number(),
+        recipientEmail: z.string().email().optional(),
+        recipientName: z.string().optional(),
+        customSubject: z.string().optional(),
+        customPayload: z.record(z.any()).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await emailService.sendAlertEmail(input.alertId, {
+          triggeredBy: ctx.user.id,
+          recipientEmail: input.recipientEmail,
+          recipientName: input.recipientName,
+          customSubject: input.customSubject,
+          customPayload: input.customPayload,
+        });
+
+        if (result.success && result.emailMessageId) {
+          await createAuditLog(ctx.user.id, 'create', 'email_message', result.emailMessageId, 'Alert Email', undefined, {
+            alertId: input.alertId,
+          });
+        }
+
+        return result;
+      }),
+
+    sendRFQEmail: protectedProcedure
+      .input(z.object({
+        rfqId: z.number(),
+        vendorId: z.number(),
+        customSubject: z.string().optional(),
+        customPayload: z.record(z.any()).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await emailService.sendRFQEmail(input.rfqId, input.vendorId, {
+          triggeredBy: ctx.user.id,
+          customSubject: input.customSubject,
+          customPayload: input.customPayload,
+        });
+
+        if (result.success && result.emailMessageId) {
+          await createAuditLog(ctx.user.id, 'create', 'email_message', result.emailMessageId, 'RFQ Email', undefined, {
+            rfqId: input.rfqId,
+            vendorId: input.vendorId,
+          });
+        }
+
+        return result;
+      }),
+
+    // Manually trigger sending of queued emails (admin only)
+    processQueue: adminProcedure
+      .input(z.object({ limit: z.number().default(10) }).optional())
+      .mutation(async ({ input }) => {
+        const queued = await db.getQueuedEmailMessages(input?.limit || 10);
+        const results: { id: number; success: boolean; error?: string }[] = [];
+
+        for (const message of queued) {
+          const result = await emailService.sendQueuedEmail(message.id);
+          results.push({
+            id: message.id,
+            success: result.success,
+            error: result.error,
+          });
+        }
+
+        return {
+          processed: results.length,
+          successful: results.filter(r => r.success).length,
+          failed: results.filter(r => !r.success).length,
+          results,
+        };
+      }),
   }),
 
   // ============================================
@@ -3007,6 +3450,123 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
           answer: typeof rawAnswer === 'string' ? rawAnswer : 'Unable to process your question.',
         };
       }),
+
+    // Comprehensive AI Agent Chat - handles all ERP operations
+    agentChat: protectedProcedure
+      .input(z.object({
+        message: z.string().min(1),
+        conversationHistory: z.array(z.object({
+          role: z.enum(['system', 'user', 'assistant']),
+          content: z.string(),
+        })).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const agentContext: AIAgentContext = {
+          userId: ctx.user.id,
+          userName: ctx.user.name || 'User',
+          userRole: ctx.user.role,
+          companyId: ctx.user.companyId,
+        };
+
+        const result = await processAIAgentRequest(
+          input.message,
+          input.conversationHistory || [],
+          agentContext
+        );
+
+        return result;
+      }),
+
+    // Quick analysis endpoint for data insights
+    quickAnalysis: protectedProcedure
+      .input(z.object({
+        dataType: z.enum(['sales', 'inventory', 'vendors', 'customers', 'finances', 'orders', 'procurement', 'production']),
+      }))
+      .query(async ({ input, ctx }) => {
+        const agentContext: AIAgentContext = {
+          userId: ctx.user.id,
+          userName: ctx.user.name || 'User',
+          userRole: ctx.user.role,
+          companyId: ctx.user.companyId,
+        };
+
+        return getQuickAnalysis(input.dataType, agentContext);
+      }),
+
+    // System overview for dashboard
+    systemOverview: protectedProcedure.query(async ({ ctx }) => {
+      const agentContext: AIAgentContext = {
+        userId: ctx.user.id,
+        userName: ctx.user.name || 'User',
+        userRole: ctx.user.role,
+        companyId: ctx.user.companyId,
+      };
+
+      return getSystemOverview(agentContext);
+    }),
+
+    // Pending actions that need attention
+    pendingActions: protectedProcedure.query(async ({ ctx }) => {
+      const agentContext: AIAgentContext = {
+        userId: ctx.user.id,
+        userName: ctx.user.name || 'User',
+        userRole: ctx.user.role,
+        companyId: ctx.user.companyId,
+      };
+
+      return getPendingActions(agentContext);
+    }),
+
+    // Get suggested actions based on current system state
+    suggestedActions: protectedProcedure.query(async ({ ctx }) => {
+      // Get system state
+      const metrics = await db.getDashboardMetrics();
+      const pendingTasks = await db.getPendingApprovalTasks();
+
+      const suggestions: { type: string; title: string; description: string; priority: string }[] = [];
+
+      // Check for low inventory
+      if (metrics?.lowStockItems && metrics.lowStockItems > 0) {
+        suggestions.push({
+          type: 'inventory',
+          title: 'Low Stock Alert',
+          description: `${metrics.lowStockItems} items are running low on stock`,
+          priority: 'high',
+        });
+      }
+
+      // Check for pending POs
+      if (metrics?.pendingPurchaseOrders && metrics.pendingPurchaseOrders > 0) {
+        suggestions.push({
+          type: 'procurement',
+          title: 'Pending Purchase Orders',
+          description: `${metrics.pendingPurchaseOrders} purchase orders need attention`,
+          priority: 'medium',
+        });
+      }
+
+      // Check for pending approvals
+      if (pendingTasks.length > 0) {
+        suggestions.push({
+          type: 'approvals',
+          title: 'Pending Approvals',
+          description: `${pendingTasks.length} AI tasks waiting for approval`,
+          priority: 'high',
+        });
+      }
+
+      // Check for overdue invoices
+      if (metrics?.overdueInvoices && metrics.overdueInvoices > 0) {
+        suggestions.push({
+          type: 'finance',
+          title: 'Overdue Invoices',
+          description: `${metrics.overdueInvoices} invoices are past due`,
+          priority: 'high',
+        });
+      }
+
+      return suggestions;
+    }),
   }),
 
   // ============================================
@@ -4820,7 +5380,14 @@ Provide a brief status summary, any missing documents, and next steps.`;
         }
 
         await db.updateInventoryQuantityById(input.inventoryId, input.quantity, ctx.user.id, input.notes);
-        return { success: true };
+
+        // Check if stock is low and trigger auto-purchase order if needed
+        const autoPurchaseResult = await db.checkAndTriggerLowStockPurchaseOrder(input.inventoryId, ctx.user.id);
+
+        return {
+          success: true,
+          autoPurchase: autoPurchaseResult
+        };
       }),
 
     // Get shipments for copacker's warehouse (filter by PO vendor)
@@ -6794,13 +7361,323 @@ Ask if they received the original request and if they can provide a quote.`;
           await db.updateWebhookEvent(eventId, { status: 'processed', processedAt: new Date() });
           return { success: true };
         } catch (error) {
-          await db.updateWebhookEvent(eventId, { 
-            status: 'failed', 
-            errorMessage: error instanceof Error ? error.message : 'Unknown error' 
+          await db.updateWebhookEvent(eventId, {
+            status: 'failed',
+            errorMessage: error instanceof Error ? error.message : 'Unknown error'
           });
           throw error;
         }
       }),
+    // Sync operations
+    sync: router({
+      // Sync orders from Shopify store
+      orders: protectedProcedure
+        .input(z.object({ storeId: z.number().optional() }))
+        .mutation(async ({ input, ctx }) => {
+          const stores = input.storeId
+            ? [await db.getShopifyStoreById(input.storeId)]
+            : await db.getShopifyStores();
+
+          const activeStores = stores.filter(s => s && s.isEnabled && s.accessToken);
+          if (activeStores.length === 0) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'No active Shopify stores configured' });
+          }
+
+          let totalImported = 0;
+          let totalUpdated = 0;
+          let totalErrors = 0;
+
+          for (const store of activeStores) {
+            if (!store) continue;
+            try {
+              const response = await fetch(`https://${store.storeDomain}/admin/api/2024-01/orders.json?status=any&limit=50`, {
+                headers: {
+                  'X-Shopify-Access-Token': store.accessToken!,
+                  'Content-Type': 'application/json',
+                },
+              });
+
+              if (!response.ok) {
+                throw new Error(`Shopify API error: ${response.status}`);
+              }
+
+              const data = await response.json();
+              const orders = data.orders || [];
+
+              for (const order of orders) {
+                const existingOrder = await db.getSalesOrderByShopifyId(order.id.toString());
+                if (existingOrder) {
+                  await db.updateSalesOrder(existingOrder.id, {
+                    status: order.fulfillment_status === 'fulfilled' ? 'delivered' :
+                            order.financial_status === 'paid' ? 'confirmed' : 'pending',
+                    totalAmount: order.total_price,
+                  });
+                  totalUpdated++;
+                } else {
+                  // Find or create customer
+                  let customerId: number | undefined;
+                  if (order.customer?.email) {
+                    const customer = await db.getCustomerByEmail(order.customer.email);
+                    if (customer) {
+                      customerId = customer.id;
+                    }
+                  }
+
+                  await db.createSalesOrder({
+                    shopifyOrderId: order.id.toString(),
+                    source: 'shopify',
+                    status: order.fulfillment_status === 'fulfilled' ? 'delivered' :
+                            order.financial_status === 'paid' ? 'confirmed' : 'pending',
+                    orderDate: new Date(order.created_at),
+                    totalAmount: order.total_price,
+                    customerId,
+                    shippingAddress: JSON.stringify(order.shipping_address),
+                    notes: `Shopify Order: ${order.name}`,
+                  });
+                  totalImported++;
+                }
+              }
+
+              await db.updateShopifyStore(store.id, { lastSyncAt: new Date() });
+            } catch (error) {
+              totalErrors++;
+              console.error(`Error syncing orders from ${store.storeName}:`, error);
+            }
+          }
+
+          await db.createSyncLog({
+            integration: 'shopify',
+            action: 'sync_orders',
+            status: totalErrors > 0 ? 'warning' : 'success',
+            details: `Imported ${totalImported}, Updated ${totalUpdated}`,
+            recordsProcessed: totalImported + totalUpdated,
+            recordsFailed: totalErrors,
+          });
+
+          return { imported: totalImported, updated: totalUpdated, errors: totalErrors };
+        }),
+
+      // Sync products from Shopify store
+      products: protectedProcedure
+        .input(z.object({ storeId: z.number().optional() }))
+        .mutation(async ({ input, ctx }) => {
+          const stores = input.storeId
+            ? [await db.getShopifyStoreById(input.storeId)]
+            : await db.getShopifyStores();
+
+          const activeStores = stores.filter(s => s && s.isEnabled && s.accessToken);
+          if (activeStores.length === 0) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'No active Shopify stores configured' });
+          }
+
+          let totalImported = 0;
+          let totalUpdated = 0;
+          let totalErrors = 0;
+
+          for (const store of activeStores) {
+            if (!store) continue;
+            try {
+              const response = await fetch(`https://${store.storeDomain}/admin/api/2024-01/products.json?limit=100`, {
+                headers: {
+                  'X-Shopify-Access-Token': store.accessToken!,
+                  'Content-Type': 'application/json',
+                },
+              });
+
+              if (!response.ok) {
+                throw new Error(`Shopify API error: ${response.status}`);
+              }
+
+              const data = await response.json();
+              const products = data.products || [];
+
+              for (const product of products) {
+                const existingProduct = await db.getProductBySku(product.variants[0]?.sku || `SHOP-${product.id}`);
+                if (existingProduct) {
+                  await db.updateProduct(existingProduct.id, {
+                    name: product.title,
+                    price: product.variants[0]?.price || '0',
+                    description: product.body_html?.replace(/<[^>]*>/g, '') || '',
+                    isActive: product.status === 'active',
+                  });
+                  totalUpdated++;
+                } else {
+                  await db.createProduct({
+                    name: product.title,
+                    sku: product.variants[0]?.sku || `SHOP-${product.id}`,
+                    description: product.body_html?.replace(/<[^>]*>/g, '') || '',
+                    price: product.variants[0]?.price || '0',
+                    isActive: product.status === 'active',
+                    category: product.product_type || 'General',
+                    source: 'shopify',
+                  });
+                  totalImported++;
+                }
+              }
+
+              await db.updateShopifyStore(store.id, { lastSyncAt: new Date() });
+            } catch (error) {
+              totalErrors++;
+              console.error(`Error syncing products from ${store.storeName}:`, error);
+            }
+          }
+
+          await db.createSyncLog({
+            integration: 'shopify',
+            action: 'sync_products',
+            status: totalErrors > 0 ? 'warning' : 'success',
+            details: `Imported ${totalImported}, Updated ${totalUpdated}`,
+            recordsProcessed: totalImported + totalUpdated,
+            recordsFailed: totalErrors,
+          });
+
+          return { imported: totalImported, updated: totalUpdated, errors: totalErrors };
+        }),
+
+      // Sync inventory from Shopify store
+      inventory: protectedProcedure
+        .input(z.object({ storeId: z.number().optional() }))
+        .mutation(async ({ input, ctx }) => {
+          const stores = input.storeId
+            ? [await db.getShopifyStoreById(input.storeId)]
+            : await db.getShopifyStores();
+
+          const activeStores = stores.filter(s => s && s.isEnabled && s.accessToken);
+          if (activeStores.length === 0) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'No active Shopify stores configured' });
+          }
+
+          let totalUpdated = 0;
+          let totalErrors = 0;
+
+          for (const store of activeStores) {
+            if (!store) continue;
+            try {
+              // Get inventory levels from Shopify
+              const response = await fetch(`https://${store.storeDomain}/admin/api/2024-01/inventory_levels.json?limit=100`, {
+                headers: {
+                  'X-Shopify-Access-Token': store.accessToken!,
+                  'Content-Type': 'application/json',
+                },
+              });
+
+              if (!response.ok) {
+                throw new Error(`Shopify API error: ${response.status}`);
+              }
+
+              const data = await response.json();
+              const levels = data.inventory_levels || [];
+
+              // Get SKU mappings for this store
+              const mappings = await db.getShopifySkuMappings(store.id);
+
+              for (const level of levels) {
+                const mapping = mappings.find(m => m.shopifyVariantId === level.inventory_item_id.toString());
+                if (mapping) {
+                  // Update local inventory
+                  const inventory = await db.getInventoryByProductId(mapping.productId);
+                  if (inventory) {
+                    await db.updateInventory(inventory.id, {
+                      quantity: level.available?.toString() || '0',
+                    });
+                    totalUpdated++;
+                  }
+                }
+              }
+
+              await db.updateShopifyStore(store.id, { lastSyncAt: new Date() });
+            } catch (error) {
+              totalErrors++;
+              console.error(`Error syncing inventory from ${store.storeName}:`, error);
+            }
+          }
+
+          await db.createSyncLog({
+            integration: 'shopify',
+            action: 'sync_inventory',
+            status: totalErrors > 0 ? 'warning' : 'success',
+            details: `Updated ${totalUpdated} inventory records`,
+            recordsProcessed: totalUpdated,
+            recordsFailed: totalErrors,
+          });
+
+          return { updated: totalUpdated, errors: totalErrors };
+        }),
+
+      // Sync customers from Shopify store
+      customers: protectedProcedure
+        .input(z.object({ storeId: z.number().optional() }))
+        .mutation(async ({ input, ctx }) => {
+          const stores = input.storeId
+            ? [await db.getShopifyStoreById(input.storeId)]
+            : await db.getShopifyStores();
+
+          const activeStores = stores.filter(s => s && s.isEnabled && s.accessToken);
+          if (activeStores.length === 0) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'No active Shopify stores configured' });
+          }
+
+          let totalImported = 0;
+          let totalUpdated = 0;
+          let totalErrors = 0;
+
+          for (const store of activeStores) {
+            if (!store) continue;
+            try {
+              const response = await fetch(`https://${store.storeDomain}/admin/api/2024-01/customers.json?limit=100`, {
+                headers: {
+                  'X-Shopify-Access-Token': store.accessToken!,
+                  'Content-Type': 'application/json',
+                },
+              });
+
+              if (!response.ok) {
+                throw new Error(`Shopify API error: ${response.status}`);
+              }
+
+              const data = await response.json();
+              const customers = data.customers || [];
+
+              for (const customer of customers) {
+                const existingCustomer = await db.getCustomerByEmail(customer.email);
+                if (existingCustomer) {
+                  await db.updateCustomer(existingCustomer.id, {
+                    name: `${customer.first_name || ''} ${customer.last_name || ''}`.trim() || existingCustomer.name,
+                    phone: customer.phone || existingCustomer.phone,
+                    shopifyCustomerId: customer.id.toString(),
+                  });
+                  totalUpdated++;
+                } else if (customer.email) {
+                  await db.createCustomer({
+                    name: `${customer.first_name || ''} ${customer.last_name || ''}`.trim() || 'Shopify Customer',
+                    email: customer.email,
+                    phone: customer.phone || '',
+                    shopifyCustomerId: customer.id.toString(),
+                    syncSource: 'shopify',
+                  });
+                  totalImported++;
+                }
+              }
+
+              await db.updateShopifyStore(store.id, { lastSyncAt: new Date() });
+            } catch (error) {
+              totalErrors++;
+              console.error(`Error syncing customers from ${store.storeName}:`, error);
+            }
+          }
+
+          await db.createSyncLog({
+            integration: 'shopify',
+            action: 'sync_customers',
+            status: totalErrors > 0 ? 'warning' : 'success',
+            details: `Imported ${totalImported}, Updated ${totalUpdated}`,
+            recordsProcessed: totalImported + totalUpdated,
+            recordsFailed: totalErrors,
+          });
+
+          return { imported: totalImported, updated: totalUpdated, errors: totalErrors };
+        }),
+    }),
   }),
 
   // ============================================
@@ -9231,6 +10108,521 @@ Ask if they received the original request and if they can provide a quote.`;
           return db.getNdaAuditLogs(input.signatureId);
         }),
     }),
+
+    // ============================================
+    // GOOGLE DRIVE SYNC
+    // ============================================
+    driveSync: router({
+      // Get sync configuration for a data room
+      getConfig: protectedProcedure
+        .input(z.object({ dataRoomId: z.number() }))
+        .query(async ({ input }) => {
+          return db.getDriveSyncConfig(input.dataRoomId);
+        }),
+
+      // Create or update sync configuration
+      saveConfig: protectedProcedure
+        .input(z.object({
+          dataRoomId: z.number(),
+          googleDriveFolderId: z.string(),
+          googleDriveFolderName: z.string().optional(),
+          googleDriveFolderUrl: z.string().optional(),
+          syncEnabled: z.boolean().default(true),
+          syncFrequencyMinutes: z.number().default(60),
+          syncMode: z.enum(['one_way_import', 'one_way_export', 'bidirectional']).default('one_way_import'),
+          syncSubfolders: z.boolean().default(true),
+          includeFileTypes: z.array(z.string()).optional(),
+          excludeFileTypes: z.array(z.string()).optional(),
+          maxFileSizeMb: z.number().default(100),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const existingConfig = await db.getDriveSyncConfig(input.dataRoomId);
+
+          const configData = {
+            dataRoomId: input.dataRoomId,
+            googleDriveFolderId: input.googleDriveFolderId,
+            googleDriveFolderName: input.googleDriveFolderName,
+            googleDriveFolderUrl: input.googleDriveFolderUrl,
+            syncEnabled: input.syncEnabled,
+            syncFrequencyMinutes: input.syncFrequencyMinutes,
+            syncMode: input.syncMode,
+            syncSubfolders: input.syncSubfolders,
+            includeFileTypes: input.includeFileTypes ? JSON.stringify(input.includeFileTypes) : null,
+            excludeFileTypes: input.excludeFileTypes ? JSON.stringify(input.excludeFileTypes) : null,
+            maxFileSizeMb: input.maxFileSizeMb,
+            syncUserId: ctx.user.id,
+          };
+
+          if (existingConfig) {
+            await db.updateDriveSyncConfig(existingConfig.id, configData);
+            return { id: existingConfig.id, updated: true };
+          } else {
+            const id = await db.createDriveSyncConfig(configData as any);
+            return { id, updated: false };
+          }
+        }),
+
+      // Delete sync configuration
+      deleteConfig: protectedProcedure
+        .input(z.object({ dataRoomId: z.number() }))
+        .mutation(async ({ input }) => {
+          await db.deleteDriveSyncConfig(input.dataRoomId);
+          return { success: true };
+        }),
+
+      // Get sync logs
+      getLogs: protectedProcedure
+        .input(z.object({ dataRoomId: z.number(), limit: z.number().default(50) }))
+        .query(async ({ input }) => {
+          return db.getDriveSyncLogs(input.dataRoomId, input.limit);
+        }),
+
+      // Trigger manual sync
+      syncNow: protectedProcedure
+        .input(z.object({ dataRoomId: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const config = await db.getDriveSyncConfig(input.dataRoomId);
+          if (!config) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'No sync configuration found for this data room' });
+          }
+
+          // Create sync log entry
+          const logId = await db.createDriveSyncLog({
+            dataRoomId: input.dataRoomId,
+            syncConfigId: config.id,
+            syncType: 'manual',
+            status: 'started',
+            triggeredBy: ctx.user.id,
+          });
+
+          try {
+            // Get user's Google OAuth token
+            const token = await db.getGoogleOAuthTokenByUserId(ctx.user.id);
+            if (!token) {
+              throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Google Drive not connected. Please connect your Google account first.' });
+            }
+
+            // Import Google Drive sync service
+            const { syncGoogleDriveFolder } = await import('./googleDriveSyncService');
+
+            const result = await syncGoogleDriveFolder({
+              dataRoomId: input.dataRoomId,
+              folderId: config.googleDriveFolderId,
+              accessToken: token.accessToken,
+              refreshToken: token.refreshToken || undefined,
+              syncSubfolders: config.syncSubfolders,
+              includeFileTypes: config.includeFileTypes ? JSON.parse(config.includeFileTypes) : undefined,
+              excludeFileTypes: config.excludeFileTypes ? JSON.parse(config.excludeFileTypes) : undefined,
+              maxFileSizeMb: config.maxFileSizeMb || 100,
+            });
+
+            // Update sync log with results
+            await db.updateDriveSyncLog(logId, {
+              status: 'completed',
+              completedAt: new Date(),
+              filesScanned: result.filesScanned,
+              filesAdded: result.filesAdded,
+              filesUpdated: result.filesUpdated,
+              filesSkipped: result.filesSkipped,
+              foldersCreated: result.foldersCreated,
+              durationMs: result.durationMs,
+              warnings: result.warnings?.length ? JSON.stringify(result.warnings) : null,
+            });
+
+            // Update config last sync status
+            await db.updateDriveSyncConfig(config.id, {
+              lastSyncAt: new Date(),
+              lastSyncStatus: 'success',
+              lastSyncFilesAdded: result.filesAdded,
+              lastSyncFilesUpdated: result.filesUpdated,
+            });
+
+            return { success: true, ...result };
+          } catch (error: any) {
+            await db.updateDriveSyncLog(logId, {
+              status: 'failed',
+              completedAt: new Date(),
+              errors: JSON.stringify([error.message]),
+            });
+
+            await db.updateDriveSyncConfig(config.id, {
+              lastSyncStatus: 'failed',
+              lastSyncError: error.message,
+            });
+
+            throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: error.message });
+          }
+        }),
+
+      // List folders in Google Drive for selection
+      listDriveFolders: protectedProcedure
+        .input(z.object({ parentId: z.string().optional() }))
+        .query(async ({ input, ctx }) => {
+          const token = await db.getGoogleOAuthTokenByUserId(ctx.user.id);
+          if (!token) {
+            throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Google Drive not connected' });
+          }
+
+          const { listGoogleDriveFolders } = await import('./googleDriveSyncService');
+          return listGoogleDriveFolders(token.accessToken, input.parentId);
+        }),
+    }),
+
+    // ============================================
+    // PAGE-LEVEL TRACKING
+    // ============================================
+    pageTracking: router({
+      // Record page view (public - for visitors)
+      recordPageView: publicProcedure
+        .input(z.object({
+          documentId: z.number(),
+          visitorId: z.number(),
+          sessionId: z.number().optional(),
+          linkId: z.number().optional(),
+          pageNumber: z.number(),
+          pageLabel: z.string().optional(),
+          durationMs: z.number().optional(),
+          scrollDepth: z.number().optional(),
+          mouseMovements: z.number().optional(),
+          clicks: z.number().optional(),
+          zoomLevel: z.number().optional(),
+          deviceType: z.string().optional(),
+          screenWidth: z.number().optional(),
+          screenHeight: z.number().optional(),
+          viewportWidth: z.number().optional(),
+          viewportHeight: z.number().optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const id = await db.createDocumentPageView({
+            documentId: input.documentId,
+            visitorId: input.visitorId,
+            viewSessionId: input.sessionId,
+            linkId: input.linkId,
+            pageNumber: input.pageNumber,
+            pageLabel: input.pageLabel,
+            durationMs: input.durationMs || 0,
+            scrollDepth: input.scrollDepth,
+            mouseMovements: input.mouseMovements,
+            clicks: input.clicks,
+            zoomLevel: input.zoomLevel,
+            deviceType: input.deviceType,
+            screenWidth: input.screenWidth,
+            screenHeight: input.screenHeight,
+            viewportWidth: input.viewportWidth,
+            viewportHeight: input.viewportHeight,
+          });
+          return { id };
+        }),
+
+      // Update page view (when visitor leaves page)
+      updatePageView: publicProcedure
+        .input(z.object({
+          id: z.number(),
+          durationMs: z.number(),
+          scrollDepth: z.number().optional(),
+          mouseMovements: z.number().optional(),
+          clicks: z.number().optional(),
+        }))
+        .mutation(async ({ input }) => {
+          await db.updateDocumentPageView(input.id, {
+            exitTime: new Date(),
+            durationMs: input.durationMs,
+            scrollDepth: input.scrollDepth,
+            mouseMovements: input.mouseMovements,
+            clicks: input.clicks,
+          });
+          return { success: true };
+        }),
+
+      // Get page views for a document (admin)
+      getForDocument: protectedProcedure
+        .input(z.object({ documentId: z.number(), visitorId: z.number().optional() }))
+        .query(async ({ input }) => {
+          return db.getDocumentPageViews(input.documentId, input.visitorId);
+        }),
+
+      // Get page views by visitor (admin)
+      getByVisitor: protectedProcedure
+        .input(z.object({ visitorId: z.number() }))
+        .query(async ({ input }) => {
+          return db.getPageViewsByVisitor(input.visitorId);
+        }),
+    }),
+
+    // ============================================
+    // VISITOR SESSIONS
+    // ============================================
+    sessions: router({
+      // Start a new session (public)
+      start: publicProcedure
+        .input(z.object({
+          dataRoomId: z.number(),
+          visitorId: z.number(),
+          linkId: z.number().optional(),
+          deviceType: z.string().optional(),
+          browser: z.string().optional(),
+          browserVersion: z.string().optional(),
+          os: z.string().optional(),
+          osVersion: z.string().optional(),
+          screenResolution: z.string().optional(),
+          referrer: z.string().optional(),
+          utmSource: z.string().optional(),
+          utmMedium: z.string().optional(),
+          utmCampaign: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const sessionToken = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
+          const ipAddress = (ctx.req.headers['x-forwarded-for'] as string)?.split(',')[0] || ctx.req.socket.remoteAddress || '';
+
+          const id = await db.createVisitorSession({
+            dataRoomId: input.dataRoomId,
+            visitorId: input.visitorId,
+            linkId: input.linkId,
+            sessionToken,
+            deviceType: input.deviceType,
+            browser: input.browser,
+            browserVersion: input.browserVersion,
+            os: input.os,
+            osVersion: input.osVersion,
+            screenResolution: input.screenResolution,
+            ipAddress,
+            referrer: input.referrer,
+            utmSource: input.utmSource,
+            utmMedium: input.utmMedium,
+            utmCampaign: input.utmCampaign,
+          });
+
+          return { id, sessionToken };
+        }),
+
+      // Update session activity (public)
+      updateActivity: publicProcedure
+        .input(z.object({
+          sessionToken: z.string(),
+          documentsViewed: z.number().optional(),
+          pagesViewed: z.number().optional(),
+          totalScrollDistance: z.number().optional(),
+          totalClicks: z.number().optional(),
+          downloadsCount: z.number().optional(),
+          printsCount: z.number().optional(),
+          activeDurationMs: z.number().optional(),
+          idleDurationMs: z.number().optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const session = await db.getSessionByToken(input.sessionToken);
+          if (!session) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'Session not found' });
+          }
+
+          const { sessionToken, ...updateData } = input;
+          await db.updateVisitorSession(session.id, {
+            ...updateData,
+            totalDurationMs: (updateData.activeDurationMs || 0) + (updateData.idleDurationMs || 0),
+          });
+
+          return { success: true };
+        }),
+
+      // End session (public)
+      end: publicProcedure
+        .input(z.object({
+          sessionToken: z.string(),
+          totalDurationMs: z.number(),
+          activeDurationMs: z.number().optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const session = await db.getSessionByToken(input.sessionToken);
+          if (!session) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'Session not found' });
+          }
+
+          await db.updateVisitorSession(session.id, {
+            sessionEndAt: new Date(),
+            totalDurationMs: input.totalDurationMs,
+            activeDurationMs: input.activeDurationMs,
+            isActive: false,
+          });
+
+          return { success: true };
+        }),
+
+      // Get sessions for a data room (admin)
+      list: protectedProcedure
+        .input(z.object({ dataRoomId: z.number(), limit: z.number().default(100) }))
+        .query(async ({ input }) => {
+          return db.getDataRoomSessions(input.dataRoomId, input.limit);
+        }),
+
+      // Get sessions for a visitor (admin)
+      getByVisitor: protectedProcedure
+        .input(z.object({ visitorId: z.number() }))
+        .query(async ({ input }) => {
+          return db.getVisitorSessions(input.visitorId);
+        }),
+    }),
+
+    // ============================================
+    // EMAIL ACCESS RULES
+    // ============================================
+    emailRules: router({
+      // List rules for a data room
+      list: protectedProcedure
+        .input(z.object({ dataRoomId: z.number() }))
+        .query(async ({ input }) => {
+          return db.getEmailAccessRules(input.dataRoomId);
+        }),
+
+      // Create a new rule
+      create: protectedProcedure
+        .input(z.object({
+          dataRoomId: z.number(),
+          ruleType: z.enum(['allow_email', 'allow_domain', 'block_email', 'block_domain']),
+          emailPattern: z.string(),
+          allowDownload: z.boolean().default(true),
+          allowPrint: z.boolean().default(true),
+          maxViews: z.number().optional(),
+          expiresAt: z.date().optional(),
+          requireNdaSignature: z.boolean().default(true),
+          autoApprove: z.boolean().default(false),
+          notifyOnAccess: z.boolean().default(true),
+          notifyEmail: z.string().optional(),
+          priority: z.number().default(0),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const id = await db.createEmailAccessRule({
+            ...input,
+            createdBy: ctx.user.id,
+          });
+          return { id };
+        }),
+
+      // Update a rule
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          ruleType: z.enum(['allow_email', 'allow_domain', 'block_email', 'block_domain']).optional(),
+          emailPattern: z.string().optional(),
+          allowDownload: z.boolean().optional(),
+          allowPrint: z.boolean().optional(),
+          maxViews: z.number().optional(),
+          expiresAt: z.date().optional(),
+          requireNdaSignature: z.boolean().optional(),
+          autoApprove: z.boolean().optional(),
+          notifyOnAccess: z.boolean().optional(),
+          notifyEmail: z.string().optional(),
+          priority: z.number().optional(),
+          isActive: z.boolean().optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const { id, ...data } = input;
+          await db.updateEmailAccessRule(id, data);
+          return { success: true };
+        }),
+
+      // Delete a rule
+      delete: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input }) => {
+          await db.deleteEmailAccessRule(input.id);
+          return { success: true };
+        }),
+
+      // Check if an email has access (for public access flow)
+      checkAccess: publicProcedure
+        .input(z.object({ dataRoomId: z.number(), email: z.string() }))
+        .query(async ({ input }) => {
+          return db.checkEmailAccess(input.dataRoomId, input.email);
+        }),
+    }),
+
+    // ============================================
+    // DETAILED ANALYTICS
+    // ============================================
+    detailedAnalytics: router({
+      // Get page-level analytics for a data room
+      getPageAnalytics: protectedProcedure
+        .input(z.object({ dataRoomId: z.number() }))
+        .query(async ({ input }) => {
+          return db.getPageViewAnalytics(input.dataRoomId);
+        }),
+
+      // Get detailed analytics for a specific visitor
+      getVisitorDetails: protectedProcedure
+        .input(z.object({ dataRoomId: z.number(), visitorId: z.number() }))
+        .query(async ({ input }) => {
+          return db.getDetailedVisitorAnalytics(input.dataRoomId, input.visitorId);
+        }),
+
+      // Get engagement report for a data room
+      getEngagementReport: protectedProcedure
+        .input(z.object({
+          dataRoomId: z.number(),
+          startDate: z.date().optional(),
+          endDate: z.date().optional(),
+        }))
+        .query(async ({ input }) => {
+          return db.getDataRoomEngagementReport(input.dataRoomId, input.startDate, input.endDate);
+        }),
+
+      // Get document-level heatmap data (which pages are most viewed)
+      getDocumentHeatmap: protectedProcedure
+        .input(z.object({ documentId: z.number() }))
+        .query(async ({ input }) => {
+          const pageViews = await db.getDocumentPageViews(input.documentId);
+
+          // Aggregate by page number
+          const pageStats: Record<number, { views: number; totalDuration: number; uniqueVisitors: Set<number> }> = {};
+
+          pageViews.forEach(pv => {
+            if (!pageStats[pv.pageNumber]) {
+              pageStats[pv.pageNumber] = { views: 0, totalDuration: 0, uniqueVisitors: new Set() };
+            }
+            pageStats[pv.pageNumber].views++;
+            pageStats[pv.pageNumber].totalDuration += pv.durationMs || 0;
+            pageStats[pv.pageNumber].uniqueVisitors.add(pv.visitorId);
+          });
+
+          return Object.entries(pageStats).map(([page, stats]) => ({
+            pageNumber: parseInt(page),
+            views: stats.views,
+            totalDurationMs: stats.totalDuration,
+            avgDurationMs: stats.views > 0 ? stats.totalDuration / stats.views : 0,
+            uniqueVisitors: stats.uniqueVisitors.size,
+          })).sort((a, b) => a.pageNumber - b.pageNumber);
+        }),
+
+      // Export analytics as CSV
+      exportCsv: protectedProcedure
+        .input(z.object({
+          dataRoomId: z.number(),
+          type: z.enum(['visitors', 'documents', 'sessions', 'pageViews']),
+        }))
+        .mutation(async ({ input }) => {
+          const report = await db.getDataRoomEngagementReport(input.dataRoomId);
+          if (!report) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
+          }
+
+          let csv = '';
+          let filename = '';
+
+          if (input.type === 'visitors') {
+            filename = `visitors_${input.dataRoomId}_${Date.now()}.csv`;
+            csv = 'Email,Name,Company,Status,Sessions,Total Time (min),Documents Viewed,Pages Viewed,NDA Signed,Last Activity\n';
+            report.visitorEngagement.forEach(v => {
+              csv += `"${v.email || ''}","${v.name || ''}","${v.company || ''}","${v.accessStatus}",${v.sessionsCount},${Math.round(v.totalTimeMs / 60000)},${v.documentsViewed},${v.pagesViewed},"${v.ndaAcceptedAt ? 'Yes' : 'No'}","${v.lastActivity || ''}"\n`;
+            });
+          } else if (input.type === 'documents') {
+            filename = `documents_${input.dataRoomId}_${Date.now()}.csv`;
+            csv = 'Document,Pages,Views,Unique Visitors,Total Time (min),Avg Time per Page (sec)\n';
+            report.documentEngagement.forEach(d => {
+              csv += `"${d.documentName}",${d.pageCount},${d.views},${d.uniqueVisitors},${Math.round(d.totalTimeMs / 60000)},${Math.round(d.avgTimePerPageMs / 1000)}\n`;
+            });
+          }
+
+          return { csv, filename };
+        }),
+    }),
   }),
 
   // ============================================
@@ -9615,6 +11007,83 @@ Ask if they received the original request and if they can provide a quote.`;
         return importFreightInvoice(input.invoiceData as any, ctx.user.id);
       }),
 
+    // Import a vendor invoice
+    importVendorInvoice: protectedProcedure
+      .input(z.object({
+        invoiceData: z.object({
+          invoiceNumber: z.string(),
+          vendorName: z.string(),
+          vendorEmail: z.string().optional(),
+          invoiceDate: z.string(),
+          dueDate: z.string().optional(),
+          lineItems: z.array(z.object({
+            description: z.string(),
+            sku: z.string().optional(),
+            quantity: z.number(),
+            unit: z.string().optional(),
+            unitPrice: z.number(),
+            totalPrice: z.number(),
+          })),
+          subtotal: z.number(),
+          taxAmount: z.number().optional(),
+          shippingAmount: z.number().optional(),
+          totalAmount: z.number(),
+          currency: z.string().optional(),
+          relatedPoNumber: z.string().optional(),
+          paymentTerms: z.string().optional(),
+          notes: z.string().optional(),
+        }),
+        markAsReceived: z.boolean().default(false),
+        updateInventory: z.boolean().default(true),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return importVendorInvoice(input.invoiceData as any, ctx.user.id, input.markAsReceived);
+      }),
+
+    // Import a customs document
+    importCustomsDocument: protectedProcedure
+      .input(z.object({
+        documentData: z.object({
+          documentNumber: z.string(),
+          documentType: z.enum(["bill_of_lading", "customs_entry", "commercial_invoice", "packing_list", "certificate_of_origin", "import_permit", "other"]),
+          entryDate: z.string(),
+          shipperName: z.string(),
+          shipperCountry: z.string().optional(),
+          consigneeName: z.string(),
+          consigneeCountry: z.string().optional(),
+          countryOfOrigin: z.string(),
+          portOfEntry: z.string().optional(),
+          portOfExit: z.string().optional(),
+          vesselName: z.string().optional(),
+          voyageNumber: z.string().optional(),
+          containerNumber: z.string().optional(),
+          lineItems: z.array(z.object({
+            description: z.string(),
+            hsCode: z.string().optional(),
+            quantity: z.number(),
+            unit: z.string().optional(),
+            declaredValue: z.number(),
+            dutyRate: z.number().optional(),
+            dutyAmount: z.number().optional(),
+            countryOfOrigin: z.string().optional(),
+          })),
+          totalDeclaredValue: z.number(),
+          totalDuties: z.number().optional(),
+          totalTaxes: z.number().optional(),
+          totalCharges: z.number(),
+          currency: z.string().optional(),
+          brokerName: z.string().optional(),
+          brokerReference: z.string().optional(),
+          relatedPoNumber: z.string().optional(),
+          trackingNumber: z.string().optional(),
+          notes: z.string().optional(),
+        }),
+        linkToPO: z.boolean().default(true),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return importCustomsDocument(input.documentData as any, ctx.user.id);
+      }),
+
     // Get import history
     getHistory: protectedProcedure
       .input(z.object({ limit: z.number().default(50) }))
@@ -9704,6 +11173,7 @@ Ask if they received the original request and if they can provide a quote.`;
         return {
           folders: data.files || [],
           nextPageToken: data.nextPageToken,
+          notConnected: false,
         };
       }),
 
@@ -9778,6 +11248,7 @@ Ask if they received the original request and if they can provide a quote.`;
         return {
           files: data.files || [],
           nextPageToken: data.nextPageToken,
+          notConnected: false,
         };
       }),
 
@@ -9946,474 +11417,826 @@ Ask if they received the original request and if they can provide a quote.`;
   }),
 
   // ============================================
-  // CRM & FUNDRAISING
+  // CRM MODULE - Contacts, Messaging & Tracking
   // ============================================
   crm: router({
-    // Investors
-    listInvestors: protectedProcedure
-      .input(z.object({ 
-        status: z.string().optional(),
-        type: z.string().optional(),
-        priority: z.string().optional(),
-      }).optional())
-      .query(({ input }) => db.getInvestors(input || {})),
-    
-    getInvestor: protectedProcedure
-      .input(z.object({ id: z.number() }))
-      .query(({ input }) => db.getInvestorById(input.id)),
-    
-    createInvestor: protectedProcedure
-      .input(z.object({
-        name: z.string().min(1),
-        email: z.string().email().optional(),
-        phone: z.string().optional(),
-        company: z.string().optional(),
-        title: z.string().optional(),
-        type: z.enum(['angel', 'vc', 'family_office', 'strategic', 'accelerator', 'other']).default('other'),
-        status: z.enum(['lead', 'contacted', 'interested', 'committed', 'invested', 'passed']).default('lead'),
-        linkedinUrl: z.string().optional(),
-        twitterHandle: z.string().optional(),
-        website: z.string().optional(),
-        address: z.string().optional(),
-        investmentFocus: z.string().optional(),
-        typicalCheckSize: z.string().optional(),
-        investmentStage: z.string().optional(),
-        source: z.string().optional(),
-        tags: z.string().optional(),
-        priority: z.enum(['low', 'medium', 'high', 'critical']).default('medium'),
-        nextFollowUpAt: z.date().optional(),
-        notes: z.string().optional(),
-      }))
-      .mutation(async ({ input, ctx }) => {
-        const investor = await db.createInvestor(input as any);
-        await createAuditLog(ctx.user.id, 'create', 'investor', investor.id, input.name);
-        return investor;
-      }),
-    
-    updateInvestor: protectedProcedure
-      .input(z.object({
-        id: z.number(),
-        data: z.object({
-          name: z.string().optional(),
-          email: z.string().email().optional(),
-          phone: z.string().optional(),
-          company: z.string().optional(),
-          title: z.string().optional(),
-          type: z.enum(['angel', 'vc', 'family_office', 'strategic', 'accelerator', 'other']).optional(),
-          status: z.enum(['lead', 'contacted', 'interested', 'committed', 'invested', 'passed']).optional(),
-          linkedinUrl: z.string().optional(),
-          twitterHandle: z.string().optional(),
-          website: z.string().optional(),
-          address: z.string().optional(),
-          investmentFocus: z.string().optional(),
-          typicalCheckSize: z.string().optional(),
-          investmentStage: z.string().optional(),
+    // --- CONTACTS ---
+    contacts: router({
+      list: protectedProcedure
+        .input(z.object({
+          contactType: z.string().optional(),
+          status: z.string().optional(),
           source: z.string().optional(),
-          tags: z.string().optional(),
-          priority: z.enum(['low', 'medium', 'high', 'critical']).optional(),
-          totalInvested: z.string().optional(),
-          equityPercentage: z.string().optional(),
-          lastContactedAt: z.date().optional(),
-          nextFollowUpAt: z.date().optional(),
-          followUpNotes: z.string().optional(),
-          notes: z.string().optional(),
-        }),
-      }))
-      .mutation(async ({ input, ctx }) => {
-        await db.updateInvestor(input.id, input.data as any);
-        await createAuditLog(ctx.user.id, 'update', 'investor', input.id);
-        return { success: true };
-      }),
-    
-    deleteInvestor: protectedProcedure
-      .input(z.object({ id: z.number() }))
-      .mutation(async ({ input, ctx }) => {
-        await db.deleteInvestor(input.id);
-        await createAuditLog(ctx.user.id, 'delete', 'investor', input.id);
-        return { success: true };
-      }),
+          pipelineStage: z.string().optional(),
+          assignedTo: z.number().optional(),
+          search: z.string().optional(),
+          limit: z.number().optional(),
+          offset: z.number().optional(),
+        }).optional())
+        .query(({ input }) => db.getCrmContacts(input)),
 
-    // Fundraising Campaigns
-    listCampaigns: protectedProcedure
-      .input(z.object({ status: z.string().optional() }).optional())
-      .query(({ input }) => db.getFundraisingCampaigns(input || {})),
-    
-    getCampaign: protectedProcedure
-      .input(z.object({ id: z.number() }))
-      .query(({ input }) => db.getFundraisingCampaignById(input.id)),
-    
-    createCampaign: protectedProcedure
-      .input(z.object({
-        name: z.string().min(1),
-        description: z.string().optional(),
-        targetAmount: z.string(),
-        minimumInvestment: z.string().optional(),
-        valuation: z.string().optional(),
-        roundType: z.enum(['pre_seed', 'seed', 'series_a', 'series_b', 'series_c', 'bridge', 'other']),
-        equityOffered: z.string().optional(),
-        startDate: z.date().optional(),
-        targetCloseDate: z.date().optional(),
-        status: z.enum(['planning', 'active', 'paused', 'closed', 'cancelled']).default('planning'),
-        notes: z.string().optional(),
-      }))
-      .mutation(async ({ input, ctx }) => {
-        const campaign = await db.createFundraisingCampaign({ ...input, createdBy: ctx.user.id } as any);
-        await createAuditLog(ctx.user.id, 'create', 'fundraising_campaign', campaign.id, input.name);
-        return campaign;
-      }),
-    
-    updateCampaign: protectedProcedure
-      .input(z.object({
-        id: z.number(),
-        data: z.object({
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getCrmContactById(input.id)),
+
+      getByEmail: protectedProcedure
+        .input(z.object({ email: z.string() }))
+        .query(({ input }) => db.getCrmContactByEmail(input.email)),
+
+      create: protectedProcedure
+        .input(z.object({
+          firstName: z.string().min(1),
+          lastName: z.string().optional(),
+          fullName: z.string().optional(),
+          email: z.string().optional(),
+          phone: z.string().optional(),
+          whatsappNumber: z.string().optional(),
+          linkedinUrl: z.string().optional(),
+          organization: z.string().optional(),
+          jobTitle: z.string().optional(),
+          department: z.string().optional(),
+          address: z.string().optional(),
+          city: z.string().optional(),
+          state: z.string().optional(),
+          country: z.string().optional(),
+          postalCode: z.string().optional(),
+          contactType: z.enum(["lead", "prospect", "customer", "partner", "investor", "donor", "vendor", "other"]).optional(),
+          source: z.enum(["iphone_bump", "whatsapp", "linkedin_scan", "business_card", "website", "referral", "event", "cold_outreach", "import", "manual"]).optional(),
+          pipelineStage: z.enum(["new", "contacted", "qualified", "proposal", "negotiation", "won", "lost"]).optional(),
+          dealValue: z.string().optional(),
+          notes: z.string().optional(),
+          tags: z.string().optional(),
+          assignedTo: z.number().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const fullName = input.fullName || `${input.firstName} ${input.lastName || ""}`.trim();
+          const id = await db.createCrmContact({
+            ...input,
+            fullName,
+            capturedBy: ctx.user.id,
+          });
+          await createAuditLog(ctx.user.id, 'create', 'crm_contact', id, fullName);
+          return { id };
+        }),
+
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          firstName: z.string().optional(),
+          lastName: z.string().optional(),
+          fullName: z.string().optional(),
+          email: z.string().optional(),
+          phone: z.string().optional(),
+          whatsappNumber: z.string().optional(),
+          linkedinUrl: z.string().optional(),
+          organization: z.string().optional(),
+          jobTitle: z.string().optional(),
+          department: z.string().optional(),
+          address: z.string().optional(),
+          city: z.string().optional(),
+          state: z.string().optional(),
+          country: z.string().optional(),
+          postalCode: z.string().optional(),
+          contactType: z.enum(["lead", "prospect", "customer", "partner", "investor", "donor", "vendor", "other"]).optional(),
+          status: z.enum(["active", "inactive", "unsubscribed", "bounced"]).optional(),
+          pipelineStage: z.enum(["new", "contacted", "qualified", "proposal", "negotiation", "won", "lost"]).optional(),
+          dealValue: z.string().optional(),
+          notes: z.string().optional(),
+          tags: z.string().optional(),
+          assignedTo: z.number().optional(),
+          nextFollowUpAt: z.date().optional(),
+          preferredChannel: z.enum(["email", "whatsapp", "phone", "sms", "linkedin"]).optional(),
+          optedOutEmail: z.boolean().optional(),
+          optedOutSms: z.boolean().optional(),
+          optedOutWhatsapp: z.boolean().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          const existing = await db.getCrmContactById(id);
+          await db.updateCrmContact(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'crm_contact', id, existing?.fullName, existing, data);
+          return { success: true };
+        }),
+
+      delete: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const existing = await db.getCrmContactById(input.id);
+          await db.deleteCrmContact(input.id);
+          await createAuditLog(ctx.user.id, 'delete', 'crm_contact', input.id, existing?.fullName);
+          return { success: true };
+        }),
+
+      getStats: protectedProcedure.query(() => db.getCrmContactStats()),
+
+      getTimeline: protectedProcedure
+        .input(z.object({ contactId: z.number(), limit: z.number().optional() }))
+        .query(({ input }) => db.getContactTimeline(input.contactId, input.limit)),
+
+      getMessagingHistory: protectedProcedure
+        .input(z.object({ contactId: z.number(), limit: z.number().optional() }))
+        .query(({ input }) => db.getUnifiedMessagingHistory(input.contactId, input.limit)),
+    }),
+
+    // --- TAGS ---
+    tags: router({
+      list: protectedProcedure
+        .input(z.object({ category: z.string().optional() }).optional())
+        .query(({ input }) => db.getCrmTags(input?.category)),
+
+      create: protectedProcedure
+        .input(z.object({
+          name: z.string().min(1),
+          color: z.string().optional(),
+          category: z.enum(["contact", "deal", "general"]).optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const id = await db.createCrmTag(input);
+          return { id };
+        }),
+
+      delete: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input }) => {
+          await db.deleteCrmTag(input.id);
+          return { success: true };
+        }),
+
+      addToContact: protectedProcedure
+        .input(z.object({ contactId: z.number(), tagId: z.number() }))
+        .mutation(async ({ input }) => {
+          await db.addTagToContact(input.contactId, input.tagId);
+          return { success: true };
+        }),
+
+      removeFromContact: protectedProcedure
+        .input(z.object({ contactId: z.number(), tagId: z.number() }))
+        .mutation(async ({ input }) => {
+          await db.removeTagFromContact(input.contactId, input.tagId);
+          return { success: true };
+        }),
+
+      getForContact: protectedProcedure
+        .input(z.object({ contactId: z.number() }))
+        .query(({ input }) => db.getContactTags(input.contactId)),
+    }),
+
+    // --- WHATSAPP ---
+    whatsapp: router({
+      messages: protectedProcedure
+        .input(z.object({
+          contactId: z.number().optional(),
+          whatsappNumber: z.string().optional(),
+          direction: z.string().optional(),
+          conversationId: z.string().optional(),
+          limit: z.number().optional(),
+          offset: z.number().optional(),
+        }).optional())
+        .query(({ input }) => db.getWhatsappMessages(input)),
+
+      conversations: protectedProcedure
+        .input(z.object({ limit: z.number().optional() }).optional())
+        .query(({ input }) => db.getWhatsappConversations(input?.limit)),
+
+      sendMessage: protectedProcedure
+        .input(z.object({
+          contactId: z.number().optional(),
+          whatsappNumber: z.string(),
+          contactName: z.string().optional(),
+          content: z.string(),
+          messageType: z.enum(["text", "image", "video", "audio", "document", "location", "contact", "template"]).optional(),
+          templateName: z.string().optional(),
+          templateParams: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          // Create message record (actual sending would be via WhatsApp Business API webhook)
+          const id = await db.createWhatsappMessage({
+            ...input,
+            direction: "outbound",
+            status: "pending",
+            sentBy: ctx.user.id,
+            conversationId: `wa_${input.whatsappNumber}_${Date.now()}`,
+          });
+
+          // Also create an interaction record
+          if (input.contactId) {
+            await db.createCrmInteraction({
+              contactId: input.contactId,
+              channel: "whatsapp",
+              interactionType: "sent",
+              content: input.content,
+              whatsappMessageId: id,
+              performedBy: ctx.user.id,
+            });
+          }
+
+          return { id, status: "pending" };
+        }),
+
+      logInbound: protectedProcedure
+        .input(z.object({
+          whatsappNumber: z.string(),
+          contactName: z.string().optional(),
+          messageId: z.string().optional(),
+          conversationId: z.string().optional(),
+          content: z.string(),
+          messageType: z.enum(["text", "image", "video", "audio", "document", "location", "contact", "template"]).optional(),
+          mediaUrl: z.string().optional(),
+          receivedAt: z.date().optional(),
+        }))
+        .mutation(async ({ input }) => {
+          // Find contact by WhatsApp number
+          const contacts = await db.getCrmContacts({ search: input.whatsappNumber, limit: 1 });
+          const contact = contacts[0];
+
+          const id = await db.createWhatsappMessage({
+            ...input,
+            contactId: contact?.id,
+            direction: "inbound",
+            status: "delivered",
+            sentAt: input.receivedAt || new Date(),
+          });
+
+          // Create interaction if contact exists
+          if (contact) {
+            await db.createCrmInteraction({
+              contactId: contact.id,
+              channel: "whatsapp",
+              interactionType: "received",
+              content: input.content,
+              whatsappMessageId: id,
+            });
+
+            // Update contact's last replied timestamp
+            await db.updateCrmContact(contact.id, { lastRepliedAt: new Date() });
+          }
+
+          return { id, contactId: contact?.id };
+        }),
+
+      updateStatus: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          status: z.enum(["pending", "sent", "delivered", "read", "failed"]),
+        }))
+        .mutation(async ({ input }) => {
+          await db.updateWhatsappMessageStatus(input.id, input.status, new Date());
+          return { success: true };
+        }),
+    }),
+
+    // --- INTERACTIONS ---
+    interactions: router({
+      list: protectedProcedure
+        .input(z.object({
+          contactId: z.number().optional(),
+          channel: z.string().optional(),
+          limit: z.number().optional(),
+          offset: z.number().optional(),
+        }).optional())
+        .query(({ input }) => db.getCrmInteractions(input)),
+
+      create: protectedProcedure
+        .input(z.object({
+          contactId: z.number(),
+          channel: z.enum(["email", "whatsapp", "sms", "phone", "meeting", "linkedin", "note", "task"]),
+          interactionType: z.enum(["sent", "received", "call_made", "call_received", "meeting_scheduled", "meeting_completed", "note_added", "task_completed"]),
+          subject: z.string().optional(),
+          content: z.string().optional(),
+          summary: z.string().optional(),
+          callDuration: z.number().optional(),
+          callOutcome: z.enum(["answered", "voicemail", "no_answer", "busy", "wrong_number"]).optional(),
+          meetingStartTime: z.date().optional(),
+          meetingEndTime: z.date().optional(),
+          meetingLocation: z.string().optional(),
+          meetingLink: z.string().optional(),
+          relatedDealId: z.number().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const id = await db.createCrmInteraction({
+            ...input,
+            performedBy: ctx.user.id,
+          });
+          return { id };
+        }),
+
+      logCall: protectedProcedure
+        .input(z.object({
+          contactId: z.number(),
+          direction: z.enum(["outbound", "inbound"]),
+          duration: z.number().optional(),
+          outcome: z.enum(["answered", "voicemail", "no_answer", "busy", "wrong_number"]),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const id = await db.createCrmInteraction({
+            contactId: input.contactId,
+            channel: "phone",
+            interactionType: input.direction === "outbound" ? "call_made" : "call_received",
+            callDuration: input.duration,
+            callOutcome: input.outcome,
+            content: input.notes,
+            performedBy: ctx.user.id,
+          });
+          return { id };
+        }),
+
+      logMeeting: protectedProcedure
+        .input(z.object({
+          contactId: z.number(),
+          subject: z.string(),
+          startTime: z.date(),
+          endTime: z.date().optional(),
+          location: z.string().optional(),
+          meetingLink: z.string().optional(),
+          notes: z.string().optional(),
+          completed: z.boolean().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const id = await db.createCrmInteraction({
+            contactId: input.contactId,
+            channel: "meeting",
+            interactionType: input.completed ? "meeting_completed" : "meeting_scheduled",
+            subject: input.subject,
+            meetingStartTime: input.startTime,
+            meetingEndTime: input.endTime,
+            meetingLocation: input.location,
+            meetingLink: input.meetingLink,
+            content: input.notes,
+            performedBy: ctx.user.id,
+          });
+          return { id };
+        }),
+
+      addNote: protectedProcedure
+        .input(z.object({
+          contactId: z.number(),
+          content: z.string(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const id = await db.createCrmInteraction({
+            contactId: input.contactId,
+            channel: "note",
+            interactionType: "note_added",
+            content: input.content,
+            performedBy: ctx.user.id,
+          });
+          return { id };
+        }),
+    }),
+
+    // --- PIPELINES ---
+    pipelines: router({
+      list: protectedProcedure
+        .input(z.object({ type: z.string().optional() }).optional())
+        .query(({ input }) => db.getCrmPipelines(input?.type)),
+
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getCrmPipelineById(input.id)),
+
+      create: protectedProcedure
+        .input(z.object({
+          name: z.string().min(1),
+          type: z.enum(["sales", "fundraising", "partnerships", "other"]),
+          stages: z.string(), // JSON array
+          isDefault: z.boolean().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const id = await db.createCrmPipeline(input);
+          await createAuditLog(ctx.user.id, 'create', 'crm_pipeline', id, input.name);
+          return { id };
+        }),
+
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          stages: z.string().optional(),
+          isDefault: z.boolean().optional(),
+          isActive: z.boolean().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateCrmPipeline(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'crm_pipeline', id);
+          return { success: true };
+        }),
+    }),
+
+    // --- DEALS ---
+    deals: router({
+      list: protectedProcedure
+        .input(z.object({
+          pipelineId: z.number().optional(),
+          contactId: z.number().optional(),
+          stage: z.string().optional(),
+          status: z.string().optional(),
+          assignedTo: z.number().optional(),
+          limit: z.number().optional(),
+          offset: z.number().optional(),
+        }).optional())
+        .query(({ input }) => db.getCrmDeals(input)),
+
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getCrmDealById(input.id)),
+
+      create: protectedProcedure
+        .input(z.object({
+          pipelineId: z.number(),
+          contactId: z.number(),
+          name: z.string().min(1),
+          description: z.string().optional(),
+          stage: z.string(),
+          amount: z.string().optional(),
+          currency: z.string().optional(),
+          probability: z.number().optional(),
+          expectedCloseDate: z.date().optional(),
+          source: z.string().optional(),
+          campaign: z.string().optional(),
+          notes: z.string().optional(),
+          assignedTo: z.number().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const id = await db.createCrmDeal({
+            ...input,
+            assignedTo: input.assignedTo || ctx.user.id,
+          });
+          await createAuditLog(ctx.user.id, 'create', 'crm_deal', id, input.name);
+          return { id };
+        }),
+
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
           name: z.string().optional(),
           description: z.string().optional(),
-          targetAmount: z.string().optional(),
-          raisedAmount: z.string().optional(),
-          minimumInvestment: z.string().optional(),
-          valuation: z.string().optional(),
-          roundType: z.enum(['pre_seed', 'seed', 'series_a', 'series_b', 'series_c', 'bridge', 'other']).optional(),
-          equityOffered: z.string().optional(),
-          startDate: z.date().optional(),
-          targetCloseDate: z.date().optional(),
-          actualCloseDate: z.date().optional(),
-          status: z.enum(['planning', 'active', 'paused', 'closed', 'cancelled']).optional(),
-          dataRoomId: z.number().optional(),
-          notes: z.string().optional(),
-        }),
-      }))
-      .mutation(async ({ input, ctx }) => {
-        await db.updateFundraisingCampaign(input.id, input.data as any);
-        await createAuditLog(ctx.user.id, 'update', 'fundraising_campaign', input.id);
-        return { success: true };
-      }),
-
-    // Communications
-    listCommunications: protectedProcedure
-      .input(z.object({
-        investorId: z.number(),
-        campaignId: z.number().optional(),
-      }))
-      .query(({ input }) => db.getInvestorCommunications(input.investorId, input.campaignId)),
-    
-    createCommunication: protectedProcedure
-      .input(z.object({
-        investorId: z.number(),
-        campaignId: z.number().optional(),
-        type: z.enum(['email', 'whatsapp', 'call', 'meeting', 'linkedin', 'other']),
-        direction: z.enum(['inbound', 'outbound']),
-        subject: z.string().optional(),
-        body: z.string().optional(),
-        fromEmail: z.string().optional(),
-        toEmail: z.string().optional(),
-        ccEmails: z.string().optional(),
-        whatsappPhone: z.string().optional(),
-        sentAt: z.date().optional(),
-        deliveredAt: z.date().optional(),
-        readAt: z.date().optional(),
-        repliedAt: z.date().optional(),
-        sentiment: z.enum(['positive', 'neutral', 'negative']).optional(),
-        aiSummary: z.string().optional(),
-      }))
-      .mutation(async ({ input, ctx }) => {
-        const comm = await db.createInvestorCommunication({ ...input, userId: ctx.user.id } as any);
-        
-        // Update investor's last contacted date
-        if (input.direction === 'outbound') {
-          await db.updateInvestor(input.investorId, { lastContactedAt: new Date() } as any);
-        }
-        
-        await createAuditLog(ctx.user.id, 'create', 'investor_communication', comm.id);
-        return comm;
-      }),
-
-    // Investments
-    listInvestments: protectedProcedure
-      .input(z.object({
-        investorId: z.number().optional(),
-        campaignId: z.number().optional(),
-        status: z.string().optional(),
-      }).optional())
-      .query(({ input }) => db.getInvestments(input || {})),
-    
-    getInvestment: protectedProcedure
-      .input(z.object({ id: z.number() }))
-      .query(({ input }) => db.getInvestmentById(input.id)),
-    
-    createInvestment: protectedProcedure
-      .input(z.object({
-        investorId: z.number(),
-        campaignId: z.number(),
-        amount: z.string(),
-        currency: z.string().default('USD'),
-        equityPercentage: z.string().optional(),
-        valuation: z.string().optional(),
-        instrumentType: z.enum(['equity', 'safe', 'convertible_note', 'warrant', 'other']).default('equity'),
-        status: z.enum(['committed', 'wired', 'received', 'cancelled']).default('committed'),
-        commitmentDate: z.date().optional(),
-        wireDate: z.date().optional(),
-        receivedDate: z.date().optional(),
-        notes: z.string().optional(),
-      }))
-      .mutation(async ({ input, ctx }) => {
-        const investment = await db.createInvestment(input as any);
-        
-        // Update investor status and total invested
-        const investor = await db.getInvestorById(input.investorId);
-        if (investor) {
-          const totalInvested = (parseFloat(investor.totalInvested || '0') + parseFloat(input.amount)).toString();
-          await db.updateInvestor(input.investorId, { 
-            totalInvested,
-            status: 'invested' as any,
-          } as any);
-        }
-        
-        // Update campaign raised amount
-        const campaign = await db.getFundraisingCampaignById(input.campaignId);
-        if (campaign) {
-          const raisedAmount = (parseFloat(campaign.raisedAmount || '0') + parseFloat(input.amount)).toString();
-          await db.updateFundraisingCampaign(input.campaignId, { raisedAmount } as any);
-        }
-        
-        await createAuditLog(ctx.user.id, 'create', 'investment', investment.id);
-        return investment;
-      }),
-    
-    updateInvestment: protectedProcedure
-      .input(z.object({
-        id: z.number(),
-        data: z.object({
+          stage: z.string().optional(),
           amount: z.string().optional(),
-          equityPercentage: z.string().optional(),
-          valuation: z.string().optional(),
-          instrumentType: z.enum(['equity', 'safe', 'convertible_note', 'warrant', 'other']).optional(),
-          status: z.enum(['committed', 'wired', 'received', 'cancelled']).optional(),
-          commitmentDate: z.date().optional(),
-          wireDate: z.date().optional(),
-          receivedDate: z.date().optional(),
+          probability: z.number().optional(),
+          expectedCloseDate: z.date().optional(),
+          status: z.enum(["open", "won", "lost", "stalled"]).optional(),
+          lostReason: z.string().optional(),
           notes: z.string().optional(),
-        }),
-      }))
-      .mutation(async ({ input, ctx }) => {
-        await db.updateInvestment(input.id, input.data as any);
-        await createAuditLog(ctx.user.id, 'update', 'investment', input.id);
-        return { success: true };
-      }),
-
-    // Cap Table
-    listCapTableSnapshots: protectedProcedure
-      .input(z.object({ campaignId: z.number().optional() }).optional())
-      .query(({ input }) => db.getCapTableSnapshots(input?.campaignId)),
-    
-    getCapTableSnapshot: protectedProcedure
-      .input(z.object({ id: z.number() }))
-      .query(async ({ input }) => {
-        const snapshot = await db.getCapTableSnapshotById(input.id);
-        if (!snapshot) return null;
-        const entries = await db.getCapTableEntries(input.id);
-        return { ...snapshot, entries };
-      }),
-    
-    createCapTableSnapshot: protectedProcedure
-      .input(z.object({
-        name: z.string(),
-        date: z.date(),
-        preMoneyValuation: z.string().optional(),
-        postMoneyValuation: z.string().optional(),
-        totalShares: z.number().optional(),
-        pricePerShare: z.string().optional(),
-        campaignId: z.number().optional(),
-        entries: z.array(z.object({
-          holderType: z.enum(['founder', 'investor', 'employee', 'advisor', 'other']),
-          holderName: z.string(),
-          investorId: z.number().optional(),
-          shares: z.number(),
-          equityPercentage: z.string(),
-          shareClass: z.string().default('Common'),
-          fullyDilutedShares: z.number().optional(),
-          fullyDilutedPercentage: z.string().optional(),
-        })),
-        notes: z.string().optional(),
-      }))
-      .mutation(async ({ input, ctx }) => {
-        const { entries, ...snapshotData } = input;
-        const snapshot = await db.createCapTableSnapshot(snapshotData as any);
-        
-        for (const entry of entries) {
-          await db.createCapTableEntry({ ...entry, snapshotId: snapshot.id } as any);
-        }
-        
-        await createAuditLog(ctx.user.id, 'create', 'cap_table_snapshot', snapshot.id, input.name);
-        return snapshot;
-      }),
-
-    // Follow-up Reminders
-    listReminders: protectedProcedure
-      .input(z.object({
-        investorId: z.number().optional(),
-        campaignId: z.number().optional(),
-        status: z.string().optional(),
-        assignedTo: z.number().optional(),
-        dueBefore: z.date().optional(),
-      }).optional())
-      .query(({ input }) => db.getFollowUpReminders(input || {})),
-    
-    createReminder: protectedProcedure
-      .input(z.object({
-        investorId: z.number(),
-        campaignId: z.number().optional(),
-        title: z.string(),
-        description: z.string().optional(),
-        dueDate: z.date(),
-        priority: z.enum(['low', 'medium', 'high', 'critical']).default('medium'),
-        assignedTo: z.number().optional(),
-        autoGenerated: z.boolean().default(false),
-        notes: z.string().optional(),
-      }))
-      .mutation(async ({ input, ctx }) => {
-        const reminder = await db.createFollowUpReminder({ 
-          ...input, 
-          assignedTo: input.assignedTo || ctx.user.id 
-        } as any);
-        await createAuditLog(ctx.user.id, 'create', 'follow_up_reminder', reminder.id, input.title);
-        return reminder;
-      }),
-    
-    updateReminder: protectedProcedure
-      .input(z.object({
-        id: z.number(),
-        data: z.object({
-          title: z.string().optional(),
-          description: z.string().optional(),
-          dueDate: z.date().optional(),
-          priority: z.enum(['low', 'medium', 'high', 'critical']).optional(),
-          status: z.enum(['pending', 'completed', 'cancelled', 'snoozed']).optional(),
-          completedAt: z.date().optional(),
-          snoozedUntil: z.date().optional(),
           assignedTo: z.number().optional(),
-          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          const existing = await db.getCrmDealById(id);
+          await db.updateCrmDeal(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'crm_deal', id, existing?.name, existing, data);
+          return { success: true };
         }),
-      }))
-      .mutation(async ({ input, ctx }) => {
-        await db.updateFollowUpReminder(input.id, input.data as any);
-        await createAuditLog(ctx.user.id, 'update', 'follow_up_reminder', input.id);
-        return { success: true };
-      }),
 
-    // Airtable Import
-    listAirtableConfigs: protectedProcedure
-      .query(() => db.getAirtableConfigs()),
-    
-    createAirtableConfig: protectedProcedure
-      .input(z.object({
-        name: z.string(),
-        apiKey: z.string(),
-        baseId: z.string(),
-        tableId: z.string(),
-        viewId: z.string().optional(),
-        fieldMappings: z.string(),
-        syncEnabled: z.boolean().default(false),
-        syncFrequency: z.enum(['manual', 'hourly', 'daily', 'weekly']).default('manual'),
-      }))
-      .mutation(async ({ input, ctx }) => {
-        const config = await db.createAirtableConfig({ ...input, createdBy: ctx.user.id } as any);
-        await createAuditLog(ctx.user.id, 'create', 'airtable_config', config.id, input.name);
-        return config;
-      }),
-    
-    syncFromAirtable: protectedProcedure
-      .input(z.object({ configId: z.number() }))
-      .mutation(async ({ input, ctx }) => {
-        const config = await db.getAirtableConfigById(input.configId);
-        if (!config) {
-          throw new TRPCError({ code: 'NOT_FOUND', message: 'Airtable config not found' });
-        }
-        
-        // Update status to in_progress
-        await db.updateAirtableConfig(input.configId, { lastSyncStatus: 'in_progress' } as any);
-        
-        try {
-          // Fetch data from Airtable
-          const response = await fetch(
-            `https://api.airtable.com/v0/${config.baseId}/${config.tableId}${config.viewId ? `?view=${config.viewId}` : ''}`,
-            {
-              headers: {
-                Authorization: `Bearer ${config.apiKey}`,
-              },
+      delete: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const existing = await db.getCrmDealById(input.id);
+          await db.deleteCrmDeal(input.id);
+          await createAuditLog(ctx.user.id, 'delete', 'crm_deal', input.id, existing?.name);
+          return { success: true };
+        }),
+
+      getStats: protectedProcedure
+        .input(z.object({ pipelineId: z.number().optional() }).optional())
+        .query(({ input }) => db.getCrmDealStats(input?.pipelineId)),
+
+      moveStage: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          stage: z.string(),
+          probability: z.number().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const existing = await db.getCrmDealById(input.id);
+          await db.updateCrmDeal(input.id, {
+            stage: input.stage,
+            probability: input.probability,
+          });
+          await createAuditLog(ctx.user.id, 'update', 'crm_deal', input.id, existing?.name, { stage: existing?.stage }, { stage: input.stage });
+          return { success: true };
+        }),
+    }),
+
+    // --- CONTACT CAPTURES ---
+    captures: router({
+      list: protectedProcedure
+        .input(z.object({
+          status: z.string().optional(),
+          captureMethod: z.string().optional(),
+          capturedBy: z.number().optional(),
+          limit: z.number().optional(),
+          offset: z.number().optional(),
+        }).optional())
+        .query(({ input }) => db.getContactCaptures(input)),
+
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getContactCaptureById(input.id)),
+
+      // iPhone bump / AirDrop / NFC vCard capture
+      captureVCard: protectedProcedure
+        .input(z.object({
+          vcardData: z.string(),
+          captureMethod: z.enum(["iphone_bump", "airdrop", "nfc", "qr_code"]),
+          eventName: z.string().optional(),
+          eventLocation: z.string().optional(),
+          deviceType: z.string().optional(),
+          deviceId: z.string().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          // Create capture record
+          const captureId = await db.createContactCapture({
+            captureMethod: input.captureMethod,
+            rawData: input.vcardData,
+            vcardData: input.vcardData,
+            status: "pending",
+            capturedBy: ctx.user.id,
+            eventName: input.eventName,
+            eventLocation: input.eventLocation,
+            deviceType: input.deviceType,
+            deviceId: input.deviceId,
+            notes: input.notes,
+          });
+
+          // Process the vCard and create/update contact
+          const contactId = await db.processVCardCapture(captureId, input.vcardData, ctx.user.id);
+
+          return { captureId, contactId };
+        }),
+
+      // LinkedIn profile scan
+      captureLinkedIn: protectedProcedure
+        .input(z.object({
+          profileUrl: z.string(),
+          name: z.string().optional(),
+          firstName: z.string().optional(),
+          lastName: z.string().optional(),
+          headline: z.string().optional(),
+          company: z.string().optional(),
+          email: z.string().optional(),
+          eventName: z.string().optional(),
+          eventLocation: z.string().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const linkedinData = {
+            profileUrl: input.profileUrl,
+            name: input.name,
+            firstName: input.firstName,
+            lastName: input.lastName,
+            headline: input.headline,
+            company: input.company,
+            email: input.email,
+          };
+
+          // Create capture record
+          const captureId = await db.createContactCapture({
+            captureMethod: "linkedin_scan",
+            rawData: JSON.stringify(linkedinData),
+            linkedinProfileUrl: input.profileUrl,
+            linkedinProfileData: JSON.stringify(linkedinData),
+            status: "pending",
+            capturedBy: ctx.user.id,
+            eventName: input.eventName,
+            eventLocation: input.eventLocation,
+            notes: input.notes,
+          });
+
+          // Process LinkedIn data and create/update contact
+          const contactId = await db.processLinkedInCapture(captureId, linkedinData, ctx.user.id);
+
+          return { captureId, contactId };
+        }),
+
+      // WhatsApp contact scan
+      captureWhatsApp: protectedProcedure
+        .input(z.object({
+          whatsappNumber: z.string(),
+          name: z.string().optional(),
+          eventName: z.string().optional(),
+          eventLocation: z.string().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          // Check for existing contact
+          const contacts = await db.getCrmContacts({ search: input.whatsappNumber, limit: 1 });
+          const existing = contacts[0];
+
+          if (existing) {
+            // Update WhatsApp number if needed
+            if (!existing.whatsappNumber) {
+              await db.updateCrmContact(existing.id, { whatsappNumber: input.whatsappNumber });
             }
-          );
-          
-          if (!response.ok) {
-            throw new Error(`Airtable API error: ${response.statusText}`);
+            return { contactId: existing.id, isNew: false };
           }
-          
-          const data = await response.json();
-          const fieldMappings = JSON.parse(config.fieldMappings);
-          
-          let importedCount = 0;
-          let updatedCount = 0;
-          
-          // Fetch all existing investors with airtableId once for efficient lookup
-          const existingInvestors = await db.getInvestors({});
-          const investorMap = new Map(
-            existingInvestors
-              .filter(i => i.airtableId)
-              .map(i => [i.airtableId, i])
-          );
-          
-          // Process each record
-          for (const record of data.records || []) {
-            const investorData: any = {};
-            
-            // Map Airtable fields to our schema
-            for (const [ourField, airtableField] of Object.entries(fieldMappings)) {
-              const fieldValue = (record.fields as any)[airtableField as string];
-              if (fieldValue) {
-                (investorData as any)[ourField] = fieldValue;
-              }
+
+          // Create new contact
+          const firstName = input.name?.split(" ")[0] || "WhatsApp";
+          const lastName = input.name?.split(" ").slice(1).join(" ") || "Contact";
+          const fullName = input.name || `WhatsApp ${input.whatsappNumber}`;
+
+          const contactId = await db.createCrmContact({
+            firstName,
+            lastName,
+            fullName,
+            whatsappNumber: input.whatsappNumber,
+            source: "whatsapp",
+            capturedBy: ctx.user.id,
+            notes: input.notes,
+          });
+
+          // Create capture record
+          await db.createContactCapture({
+            captureMethod: "whatsapp_scan",
+            rawData: JSON.stringify({ whatsappNumber: input.whatsappNumber, name: input.name }),
+            status: "contact_created",
+            contactId,
+            capturedBy: ctx.user.id,
+            eventName: input.eventName,
+            eventLocation: input.eventLocation,
+            notes: input.notes,
+          });
+
+          return { contactId, isNew: true };
+        }),
+
+      // Business card scan (with OCR)
+      captureBusinessCard: protectedProcedure
+        .input(z.object({
+          imageUrl: z.string(),
+          ocrText: z.string().optional(),
+          parsedData: z.object({
+            firstName: z.string().optional(),
+            lastName: z.string().optional(),
+            fullName: z.string().optional(),
+            email: z.string().optional(),
+            phone: z.string().optional(),
+            organization: z.string().optional(),
+            jobTitle: z.string().optional(),
+          }).optional(),
+          eventName: z.string().optional(),
+          eventLocation: z.string().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          // Create capture record
+          const captureId = await db.createContactCapture({
+            captureMethod: "business_card_scan",
+            rawData: JSON.stringify({ ocrText: input.ocrText, parsedData: input.parsedData }),
+            imageUrl: input.imageUrl,
+            ocrText: input.ocrText,
+            parsedData: input.parsedData ? JSON.stringify(input.parsedData) : undefined,
+            status: input.parsedData ? "parsed" : "pending",
+            capturedBy: ctx.user.id,
+            eventName: input.eventName,
+            eventLocation: input.eventLocation,
+            notes: input.notes,
+          });
+
+          // If we have parsed data, create the contact
+          if (input.parsedData) {
+            const firstName = input.parsedData.firstName || input.parsedData.fullName?.split(" ")[0] || "Business";
+            const lastName = input.parsedData.lastName || input.parsedData.fullName?.split(" ").slice(1).join(" ") || "Card";
+            const fullName = input.parsedData.fullName || `${firstName} ${lastName}`.trim();
+
+            // Check for existing
+            let existing = null;
+            if (input.parsedData.email) {
+              existing = await db.getCrmContactByEmail(input.parsedData.email);
             }
-            
-            investorData.airtableId = record.id;
-            investorData.airtableLastSynced = new Date();
-            
-            // Check if investor already exists using the pre-loaded map
-            const existing = investorMap.get(record.id);
-            
+
             if (existing) {
-              await db.updateInvestor(existing.id, investorData);
-              updatedCount++;
-            } else {
-              await db.createInvestor(investorData);
-              importedCount++;
+              await db.updateCrmContact(existing.id, input.parsedData);
+              await db.updateContactCapture(captureId, { contactId: existing.id, status: "merged" });
+              return { captureId, contactId: existing.id, isNew: false };
             }
+
+            const contactId = await db.createCrmContact({
+              ...input.parsedData,
+              firstName,
+              lastName,
+              fullName,
+              source: "business_card",
+              capturedBy: ctx.user.id,
+            });
+
+            await db.updateContactCapture(captureId, { contactId, status: "contact_created" });
+            return { captureId, contactId, isNew: true };
           }
-          
-          // Update config with success
-          await db.updateAirtableConfig(input.configId, {
-            lastSyncedAt: new Date(),
-            lastSyncStatus: 'success',
-            lastSyncError: null,
-          } as any);
-          
-          await createAuditLog(ctx.user.id, 'create', 'airtable_sync', input.configId, undefined, undefined, {
-            importedCount,
-            updatedCount,
+
+          return { captureId, contactId: null, isNew: false };
+        }),
+
+      // Manual processing of pending capture
+      processCapture: protectedProcedure
+        .input(z.object({
+          captureId: z.number(),
+          contactData: z.object({
+            firstName: z.string(),
+            lastName: z.string().optional(),
+            fullName: z.string().optional(),
+            email: z.string().optional(),
+            phone: z.string().optional(),
+            whatsappNumber: z.string().optional(),
+            organization: z.string().optional(),
+            jobTitle: z.string().optional(),
+          }),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const capture = await db.getContactCaptureById(input.captureId);
+          if (!capture) {
+            throw new TRPCError({ code: "NOT_FOUND", message: "Capture not found" });
+          }
+
+          const fullName = input.contactData.fullName || `${input.contactData.firstName} ${input.contactData.lastName || ""}`.trim();
+
+          // Check for existing
+          let existing = null;
+          if (input.contactData.email) {
+            existing = await db.getCrmContactByEmail(input.contactData.email);
+          }
+
+          if (existing) {
+            await db.updateCrmContact(existing.id, input.contactData);
+            await db.updateContactCapture(input.captureId, {
+              contactId: existing.id,
+              status: "merged",
+              parsedData: JSON.stringify(input.contactData),
+            });
+            return { contactId: existing.id, isNew: false };
+          }
+
+          const contactId = await db.createCrmContact({
+            ...input.contactData,
+            fullName,
+            source: capture.captureMethod === "iphone_bump" ? "iphone_bump" :
+                    capture.captureMethod === "linkedin_scan" ? "linkedin_scan" :
+                    capture.captureMethod === "whatsapp_scan" ? "whatsapp" :
+                    capture.captureMethod === "business_card_scan" ? "business_card" : "manual",
+            capturedBy: ctx.user.id,
           });
-          
-          return { success: true, importedCount, updatedCount };
-        } catch (error: any) {
-          // Update config with error
-          await db.updateAirtableConfig(input.configId, {
-            lastSyncStatus: 'failed',
-            lastSyncError: error.message,
-          } as any);
-          
-          throw new TRPCError({ 
-            code: 'INTERNAL_SERVER_ERROR', 
-            message: `Airtable sync failed: ${error.message}` 
+
+          await db.updateContactCapture(input.captureId, {
+            contactId,
+            status: "contact_created",
+            parsedData: JSON.stringify(input.contactData),
           });
-        }
-      }),
+
+          return { contactId, isNew: true };
+        }),
+    }),
+
+    // --- EMAIL CAMPAIGNS ---
+    campaigns: router({
+      list: protectedProcedure
+        .input(z.object({
+          status: z.string().optional(),
+          type: z.string().optional(),
+          limit: z.number().optional(),
+        }).optional())
+        .query(({ input }) => db.getCrmEmailCampaigns(input)),
+
+      create: protectedProcedure
+        .input(z.object({
+          name: z.string().min(1),
+          subject: z.string().min(1),
+          bodyHtml: z.string(),
+          bodyText: z.string().optional(),
+          type: z.enum(["newsletter", "drip", "announcement", "follow_up", "custom"]).optional(),
+          targetTags: z.string().optional(),
+          targetContactTypes: z.string().optional(),
+          targetPipelineStages: z.string().optional(),
+          scheduledAt: z.date().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const id = await db.createCrmEmailCampaign({
+            ...input,
+            createdBy: ctx.user.id,
+          });
+          await createAuditLog(ctx.user.id, 'create', 'crm_campaign', id, input.name);
+          return { id };
+        }),
+
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          subject: z.string().optional(),
+          bodyHtml: z.string().optional(),
+          bodyText: z.string().optional(),
+          status: z.enum(["draft", "scheduled", "sending", "sent", "paused", "cancelled"]).optional(),
+          scheduledAt: z.date().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateCrmEmailCampaign(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'crm_campaign', id);
+          return { success: true };
+        }),
+    }),
   }),
 });
 

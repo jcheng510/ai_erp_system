@@ -12,11 +12,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
-import { 
-  Plus, FolderOpen, Link2, Users, BarChart3, Settings, 
+import {
+  Plus, FolderOpen, Link2, Users, BarChart3, Settings,
   Eye, Download, Clock, Trash2, Copy, ExternalLink,
   FileText, Lock, Globe, Archive, Upload, File, Folder,
-  ChevronRight, ArrowLeft, MoreVertical, Mail, Send, Cloud
+  ChevronRight, ArrowLeft, MoreVertical, Mail, Send, Cloud,
+  HardDrive, RefreshCw, Shield, Activity, TrendingUp,
+  AlertCircle, CheckCircle2, XCircle
 } from "lucide-react";
 import { useLocation, useParams } from "wouter";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -293,7 +295,7 @@ export default function DataRoomDetail() {
 
         {/* Tabs */}
         <Tabs defaultValue="documents">
-          <TabsList>
+          <TabsList className="flex-wrap h-auto gap-1">
             <TabsTrigger value="documents">
               <FolderOpen className="h-4 w-4 mr-2" />
               Documents
@@ -305,6 +307,18 @@ export default function DataRoomDetail() {
             <TabsTrigger value="visitors">
               <Users className="h-4 w-4 mr-2" />
               Visitors
+            </TabsTrigger>
+            <TabsTrigger value="analytics">
+              <Activity className="h-4 w-4 mr-2" />
+              Analytics
+            </TabsTrigger>
+            <TabsTrigger value="driveSync">
+              <HardDrive className="h-4 w-4 mr-2" />
+              Drive Sync
+            </TabsTrigger>
+            <TabsTrigger value="emailRules">
+              <Shield className="h-4 w-4 mr-2" />
+              Email Rules
             </TabsTrigger>
             <TabsTrigger value="nda">
               <FileText className="h-4 w-4 mr-2" />
@@ -829,6 +843,21 @@ export default function DataRoomDetail() {
                 )}
               </CardContent>
             </Card>
+          </TabsContent>
+
+          {/* Analytics Tab */}
+          <TabsContent value="analytics" className="mt-4">
+            <DetailedAnalytics dataRoomId={roomId} />
+          </TabsContent>
+
+          {/* Google Drive Sync Tab */}
+          <TabsContent value="driveSync" className="mt-4">
+            <GoogleDriveSyncSettings dataRoomId={roomId} />
+          </TabsContent>
+
+          {/* Email Access Rules Tab */}
+          <TabsContent value="emailRules" className="mt-4">
+            <EmailAccessRulesManager dataRoomId={roomId} />
           </TabsContent>
 
           {/* NDA Tab */}
@@ -1359,6 +1388,753 @@ function NdaManagement({ dataRoomId, requiresNda }: { dataRoomId: number; requir
               disabled={!selectedFile || uploadNdaMutation.isPending}
             >
               {uploadNdaMutation.isPending ? "Uploading..." : "Upload NDA"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// Detailed Analytics Component
+function DetailedAnalytics({ dataRoomId }: { dataRoomId: number }) {
+  const [selectedVisitor, setSelectedVisitor] = useState<number | null>(null);
+
+  const { data: report, isLoading } = trpc.dataRoom.detailedAnalytics.getEngagementReport.useQuery({ dataRoomId });
+  const { data: visitorDetails } = trpc.dataRoom.detailedAnalytics.getVisitorDetails.useQuery(
+    { dataRoomId, visitorId: selectedVisitor! },
+    { enabled: !!selectedVisitor }
+  );
+
+  const exportCsvMutation = trpc.dataRoom.detailedAnalytics.exportCsv.useMutation({
+    onSuccess: (data) => {
+      const blob = new Blob([data.csv], { type: 'text/csv' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = data.filename;
+      a.click();
+      window.URL.revokeObjectURL(url);
+      toast.success("Export downloaded");
+    },
+  });
+
+  const formatDuration = (ms: number) => {
+    if (ms < 1000) return "< 1s";
+    if (ms < 60000) return `${Math.round(ms / 1000)}s`;
+    if (ms < 3600000) return `${Math.round(ms / 60000)}m`;
+    return `${Math.round(ms / 3600000)}h ${Math.round((ms % 3600000) / 60000)}m`;
+  };
+
+  if (isLoading) {
+    return <div className="text-center py-8 text-muted-foreground">Loading analytics...</div>;
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Summary Cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Total Visitors</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{report?.summary.totalVisitors || 0}</div>
+            <p className="text-xs text-muted-foreground">{report?.summary.activeVisitors || 0} active</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Total Sessions</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{report?.summary.totalSessions || 0}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Total Page Views</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{report?.summary.totalPageViews || 0}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Total Time Spent</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{formatDuration(report?.summary.totalEngagementTimeMs || 0)}</div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Export Buttons */}
+      <div className="flex gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => exportCsvMutation.mutate({ dataRoomId, type: 'visitors' })}
+        >
+          <Download className="h-4 w-4 mr-2" />
+          Export Visitors
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => exportCsvMutation.mutate({ dataRoomId, type: 'documents' })}
+        >
+          <Download className="h-4 w-4 mr-2" />
+          Export Documents
+        </Button>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Visitor Engagement */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Users className="h-5 w-5" />
+              Visitor Engagement
+            </CardTitle>
+            <CardDescription>Ranked by total time spent</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ScrollArea className="h-80">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Visitor</TableHead>
+                    <TableHead>Time</TableHead>
+                    <TableHead>Docs</TableHead>
+                    <TableHead>Pages</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {report?.visitorEngagement.map((v) => (
+                    <TableRow
+                      key={v.visitorId}
+                      className="cursor-pointer hover:bg-muted/50"
+                      onClick={() => setSelectedVisitor(v.visitorId)}
+                    >
+                      <TableCell>
+                        <div>
+                          <div className="font-medium">{v.email || 'Unknown'}</div>
+                          <div className="text-xs text-muted-foreground">{v.company || '-'}</div>
+                        </div>
+                      </TableCell>
+                      <TableCell>{formatDuration(v.totalTimeMs)}</TableCell>
+                      <TableCell>{v.documentsViewed}</TableCell>
+                      <TableCell>{v.pagesViewed}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </ScrollArea>
+          </CardContent>
+        </Card>
+
+        {/* Document Engagement */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <FileText className="h-5 w-5" />
+              Document Engagement
+            </CardTitle>
+            <CardDescription>Ranked by total views</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ScrollArea className="h-80">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Document</TableHead>
+                    <TableHead>Views</TableHead>
+                    <TableHead>Visitors</TableHead>
+                    <TableHead>Avg Time</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {report?.documentEngagement.map((d) => (
+                    <TableRow key={d.documentId}>
+                      <TableCell>
+                        <div className="font-medium truncate max-w-[200px]">{d.documentName}</div>
+                        <div className="text-xs text-muted-foreground">{d.pageCount} pages</div>
+                      </TableCell>
+                      <TableCell>{d.views}</TableCell>
+                      <TableCell>{d.uniqueVisitors}</TableCell>
+                      <TableCell>{formatDuration(d.avgTimePerPageMs)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </ScrollArea>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Visitor Details Modal */}
+      {selectedVisitor && visitorDetails && (
+        <Dialog open={!!selectedVisitor} onOpenChange={() => setSelectedVisitor(null)}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>Visitor Details</DialogTitle>
+              <DialogDescription>
+                {visitorDetails.visitor.email} - {visitorDetails.visitor.company || 'No company'}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="grid grid-cols-4 gap-4">
+                <div className="text-center">
+                  <div className="text-2xl font-bold">{visitorDetails.summary.totalSessions}</div>
+                  <div className="text-xs text-muted-foreground">Sessions</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-2xl font-bold">{visitorDetails.summary.totalDocuments}</div>
+                  <div className="text-xs text-muted-foreground">Documents</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-2xl font-bold">{visitorDetails.summary.totalPageViews}</div>
+                  <div className="text-xs text-muted-foreground">Page Views</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-2xl font-bold">{formatDuration(visitorDetails.summary.totalTimeMs)}</div>
+                  <div className="text-xs text-muted-foreground">Total Time</div>
+                </div>
+              </div>
+              <div className="border-t pt-4">
+                <h4 className="font-medium mb-2">Document Engagement</h4>
+                <ScrollArea className="h-60">
+                  {visitorDetails.documentEngagement.map((doc) => (
+                    <div key={doc.documentId} className="p-3 border rounded-lg mb-2">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <div className="font-medium">{doc.documentName}</div>
+                          <div className="text-sm text-muted-foreground">
+                            {doc.pagesViewed}/{doc.pageCount} pages ({doc.percentViewed}%) •
+                            {formatDuration(doc.totalDurationMs)} total
+                          </div>
+                        </div>
+                        <Badge>{doc.totalViews} views</Badge>
+                      </div>
+                    </div>
+                  ))}
+                </ScrollArea>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+    </div>
+  );
+}
+
+// Google Drive Sync Settings Component
+function GoogleDriveSyncSettings({ dataRoomId }: { dataRoomId: number }) {
+  const [folderPickerOpen, setFolderPickerOpen] = useState(false);
+  const [selectedFolderId, setSelectedFolderId] = useState<string>('');
+  const [selectedFolderName, setSelectedFolderName] = useState<string>('');
+  const [currentParentId, setCurrentParentId] = useState<string | undefined>(undefined);
+  const [folderPath, setFolderPath] = useState<{ id: string; name: string }[]>([]);
+
+  const { data: syncConfig, refetch: refetchConfig } = trpc.dataRoom.driveSync.getConfig.useQuery({ dataRoomId });
+  const { data: syncLogs, refetch: refetchLogs } = trpc.dataRoom.driveSync.getLogs.useQuery({ dataRoomId, limit: 10 });
+  const { data: driveFolders, isLoading: foldersLoading } = trpc.dataRoom.driveSync.listDriveFolders.useQuery(
+    { parentId: currentParentId },
+    { enabled: folderPickerOpen }
+  );
+
+  const saveConfigMutation = trpc.dataRoom.driveSync.saveConfig.useMutation({
+    onSuccess: () => {
+      toast.success("Sync configuration saved");
+      refetchConfig();
+      setFolderPickerOpen(false);
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const syncNowMutation = trpc.dataRoom.driveSync.syncNow.useMutation({
+    onSuccess: (result) => {
+      toast.success(`Sync completed: ${result.filesAdded} added, ${result.filesUpdated} updated`);
+      refetchConfig();
+      refetchLogs();
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const deleteConfigMutation = trpc.dataRoom.driveSync.deleteConfig.useMutation({
+    onSuccess: () => {
+      toast.success("Sync configuration removed");
+      refetchConfig();
+    },
+  });
+
+  const handleSaveConfig = () => {
+    if (!selectedFolderId) {
+      toast.error("Please select a Google Drive folder");
+      return;
+    }
+    saveConfigMutation.mutate({
+      dataRoomId,
+      googleDriveFolderId: selectedFolderId,
+      googleDriveFolderName: selectedFolderName,
+      syncEnabled: true,
+      syncSubfolders: true,
+    });
+  };
+
+  const navigateToFolder = (folderId: string, folderName: string) => {
+    setFolderPath([...folderPath, { id: currentParentId || 'root', name: currentParentId ? folderPath[folderPath.length - 1]?.name || 'Root' : 'My Drive' }]);
+    setCurrentParentId(folderId);
+  };
+
+  const navigateBack = () => {
+    if (folderPath.length > 0) {
+      const newPath = [...folderPath];
+      const parent = newPath.pop();
+      setFolderPath(newPath);
+      setCurrentParentId(parent?.id === 'root' ? undefined : parent?.id);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Current Sync Status */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <HardDrive className="h-5 w-5" />
+            Google Drive Sync
+          </CardTitle>
+          <CardDescription>
+            Automatically sync documents from a Google Drive folder
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {syncConfig ? (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between p-4 border rounded-lg">
+                <div className="flex items-center gap-4">
+                  <div className="h-12 w-12 bg-blue-100 rounded-lg flex items-center justify-center">
+                    <HardDrive className="h-6 w-6 text-blue-600" />
+                  </div>
+                  <div>
+                    <div className="font-medium">{syncConfig.googleDriveFolderName || 'Connected Folder'}</div>
+                    <div className="text-sm text-muted-foreground">
+                      Last sync: {syncConfig.lastSyncAt ? new Date(syncConfig.lastSyncAt).toLocaleString() : 'Never'}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {syncConfig.lastSyncStatus === 'success' && (
+                    <Badge className="bg-green-100 text-green-800">
+                      <CheckCircle2 className="h-3 w-3 mr-1" />
+                      Synced
+                    </Badge>
+                  )}
+                  {syncConfig.lastSyncStatus === 'failed' && (
+                    <Badge variant="destructive">
+                      <XCircle className="h-3 w-3 mr-1" />
+                      Failed
+                    </Badge>
+                  )}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => syncNowMutation.mutate({ dataRoomId })}
+                    disabled={syncNowMutation.isPending}
+                  >
+                    <RefreshCw className={`h-4 w-4 mr-2 ${syncNowMutation.isPending ? 'animate-spin' : ''}`} />
+                    {syncNowMutation.isPending ? 'Syncing...' : 'Sync Now'}
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => {
+                      if (confirm('Remove sync configuration?')) {
+                        deleteConfigMutation.mutate({ dataRoomId });
+                      }
+                    }}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+              {syncConfig.lastSyncError && (
+                <div className="p-3 bg-destructive/10 text-destructive rounded-lg text-sm flex items-start gap-2">
+                  <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+                  {syncConfig.lastSyncError}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="text-center py-8">
+              <HardDrive className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-50" />
+              <p className="text-muted-foreground mb-4">No Google Drive folder connected</p>
+              <Button onClick={() => setFolderPickerOpen(true)}>
+                <Plus className="h-4 w-4 mr-2" />
+                Connect Google Drive Folder
+              </Button>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Sync History */}
+      {syncLogs && syncLogs.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Sync History</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Date</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Files Added</TableHead>
+                  <TableHead>Files Updated</TableHead>
+                  <TableHead>Duration</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {syncLogs.map((log) => (
+                  <TableRow key={log.id}>
+                    <TableCell>{new Date(log.startedAt).toLocaleString()}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline">{log.syncType}</Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={log.status === 'completed' ? 'default' : log.status === 'failed' ? 'destructive' : 'secondary'}>
+                        {log.status}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>{log.filesAdded}</TableCell>
+                    <TableCell>{log.filesUpdated}</TableCell>
+                    <TableCell>{log.durationMs ? `${(log.durationMs / 1000).toFixed(1)}s` : '-'}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Folder Picker Dialog */}
+      <Dialog open={folderPickerOpen} onOpenChange={setFolderPickerOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Select Google Drive Folder</DialogTitle>
+            <DialogDescription>
+              Choose a folder to sync with this data room
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            {/* Breadcrumb */}
+            <div className="flex items-center gap-2 text-sm">
+              {folderPath.length > 0 && (
+                <Button variant="ghost" size="sm" onClick={navigateBack}>
+                  <ArrowLeft className="h-4 w-4 mr-1" />
+                  Back
+                </Button>
+              )}
+              <span className="text-muted-foreground">
+                {folderPath.map(f => f.name).join(' / ') || 'My Drive'}
+              </span>
+            </div>
+
+            {/* Folder List */}
+            <ScrollArea className="h-64 border rounded-lg">
+              {foldersLoading ? (
+                <div className="p-4 text-center text-muted-foreground">Loading folders...</div>
+              ) : driveFolders?.length === 0 ? (
+                <div className="p-4 text-center text-muted-foreground">No folders found</div>
+              ) : (
+                <div className="p-2 space-y-1">
+                  {driveFolders?.map((folder) => (
+                    <div
+                      key={folder.id}
+                      className={`flex items-center justify-between p-2 rounded-lg hover:bg-muted cursor-pointer ${selectedFolderId === folder.id ? 'bg-primary/10 border border-primary' : ''}`}
+                      onClick={() => {
+                        setSelectedFolderId(folder.id);
+                        setSelectedFolderName(folder.name);
+                      }}
+                      onDoubleClick={() => navigateToFolder(folder.id, folder.name)}
+                    >
+                      <div className="flex items-center gap-2">
+                        <Folder className="h-5 w-5 text-blue-500" />
+                        <span>{folder.name}</span>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigateToFolder(folder.id, folder.name);
+                        }}
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </ScrollArea>
+
+            {selectedFolderId && (
+              <div className="p-2 bg-muted rounded-lg text-sm">
+                Selected: <strong>{selectedFolderName}</strong>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setFolderPickerOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSaveConfig}
+              disabled={!selectedFolderId || saveConfigMutation.isPending}
+            >
+              {saveConfigMutation.isPending ? 'Saving...' : 'Connect Folder'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// Email Access Rules Manager Component
+function EmailAccessRulesManager({ dataRoomId }: { dataRoomId: number }) {
+  const [createOpen, setCreateOpen] = useState(false);
+  const [newRule, setNewRule] = useState({
+    ruleType: 'allow_domain' as 'allow_email' | 'allow_domain' | 'block_email' | 'block_domain',
+    emailPattern: '',
+    allowDownload: true,
+    allowPrint: true,
+    requireNdaSignature: true,
+    notifyOnAccess: true,
+  });
+
+  const { data: rules, refetch } = trpc.dataRoom.emailRules.list.useQuery({ dataRoomId });
+
+  const createMutation = trpc.dataRoom.emailRules.create.useMutation({
+    onSuccess: () => {
+      toast.success("Rule created");
+      setCreateOpen(false);
+      setNewRule({
+        ruleType: 'allow_domain',
+        emailPattern: '',
+        allowDownload: true,
+        allowPrint: true,
+        requireNdaSignature: true,
+        notifyOnAccess: true,
+      });
+      refetch();
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const deleteMutation = trpc.dataRoom.emailRules.delete.useMutation({
+    onSuccess: () => {
+      toast.success("Rule deleted");
+      refetch();
+    },
+  });
+
+  const toggleMutation = trpc.dataRoom.emailRules.update.useMutation({
+    onSuccess: () => {
+      refetch();
+    },
+  });
+
+  const getRuleTypeLabel = (type: string) => {
+    switch (type) {
+      case 'allow_email': return 'Allow Email';
+      case 'allow_domain': return 'Allow Domain';
+      case 'block_email': return 'Block Email';
+      case 'block_domain': return 'Block Domain';
+      default: return type;
+    }
+  };
+
+  const getRuleTypeColor = (type: string) => {
+    return type.startsWith('allow') ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800';
+  };
+
+  return (
+    <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <Shield className="h-5 w-5" />
+                Email Access Rules
+              </CardTitle>
+              <CardDescription>
+                Control who can access this data room based on email or domain
+              </CardDescription>
+            </div>
+            <Button onClick={() => setCreateOpen(true)}>
+              <Plus className="h-4 w-4 mr-2" />
+              Add Rule
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {!rules?.length ? (
+            <div className="text-center py-12 text-muted-foreground">
+              <Shield className="h-12 w-12 mx-auto mb-4 opacity-50" />
+              <p>No access rules configured</p>
+              <p className="text-sm">All visitors will have default access permissions</p>
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Pattern</TableHead>
+                  <TableHead>Permissions</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {rules.map((rule) => (
+                  <TableRow key={rule.id}>
+                    <TableCell>
+                      <Badge className={getRuleTypeColor(rule.ruleType)}>
+                        {getRuleTypeLabel(rule.ruleType)}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="font-mono">{rule.emailPattern}</TableCell>
+                    <TableCell>
+                      <div className="flex gap-1 flex-wrap">
+                        {rule.allowDownload && <Badge variant="outline">Download</Badge>}
+                        {rule.allowPrint && <Badge variant="outline">Print</Badge>}
+                        {rule.requireNdaSignature && <Badge variant="outline">NDA</Badge>}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => toggleMutation.mutate({ id: rule.id, isActive: !rule.isActive })}
+                      >
+                        <Badge variant={rule.isActive ? 'default' : 'secondary'}>
+                          {rule.isActive ? 'Active' : 'Disabled'}
+                        </Badge>
+                      </Button>
+                    </TableCell>
+                    <TableCell>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => {
+                          if (confirm('Delete this rule?')) {
+                            deleteMutation.mutate({ id: rule.id });
+                          }
+                        }}
+                      >
+                        <Trash2 className="h-4 w-4 text-destructive" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Create Rule Dialog */}
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create Access Rule</DialogTitle>
+            <DialogDescription>
+              Define who can access this data room
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Rule Type</Label>
+              <select
+                className="w-full border rounded-lg px-3 py-2"
+                value={newRule.ruleType}
+                onChange={(e) => setNewRule({ ...newRule, ruleType: e.target.value as any })}
+              >
+                <option value="allow_domain">Allow Domain</option>
+                <option value="allow_email">Allow Email</option>
+                <option value="block_domain">Block Domain</option>
+                <option value="block_email">Block Email</option>
+              </select>
+            </div>
+            <div className="space-y-2">
+              <Label>
+                {newRule.ruleType.includes('domain') ? 'Domain' : 'Email Address'}
+              </Label>
+              <Input
+                value={newRule.emailPattern}
+                onChange={(e) => setNewRule({ ...newRule, emailPattern: e.target.value })}
+                placeholder={newRule.ruleType.includes('domain') ? 'example.com' : 'user@example.com'}
+              />
+              <p className="text-xs text-muted-foreground">
+                {newRule.ruleType.includes('domain')
+                  ? 'Enter domain without @ (e.g., "example.com")'
+                  : 'Enter full email address'}
+              </p>
+            </div>
+            {newRule.ruleType.startsWith('allow') && (
+              <>
+                <div className="flex items-center justify-between">
+                  <Label>Allow Downloads</Label>
+                  <Switch
+                    checked={newRule.allowDownload}
+                    onCheckedChange={(checked) => setNewRule({ ...newRule, allowDownload: checked })}
+                  />
+                </div>
+                <div className="flex items-center justify-between">
+                  <Label>Allow Print</Label>
+                  <Switch
+                    checked={newRule.allowPrint}
+                    onCheckedChange={(checked) => setNewRule({ ...newRule, allowPrint: checked })}
+                  />
+                </div>
+                <div className="flex items-center justify-between">
+                  <Label>Require NDA Signature</Label>
+                  <Switch
+                    checked={newRule.requireNdaSignature}
+                    onCheckedChange={(checked) => setNewRule({ ...newRule, requireNdaSignature: checked })}
+                  />
+                </div>
+                <div className="flex items-center justify-between">
+                  <Label>Notify on Access</Label>
+                  <Switch
+                    checked={newRule.notifyOnAccess}
+                    onCheckedChange={(checked) => setNewRule({ ...newRule, notifyOnAccess: checked })}
+                  />
+                </div>
+              </>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => createMutation.mutate({ ...newRule, dataRoomId })}
+              disabled={!newRule.emailPattern || createMutation.isPending}
+            >
+              Create Rule
             </Button>
           </DialogFooter>
         </DialogContent>
