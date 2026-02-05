@@ -86,7 +86,15 @@ import {
   crmContacts, crmTags, crmContactTags, whatsappMessages, crmInteractions,
   crmPipelines, crmDeals, contactCaptures, crmEmailCampaigns, crmCampaignRecipients,
   InsertCrmContact, InsertCrmTag, InsertWhatsappMessage, InsertCrmInteraction,
-  InsertCrmPipeline, InsertCrmDeal, InsertContactCapture, InsertCrmEmailCampaign, InsertCrmCampaignRecipient
+  InsertCrmPipeline, InsertCrmDeal, InsertContactCapture, InsertCrmEmailCampaign, InsertCrmCampaignRecipient,
+  // Airtable-style project management
+  projectViews, projectCustomFields, taskCustomFieldValues, taskComments, taskWatchers,
+  taskActivityLog, taskDependencies, projectTags, taskTagAssignments,
+  InsertProjectView, InsertProjectCustomField, InsertTaskCustomFieldValue, InsertTaskComment,
+  InsertTaskWatcher, InsertTaskActivityLogEntry, InsertTaskDependency, InsertProjectTag, InsertTaskTagAssignment,
+  // Google Chat integration
+  googleChatSpaces, projectChatMappings, userChatPreferences, chatMessageLog, projectAutomations,
+  InsertGoogleChatSpace, InsertProjectChatMapping, InsertUserChatPreference, InsertChatMessageLogEntry, InsertProjectAutomation
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -7964,4 +7972,633 @@ export async function checkAndTriggerLowStockPurchaseOrder(
     purchaseOrderId: poResult.id,
     reason: `Auto-generated PO ${poNumber} for ${orderQty} units`
   };
+}
+
+// ============================================
+// AIRTABLE-STYLE PROJECT MANAGEMENT
+// ============================================
+
+// Project Views
+export async function getProjectViews(filters?: { projectId?: number; companyId?: number; createdBy?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (filters?.projectId) conditions.push(eq(projectViews.projectId, filters.projectId));
+  if (filters?.companyId) conditions.push(eq(projectViews.companyId, filters.companyId));
+  if (filters?.createdBy) conditions.push(eq(projectViews.createdBy, filters.createdBy));
+
+  if (conditions.length > 0) {
+    return db.select().from(projectViews).where(and(...conditions)).orderBy(projectViews.name);
+  }
+  return db.select().from(projectViews).orderBy(projectViews.name);
+}
+
+export async function getProjectViewById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(projectViews).where(eq(projectViews.id, id)).limit(1);
+  return result[0];
+}
+
+export async function createProjectView(data: InsertProjectView) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(projectViews).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateProjectView(id: number, data: Partial<InsertProjectView>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(projectViews).set(data).where(eq(projectViews.id, id));
+}
+
+export async function deleteProjectView(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(projectViews).where(eq(projectViews.id, id));
+}
+
+// Custom Fields
+export async function getProjectCustomFields(filters?: { projectId?: number; companyId?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (filters?.projectId) conditions.push(eq(projectCustomFields.projectId, filters.projectId));
+  if (filters?.companyId) conditions.push(eq(projectCustomFields.companyId, filters.companyId));
+
+  if (conditions.length > 0) {
+    return db.select().from(projectCustomFields).where(and(...conditions)).orderBy(projectCustomFields.order);
+  }
+  return db.select().from(projectCustomFields).orderBy(projectCustomFields.order);
+}
+
+export async function createProjectCustomField(data: InsertProjectCustomField) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(projectCustomFields).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateProjectCustomField(id: number, data: Partial<InsertProjectCustomField>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(projectCustomFields).set(data).where(eq(projectCustomFields.id, id));
+}
+
+export async function deleteProjectCustomField(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  // Delete all field values first
+  await db.delete(taskCustomFieldValues).where(eq(taskCustomFieldValues.fieldId, id));
+  await db.delete(projectCustomFields).where(eq(projectCustomFields.id, id));
+}
+
+// Task Custom Field Values
+export async function getTaskCustomFieldValues(taskId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(taskCustomFieldValues).where(eq(taskCustomFieldValues.taskId, taskId));
+}
+
+export async function setTaskCustomFieldValue(taskId: number, fieldId: number, value: string | null) {
+  const db = await getDb();
+  if (!db) return;
+
+  // Check if value exists
+  const existing = await db.select().from(taskCustomFieldValues)
+    .where(and(eq(taskCustomFieldValues.taskId, taskId), eq(taskCustomFieldValues.fieldId, fieldId)))
+    .limit(1);
+
+  if (existing.length > 0) {
+    await db.update(taskCustomFieldValues).set({ value }).where(eq(taskCustomFieldValues.id, existing[0].id));
+  } else {
+    await db.insert(taskCustomFieldValues).values({ taskId, fieldId, value });
+  }
+}
+
+// Task Comments
+export async function getTaskComments(taskId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(taskComments).where(eq(taskComments.taskId, taskId)).orderBy(desc(taskComments.createdAt));
+}
+
+export async function createTaskComment(data: InsertTaskComment) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(taskComments).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateTaskComment(id: number, data: Partial<InsertTaskComment>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(taskComments).set({ ...data, isEdited: true }).where(eq(taskComments.id, id));
+}
+
+export async function deleteTaskComment(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(taskComments).where(eq(taskComments.id, id));
+}
+
+// Task Watchers
+export async function getTaskWatchers(taskId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(taskWatchers).where(eq(taskWatchers.taskId, taskId));
+}
+
+export async function addTaskWatcher(data: InsertTaskWatcher) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Check if already watching
+  const existing = await db.select().from(taskWatchers)
+    .where(and(eq(taskWatchers.taskId, data.taskId), eq(taskWatchers.userId, data.userId)))
+    .limit(1);
+
+  if (existing.length > 0) return { id: existing[0].id };
+
+  const result = await db.insert(taskWatchers).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function removeTaskWatcher(taskId: number, userId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(taskWatchers).where(and(eq(taskWatchers.taskId, taskId), eq(taskWatchers.userId, userId)));
+}
+
+export async function updateTaskWatcherPreferences(taskId: number, userId: number, prefs: Partial<InsertTaskWatcher>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(taskWatchers).set(prefs)
+    .where(and(eq(taskWatchers.taskId, taskId), eq(taskWatchers.userId, userId)));
+}
+
+// Task Activity Log
+export async function getTaskActivityLog(taskId: number, limit = 50) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(taskActivityLog)
+    .where(eq(taskActivityLog.taskId, taskId))
+    .orderBy(desc(taskActivityLog.createdAt))
+    .limit(limit);
+}
+
+export async function createTaskActivityLogEntry(data: InsertTaskActivityLogEntry) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(taskActivityLog).values(data);
+  return { id: result[0].insertId };
+}
+
+// Task Dependencies
+export async function getTaskDependencies(taskId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(taskDependencies).where(eq(taskDependencies.taskId, taskId));
+}
+
+export async function getTaskDependents(taskId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(taskDependencies).where(eq(taskDependencies.dependsOnTaskId, taskId));
+}
+
+export async function createTaskDependency(data: InsertTaskDependency) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(taskDependencies).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function deleteTaskDependency(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(taskDependencies).where(eq(taskDependencies.id, id));
+}
+
+// Project Tags
+export async function getProjectTags(filters?: { projectId?: number; companyId?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (filters?.projectId) conditions.push(eq(projectTags.projectId, filters.projectId));
+  if (filters?.companyId) conditions.push(eq(projectTags.companyId, filters.companyId));
+
+  if (conditions.length > 0) {
+    return db.select().from(projectTags).where(and(...conditions)).orderBy(projectTags.name);
+  }
+  return db.select().from(projectTags).orderBy(projectTags.name);
+}
+
+export async function createProjectTag(data: InsertProjectTag) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(projectTags).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateProjectTag(id: number, data: Partial<InsertProjectTag>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(projectTags).set(data).where(eq(projectTags.id, id));
+}
+
+export async function deleteProjectTag(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  // Delete all tag assignments first
+  await db.delete(taskTagAssignments).where(eq(taskTagAssignments.tagId, id));
+  await db.delete(projectTags).where(eq(projectTags.id, id));
+}
+
+// Task Tag Assignments
+export async function getTaskTags(taskId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select({
+    id: taskTagAssignments.id,
+    taskId: taskTagAssignments.taskId,
+    tagId: taskTagAssignments.tagId,
+    tagName: projectTags.name,
+    tagColor: projectTags.color,
+  })
+  .from(taskTagAssignments)
+  .innerJoin(projectTags, eq(taskTagAssignments.tagId, projectTags.id))
+  .where(eq(taskTagAssignments.taskId, taskId));
+}
+
+export async function addTagToTask(taskId: number, tagId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Check if already assigned
+  const existing = await db.select().from(taskTagAssignments)
+    .where(and(eq(taskTagAssignments.taskId, taskId), eq(taskTagAssignments.tagId, tagId)))
+    .limit(1);
+
+  if (existing.length > 0) return { id: existing[0].id };
+
+  const result = await db.insert(taskTagAssignments).values({ taskId, tagId });
+  return { id: result[0].insertId };
+}
+
+export async function removeTagFromTask(taskId: number, tagId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(taskTagAssignments).where(
+    and(eq(taskTagAssignments.taskId, taskId), eq(taskTagAssignments.tagId, tagId))
+  );
+}
+
+// Get all tasks (enhanced with user info)
+export async function getAllTasks(filters?: { projectId?: number; status?: string; assigneeId?: number; priority?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (filters?.projectId && filters.projectId > 0) conditions.push(eq(projectTasks.projectId, filters.projectId));
+  if (filters?.status) conditions.push(eq(projectTasks.status, filters.status as any));
+  if (filters?.assigneeId) conditions.push(eq(projectTasks.assigneeId, filters.assigneeId));
+  if (filters?.priority) conditions.push(eq(projectTasks.priority, filters.priority as any));
+
+  const query = db.select({
+    id: projectTasks.id,
+    projectId: projectTasks.projectId,
+    milestoneId: projectTasks.milestoneId,
+    name: projectTasks.name,
+    title: projectTasks.name, // Alias for compatibility
+    description: projectTasks.description,
+    assigneeId: projectTasks.assigneeId,
+    status: projectTasks.status,
+    priority: projectTasks.priority,
+    dueDate: projectTasks.dueDate,
+    completedDate: projectTasks.completedDate,
+    estimatedHours: projectTasks.estimatedHours,
+    actualHours: projectTasks.actualHours,
+    createdBy: projectTasks.createdBy,
+    createdAt: projectTasks.createdAt,
+    updatedAt: projectTasks.updatedAt,
+    assigneeName: users.name,
+    assigneeEmail: users.email,
+    projectName: projects.name,
+  })
+  .from(projectTasks)
+  .leftJoin(users, eq(projectTasks.assigneeId, users.id))
+  .leftJoin(projects, eq(projectTasks.projectId, projects.id));
+
+  if (conditions.length > 0) {
+    return query.where(and(...conditions)).orderBy(desc(projectTasks.createdAt));
+  }
+  return query.orderBy(desc(projectTasks.createdAt));
+}
+
+// Get task by ID with details
+export async function getTaskById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+
+  const result = await db.select({
+    id: projectTasks.id,
+    projectId: projectTasks.projectId,
+    milestoneId: projectTasks.milestoneId,
+    name: projectTasks.name,
+    title: projectTasks.name,
+    description: projectTasks.description,
+    assigneeId: projectTasks.assigneeId,
+    status: projectTasks.status,
+    priority: projectTasks.priority,
+    dueDate: projectTasks.dueDate,
+    completedDate: projectTasks.completedDate,
+    estimatedHours: projectTasks.estimatedHours,
+    actualHours: projectTasks.actualHours,
+    createdBy: projectTasks.createdBy,
+    createdAt: projectTasks.createdAt,
+    updatedAt: projectTasks.updatedAt,
+    assigneeName: users.name,
+    assigneeEmail: users.email,
+    projectName: projects.name,
+  })
+  .from(projectTasks)
+  .leftJoin(users, eq(projectTasks.assigneeId, users.id))
+  .leftJoin(projects, eq(projectTasks.projectId, projects.id))
+  .where(eq(projectTasks.id, id))
+  .limit(1);
+
+  return result[0];
+}
+
+// Delete task
+export async function deleteTask(id: number) {
+  const db = await getDb();
+  if (!db) return;
+
+  // Delete related data first
+  await db.delete(taskComments).where(eq(taskComments.taskId, id));
+  await db.delete(taskWatchers).where(eq(taskWatchers.taskId, id));
+  await db.delete(taskActivityLog).where(eq(taskActivityLog.taskId, id));
+  await db.delete(taskDependencies).where(or(eq(taskDependencies.taskId, id), eq(taskDependencies.dependsOnTaskId, id)));
+  await db.delete(taskTagAssignments).where(eq(taskTagAssignments.taskId, id));
+  await db.delete(taskCustomFieldValues).where(eq(taskCustomFieldValues.taskId, id));
+  await db.delete(projectTasks).where(eq(projectTasks.id, id));
+}
+
+// ============================================
+// GOOGLE CHAT INTEGRATION
+// ============================================
+
+// Google Chat Spaces
+export async function getGoogleChatSpaces(companyId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  if (companyId) {
+    return db.select().from(googleChatSpaces)
+      .where(and(eq(googleChatSpaces.companyId, companyId), eq(googleChatSpaces.isActive, true)))
+      .orderBy(googleChatSpaces.spaceName);
+  }
+  return db.select().from(googleChatSpaces).where(eq(googleChatSpaces.isActive, true)).orderBy(googleChatSpaces.spaceName);
+}
+
+export async function getGoogleChatSpaceById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(googleChatSpaces).where(eq(googleChatSpaces.id, id)).limit(1);
+  return result[0];
+}
+
+export async function createGoogleChatSpace(data: InsertGoogleChatSpace) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(googleChatSpaces).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateGoogleChatSpace(id: number, data: Partial<InsertGoogleChatSpace>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(googleChatSpaces).set(data).where(eq(googleChatSpaces.id, id));
+}
+
+export async function deleteGoogleChatSpace(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  // Delete mappings first
+  await db.delete(projectChatMappings).where(eq(projectChatMappings.chatSpaceId, id));
+  await db.delete(googleChatSpaces).where(eq(googleChatSpaces.id, id));
+}
+
+// Project Chat Mappings
+export async function getProjectChatMappings(projectId: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  return db.select({
+    id: projectChatMappings.id,
+    projectId: projectChatMappings.projectId,
+    chatSpaceId: projectChatMappings.chatSpaceId,
+    notifyOnTaskCreate: projectChatMappings.notifyOnTaskCreate,
+    notifyOnTaskComplete: projectChatMappings.notifyOnTaskComplete,
+    notifyOnTaskAssign: projectChatMappings.notifyOnTaskAssign,
+    notifyOnComment: projectChatMappings.notifyOnComment,
+    notifyOnDueDateApproaching: projectChatMappings.notifyOnDueDateApproaching,
+    dueDateReminderDays: projectChatMappings.dueDateReminderDays,
+    spaceName: googleChatSpaces.spaceName,
+    webhookUrl: googleChatSpaces.webhookUrl,
+  })
+  .from(projectChatMappings)
+  .innerJoin(googleChatSpaces, eq(projectChatMappings.chatSpaceId, googleChatSpaces.id))
+  .where(eq(projectChatMappings.projectId, projectId));
+}
+
+export async function createProjectChatMapping(data: InsertProjectChatMapping) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(projectChatMappings).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateProjectChatMapping(id: number, data: Partial<InsertProjectChatMapping>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(projectChatMappings).set(data).where(eq(projectChatMappings.id, id));
+}
+
+export async function deleteProjectChatMapping(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(projectChatMappings).where(eq(projectChatMappings.id, id));
+}
+
+// User Chat Preferences
+export async function getUserChatPreferences(userId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(userChatPreferences).where(eq(userChatPreferences.userId, userId)).limit(1);
+  return result[0];
+}
+
+export async function upsertUserChatPreferences(userId: number, data: Partial<InsertUserChatPreference>) {
+  const db = await getDb();
+  if (!db) return;
+
+  const existing = await getUserChatPreferences(userId);
+
+  if (existing) {
+    await db.update(userChatPreferences).set(data).where(eq(userChatPreferences.userId, userId));
+  } else {
+    await db.insert(userChatPreferences).values({ userId, ...data });
+  }
+}
+
+// Chat Message Log
+export async function createChatMessageLog(data: InsertChatMessageLogEntry) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(chatMessageLog).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateChatMessageLog(id: number, data: Partial<InsertChatMessageLogEntry>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(chatMessageLog).set(data).where(eq(chatMessageLog.id, id));
+}
+
+export async function getChatMessageLogs(filters?: { chatSpaceId?: number; status?: string }, limit = 100) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (filters?.chatSpaceId) conditions.push(eq(chatMessageLog.chatSpaceId, filters.chatSpaceId));
+  if (filters?.status) conditions.push(eq(chatMessageLog.status, filters.status as any));
+
+  if (conditions.length > 0) {
+    return db.select().from(chatMessageLog).where(and(...conditions)).orderBy(desc(chatMessageLog.createdAt)).limit(limit);
+  }
+  return db.select().from(chatMessageLog).orderBy(desc(chatMessageLog.createdAt)).limit(limit);
+}
+
+// Project Automations
+export async function getProjectAutomations(filters?: { projectId?: number; companyId?: number; isActive?: boolean }) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (filters?.projectId) conditions.push(eq(projectAutomations.projectId, filters.projectId));
+  if (filters?.companyId) conditions.push(eq(projectAutomations.companyId, filters.companyId));
+  if (filters?.isActive !== undefined) conditions.push(eq(projectAutomations.isActive, filters.isActive));
+
+  if (conditions.length > 0) {
+    return db.select().from(projectAutomations).where(and(...conditions)).orderBy(projectAutomations.name);
+  }
+  return db.select().from(projectAutomations).orderBy(projectAutomations.name);
+}
+
+export async function getProjectAutomationById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(projectAutomations).where(eq(projectAutomations.id, id)).limit(1);
+  return result[0];
+}
+
+export async function createProjectAutomation(data: InsertProjectAutomation) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(projectAutomations).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateProjectAutomation(id: number, data: Partial<InsertProjectAutomation>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(projectAutomations).set(data).where(eq(projectAutomations.id, id));
+}
+
+export async function deleteProjectAutomation(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(projectAutomations).where(eq(projectAutomations.id, id));
+}
+
+// Trigger automation tracking
+export async function incrementAutomationTriggerCount(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(projectAutomations)
+    .set({
+      triggerCount: sql`${projectAutomations.triggerCount} + 1`,
+      lastTriggeredAt: new Date()
+    })
+    .where(eq(projectAutomations.id, id));
+}
+
+// Get tasks due soon for reminders
+export async function getTasksDueSoon(daysAhead: number = 1) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const now = new Date();
+  const futureDate = new Date();
+  futureDate.setDate(futureDate.getDate() + daysAhead);
+
+  return db.select({
+    id: projectTasks.id,
+    projectId: projectTasks.projectId,
+    name: projectTasks.name,
+    description: projectTasks.description,
+    assigneeId: projectTasks.assigneeId,
+    status: projectTasks.status,
+    priority: projectTasks.priority,
+    dueDate: projectTasks.dueDate,
+    assigneeName: users.name,
+    assigneeEmail: users.email,
+    projectName: projects.name,
+  })
+  .from(projectTasks)
+  .leftJoin(users, eq(projectTasks.assigneeId, users.id))
+  .leftJoin(projects, eq(projectTasks.projectId, projects.id))
+  .where(and(
+    gte(projectTasks.dueDate, now),
+    lte(projectTasks.dueDate, futureDate),
+    sql`${projectTasks.status} NOT IN ('completed', 'cancelled', 'done')`
+  ))
+  .orderBy(projectTasks.dueDate);
+}
+
+// Get overdue tasks
+export async function getOverdueTasks() {
+  const db = await getDb();
+  if (!db) return [];
+
+  const now = new Date();
+
+  return db.select({
+    id: projectTasks.id,
+    projectId: projectTasks.projectId,
+    name: projectTasks.name,
+    description: projectTasks.description,
+    assigneeId: projectTasks.assigneeId,
+    status: projectTasks.status,
+    priority: projectTasks.priority,
+    dueDate: projectTasks.dueDate,
+    assigneeName: users.name,
+    assigneeEmail: users.email,
+    projectName: projects.name,
+  })
+  .from(projectTasks)
+  .leftJoin(users, eq(projectTasks.assigneeId, users.id))
+  .leftJoin(projects, eq(projectTasks.projectId, projects.id))
+  .where(and(
+    lt(projectTasks.dueDate, now),
+    sql`${projectTasks.status} NOT IN ('completed', 'cancelled', 'done')`
+  ))
+  .orderBy(projectTasks.dueDate);
 }

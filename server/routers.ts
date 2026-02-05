@@ -2050,6 +2050,547 @@ export const appRouter = router({
     tasks: protectedProcedure
       .input(z.object({ projectId: z.number() }))
       .query(({ input }) => db.getProjectTasks(input.projectId)),
+
+    // Enhanced task operations
+    allTasks: protectedProcedure
+      .input(z.object({
+        projectId: z.number().optional(),
+        status: z.string().optional(),
+        assigneeId: z.number().optional(),
+        priority: z.string().optional(),
+      }).optional())
+      .query(({ input }) => db.getAllTasks(input)),
+
+    getTask: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(({ input }) => db.getTaskById(input.id)),
+
+    deleteTask: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deleteTask(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'projectTask', input.id);
+        return { success: true };
+      }),
+
+    // Task comments
+    getTaskComments: protectedProcedure
+      .input(z.object({ taskId: z.number() }))
+      .query(({ input }) => db.getTaskComments(input.taskId)),
+
+    addTaskComment: protectedProcedure
+      .input(z.object({
+        taskId: z.number(),
+        content: z.string().min(1),
+        mentions: z.array(z.number()).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.createTaskComment({
+          taskId: input.taskId,
+          userId: ctx.user.id,
+          content: input.content,
+          mentions: input.mentions,
+        });
+        await db.createTaskActivityLogEntry({
+          taskId: input.taskId,
+          userId: ctx.user.id,
+          activityType: 'commented',
+          newValue: input.content.substring(0, 100),
+        });
+        return result;
+      }),
+
+    updateTaskComment: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        content: z.string().min(1),
+      }))
+      .mutation(async ({ input }) => {
+        await db.updateTaskComment(input.id, { content: input.content });
+        return { success: true };
+      }),
+
+    deleteTaskComment: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input }) => {
+        await db.deleteTaskComment(input.id);
+        return { success: true };
+      }),
+
+    // Task watchers
+    getTaskWatchers: protectedProcedure
+      .input(z.object({ taskId: z.number() }))
+      .query(({ input }) => db.getTaskWatchers(input.taskId)),
+
+    watchTask: protectedProcedure
+      .input(z.object({ taskId: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        return db.addTaskWatcher({ taskId: input.taskId, userId: ctx.user.id });
+      }),
+
+    unwatchTask: protectedProcedure
+      .input(z.object({ taskId: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.removeTaskWatcher(input.taskId, ctx.user.id);
+        return { success: true };
+      }),
+
+    // Task activity log
+    getTaskActivity: protectedProcedure
+      .input(z.object({ taskId: z.number(), limit: z.number().optional() }))
+      .query(({ input }) => db.getTaskActivityLog(input.taskId, input.limit)),
+
+    // Task dependencies
+    getTaskDependencies: protectedProcedure
+      .input(z.object({ taskId: z.number() }))
+      .query(({ input }) => db.getTaskDependencies(input.taskId)),
+
+    addTaskDependency: protectedProcedure
+      .input(z.object({
+        taskId: z.number(),
+        dependsOnTaskId: z.number(),
+        dependencyType: z.enum(['finish_to_start', 'start_to_start', 'finish_to_finish', 'start_to_finish']).optional(),
+        lagDays: z.number().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return db.createTaskDependency({
+          taskId: input.taskId,
+          dependsOnTaskId: input.dependsOnTaskId,
+          dependencyType: input.dependencyType,
+          lagDays: input.lagDays,
+          createdBy: ctx.user.id,
+        });
+      }),
+
+    removeTaskDependency: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input }) => {
+        await db.deleteTaskDependency(input.id);
+        return { success: true };
+      }),
+
+    // Task tags
+    getTaskTags: protectedProcedure
+      .input(z.object({ taskId: z.number() }))
+      .query(({ input }) => db.getTaskTags(input.taskId)),
+
+    addTagToTask: protectedProcedure
+      .input(z.object({ taskId: z.number(), tagId: z.number() }))
+      .mutation(async ({ input }) => {
+        return db.addTagToTask(input.taskId, input.tagId);
+      }),
+
+    removeTagFromTask: protectedProcedure
+      .input(z.object({ taskId: z.number(), tagId: z.number() }))
+      .mutation(async ({ input }) => {
+        await db.removeTagFromTask(input.taskId, input.tagId);
+        return { success: true };
+      }),
+
+    // Project views
+    getViews: protectedProcedure
+      .input(z.object({ projectId: z.number().optional() }).optional())
+      .query(({ input }) => db.getProjectViews(input)),
+
+    createView: protectedProcedure
+      .input(z.object({
+        projectId: z.number().optional(),
+        name: z.string().min(1),
+        type: z.enum(['table', 'kanban', 'calendar', 'timeline', 'gallery']),
+        isDefault: z.boolean().optional(),
+        config: z.any().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return db.createProjectView({
+          ...input,
+          createdBy: ctx.user.id,
+        });
+      }),
+
+    updateView: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        name: z.string().optional(),
+        type: z.enum(['table', 'kanban', 'calendar', 'timeline', 'gallery']).optional(),
+        isDefault: z.boolean().optional(),
+        config: z.any().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { id, ...data } = input;
+        await db.updateProjectView(id, data);
+        return { success: true };
+      }),
+
+    deleteView: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input }) => {
+        await db.deleteProjectView(input.id);
+        return { success: true };
+      }),
+
+    // Project tags
+    getTags: protectedProcedure
+      .input(z.object({ projectId: z.number().optional() }).optional())
+      .query(({ input }) => db.getProjectTags(input)),
+
+    createTag: protectedProcedure
+      .input(z.object({
+        projectId: z.number().optional(),
+        name: z.string().min(1),
+        color: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        return db.createProjectTag(input);
+      }),
+
+    updateTag: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        name: z.string().optional(),
+        color: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { id, ...data } = input;
+        await db.updateProjectTag(id, data);
+        return { success: true };
+      }),
+
+    deleteTag: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input }) => {
+        await db.deleteProjectTag(input.id);
+        return { success: true };
+      }),
+
+    // Custom fields
+    getCustomFields: protectedProcedure
+      .input(z.object({ projectId: z.number().optional() }).optional())
+      .query(({ input }) => db.getProjectCustomFields(input)),
+
+    createCustomField: protectedProcedure
+      .input(z.object({
+        projectId: z.number().optional(),
+        name: z.string().min(1),
+        fieldType: z.enum(['text', 'number', 'date', 'select', 'multiselect', 'checkbox', 'url', 'email', 'phone', 'currency', 'percent', 'rating', 'user', 'attachment']),
+        options: z.any().optional(),
+        defaultValue: z.string().optional(),
+        isRequired: z.boolean().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return db.createProjectCustomField({
+          ...input,
+          createdBy: ctx.user.id,
+        });
+      }),
+
+    updateCustomField: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        name: z.string().optional(),
+        options: z.any().optional(),
+        defaultValue: z.string().optional(),
+        isRequired: z.boolean().optional(),
+        order: z.number().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { id, ...data } = input;
+        await db.updateProjectCustomField(id, data);
+        return { success: true };
+      }),
+
+    deleteCustomField: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input }) => {
+        await db.deleteProjectCustomField(input.id);
+        return { success: true };
+      }),
+
+    // Task custom field values
+    getTaskCustomFieldValues: protectedProcedure
+      .input(z.object({ taskId: z.number() }))
+      .query(({ input }) => db.getTaskCustomFieldValues(input.taskId)),
+
+    setTaskCustomFieldValue: protectedProcedure
+      .input(z.object({
+        taskId: z.number(),
+        fieldId: z.number(),
+        value: z.string().nullable(),
+      }))
+      .mutation(async ({ input }) => {
+        await db.setTaskCustomFieldValue(input.taskId, input.fieldId, input.value);
+        return { success: true };
+      }),
+
+    // Due date reminders
+    getTasksDueSoon: protectedProcedure
+      .input(z.object({ daysAhead: z.number().optional() }).optional())
+      .query(({ input }) => db.getTasksDueSoon(input?.daysAhead)),
+
+    getOverdueTasks: protectedProcedure.query(() => db.getOverdueTasks()),
+  }),
+
+  // ============================================
+  // GOOGLE CHAT INTEGRATION
+  // ============================================
+  googleChat: router({
+    // Chat spaces
+    listSpaces: protectedProcedure.query(() => db.getGoogleChatSpaces()),
+
+    getSpace: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(({ input }) => db.getGoogleChatSpaceById(input.id)),
+
+    createSpace: protectedProcedure
+      .input(z.object({
+        spaceName: z.string().min(1),
+        spaceId: z.string().optional(),
+        webhookUrl: z.string().url(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.createGoogleChatSpace({
+          ...input,
+          createdBy: ctx.user.id,
+        });
+        await createAuditLog(ctx.user.id, 'create', 'googleChatSpace', result.id, input.spaceName);
+        return result;
+      }),
+
+    updateSpace: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        spaceName: z.string().optional(),
+        webhookUrl: z.string().url().optional(),
+        isActive: z.boolean().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { id, ...data } = input;
+        await db.updateGoogleChatSpace(id, data);
+        await createAuditLog(ctx.user.id, 'update', 'googleChatSpace', id);
+        return { success: true };
+      }),
+
+    deleteSpace: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deleteGoogleChatSpace(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'googleChatSpace', input.id);
+        return { success: true };
+      }),
+
+    testWebhook: protectedProcedure
+      .input(z.object({ webhookUrl: z.string().url() }))
+      .mutation(async ({ input }) => {
+        const { testWebhookConnection } = await import('./_core/googleChat');
+        return testWebhookConnection(input.webhookUrl);
+      }),
+
+    // Project chat mappings
+    getProjectMappings: protectedProcedure
+      .input(z.object({ projectId: z.number() }))
+      .query(({ input }) => db.getProjectChatMappings(input.projectId)),
+
+    createProjectMapping: protectedProcedure
+      .input(z.object({
+        projectId: z.number(),
+        chatSpaceId: z.number(),
+        notifyOnTaskCreate: z.boolean().optional(),
+        notifyOnTaskComplete: z.boolean().optional(),
+        notifyOnTaskAssign: z.boolean().optional(),
+        notifyOnComment: z.boolean().optional(),
+        notifyOnDueDateApproaching: z.boolean().optional(),
+        dueDateReminderDays: z.number().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        return db.createProjectChatMapping(input);
+      }),
+
+    updateProjectMapping: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        notifyOnTaskCreate: z.boolean().optional(),
+        notifyOnTaskComplete: z.boolean().optional(),
+        notifyOnTaskAssign: z.boolean().optional(),
+        notifyOnComment: z.boolean().optional(),
+        notifyOnDueDateApproaching: z.boolean().optional(),
+        dueDateReminderDays: z.number().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { id, ...data } = input;
+        await db.updateProjectChatMapping(id, data);
+        return { success: true };
+      }),
+
+    deleteProjectMapping: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input }) => {
+        await db.deleteProjectChatMapping(input.id);
+        return { success: true };
+      }),
+
+    // User chat preferences
+    getMyPreferences: protectedProcedure.query(({ ctx }) => db.getUserChatPreferences(ctx.user.id)),
+
+    updateMyPreferences: protectedProcedure
+      .input(z.object({
+        googleChatUserId: z.string().optional(),
+        receiveTaskAssignments: z.boolean().optional(),
+        receiveDueDateReminders: z.boolean().optional(),
+        receiveMentions: z.boolean().optional(),
+        receiveProjectUpdates: z.boolean().optional(),
+        quietHoursStart: z.string().optional(),
+        quietHoursEnd: z.string().optional(),
+        timezone: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        await db.upsertUserChatPreferences(ctx.user.id, input);
+        return { success: true };
+      }),
+
+    // Send notification (for manual trigger)
+    sendTaskNotification: protectedProcedure
+      .input(z.object({
+        taskId: z.number(),
+        notificationType: z.enum(['created', 'assigned', 'completed', 'status_changed', 'due_soon', 'overdue', 'commented']),
+        comment: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { sendTaskNotification } = await import('./_core/googleChat');
+
+        // Get task details
+        const task = await db.getTaskById(input.taskId);
+        if (!task) {
+          return { success: false, error: 'Task not found' };
+        }
+
+        // Get project chat mappings
+        const mappings = await db.getProjectChatMappings(task.projectId);
+        if (mappings.length === 0) {
+          return { success: false, error: 'No chat spaces configured for this project' };
+        }
+
+        const results = [];
+        for (const mapping of mappings) {
+          if (!mapping.webhookUrl) continue;
+
+          // Check notification settings based on type
+          let shouldSend = false;
+          switch (input.notificationType) {
+            case 'created':
+              shouldSend = mapping.notifyOnTaskCreate || false;
+              break;
+            case 'assigned':
+              shouldSend = mapping.notifyOnTaskAssign || false;
+              break;
+            case 'completed':
+              shouldSend = mapping.notifyOnTaskComplete || false;
+              break;
+            case 'commented':
+              shouldSend = mapping.notifyOnComment || false;
+              break;
+            case 'due_soon':
+            case 'overdue':
+              shouldSend = mapping.notifyOnDueDateApproaching || false;
+              break;
+            default:
+              shouldSend = true;
+          }
+
+          if (!shouldSend) continue;
+
+          // Log the message
+          const logEntry = await db.createChatMessageLog({
+            chatSpaceId: mapping.chatSpaceId,
+            messageType: `task_${input.notificationType}` as any,
+            relatedEntityType: 'task',
+            relatedEntityId: input.taskId,
+            status: 'pending',
+          });
+
+          // Send notification
+          const result = await sendTaskNotification(mapping.webhookUrl, {
+            taskId: task.id,
+            taskName: task.name,
+            projectName: task.projectName || undefined,
+            assigneeName: task.assigneeName || undefined,
+            status: task.status,
+            priority: task.priority,
+            dueDate: task.dueDate || undefined,
+            description: task.description || undefined,
+            notificationType: input.notificationType,
+            actorName: ctx.user.name || 'Someone',
+            comment: input.comment,
+          });
+
+          // Update log
+          await db.updateChatMessageLog(logEntry.id, {
+            status: result.success ? 'sent' : 'failed',
+            googleMessageId: result.messageId,
+            errorMessage: result.error,
+            sentAt: result.success ? new Date() : undefined,
+          });
+
+          results.push({
+            spaceId: mapping.chatSpaceId,
+            spaceName: mapping.spaceName,
+            ...result,
+          });
+        }
+
+        return { success: true, results };
+      }),
+
+    // Message logs
+    getMessageLogs: protectedProcedure
+      .input(z.object({
+        chatSpaceId: z.number().optional(),
+        status: z.string().optional(),
+        limit: z.number().optional(),
+      }).optional())
+      .query(({ input }) => db.getChatMessageLogs(input, input?.limit)),
+
+    // Automations
+    getAutomations: protectedProcedure
+      .input(z.object({ projectId: z.number().optional() }).optional())
+      .query(({ input }) => db.getProjectAutomations(input)),
+
+    createAutomation: protectedProcedure
+      .input(z.object({
+        projectId: z.number().optional(),
+        name: z.string().min(1),
+        description: z.string().optional(),
+        triggerType: z.enum(['task_created', 'task_status_changed', 'task_assigned', 'task_due_soon', 'task_overdue', 'task_completed', 'comment_added', 'field_changed']),
+        triggerConditions: z.any().optional(),
+        actionType: z.enum(['send_notification', 'send_chat_message', 'update_field', 'assign_user', 'change_status', 'add_comment', 'send_email', 'create_task']),
+        actionConfig: z.any().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return db.createProjectAutomation({
+          ...input,
+          createdBy: ctx.user.id,
+        });
+      }),
+
+    updateAutomation: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        name: z.string().optional(),
+        description: z.string().optional(),
+        isActive: z.boolean().optional(),
+        triggerConditions: z.any().optional(),
+        actionConfig: z.any().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { id, ...data } = input;
+        await db.updateProjectAutomation(id, data);
+        return { success: true };
+      }),
+
+    deleteAutomation: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input }) => {
+        await db.deleteProjectAutomation(input.id);
+        return { success: true };
+      }),
   }),
 
   // ============================================

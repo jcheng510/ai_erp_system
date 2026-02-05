@@ -4213,3 +4213,259 @@ export const workflowNotifications = mysqlTable("workflowNotifications", {
 
 export type WorkflowNotification = typeof workflowNotifications.$inferSelect;
 export type InsertWorkflowNotification = typeof workflowNotifications.$inferInsert;
+
+// ============================================
+// AIRTABLE-STYLE PROJECT MANAGEMENT
+// ============================================
+
+// Project views - different visualizations (table, kanban, calendar, timeline, gallery)
+export const projectViews = mysqlTable("project_views", {
+  id: int("id").autoincrement().primaryKey(),
+  projectId: int("projectId"),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 255 }).notNull(),
+  type: mysqlEnum("type", ["table", "kanban", "calendar", "timeline", "gallery"]).default("table").notNull(),
+  isDefault: boolean("isDefault").default(false),
+  isShared: boolean("isShared").default(true),
+  createdBy: int("createdBy"),
+  // View configuration stored as JSON
+  config: json("config"), // { columns, filters, sorts, groups, hiddenFields }
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ProjectView = typeof projectViews.$inferSelect;
+export type InsertProjectView = typeof projectViews.$inferInsert;
+
+// Custom fields for projects and tasks
+export const projectCustomFields = mysqlTable("project_custom_fields", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  projectId: int("projectId"),
+  name: varchar("name", { length: 255 }).notNull(),
+  fieldType: mysqlEnum("fieldType", [
+    "text", "number", "date", "select", "multiselect",
+    "checkbox", "url", "email", "phone", "currency",
+    "percent", "rating", "user", "attachment"
+  ]).notNull(),
+  options: json("options"), // For select/multiselect: [{value, label, color}]
+  defaultValue: text("defaultValue"),
+  isRequired: boolean("isRequired").default(false),
+  order: int("order").default(0),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ProjectCustomField = typeof projectCustomFields.$inferSelect;
+export type InsertProjectCustomField = typeof projectCustomFields.$inferInsert;
+
+// Custom field values for tasks
+export const taskCustomFieldValues = mysqlTable("task_custom_field_values", {
+  id: int("id").autoincrement().primaryKey(),
+  taskId: int("taskId").notNull(),
+  fieldId: int("fieldId").notNull(),
+  value: text("value"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type TaskCustomFieldValue = typeof taskCustomFieldValues.$inferSelect;
+export type InsertTaskCustomFieldValue = typeof taskCustomFieldValues.$inferInsert;
+
+// Task comments for collaboration
+export const taskComments = mysqlTable("task_comments", {
+  id: int("id").autoincrement().primaryKey(),
+  taskId: int("taskId").notNull(),
+  userId: int("userId").notNull(),
+  content: text("content").notNull(),
+  mentions: json("mentions"), // Array of mentioned user IDs
+  attachments: json("attachments"), // Array of attachment URLs
+  parentCommentId: int("parentCommentId"), // For threaded comments
+  isEdited: boolean("isEdited").default(false),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type TaskComment = typeof taskComments.$inferSelect;
+export type InsertTaskComment = typeof taskComments.$inferInsert;
+
+// Task watchers - users subscribed to task updates
+export const taskWatchers = mysqlTable("task_watchers", {
+  id: int("id").autoincrement().primaryKey(),
+  taskId: int("taskId").notNull(),
+  userId: int("userId").notNull(),
+  notifyOnComment: boolean("notifyOnComment").default(true),
+  notifyOnStatusChange: boolean("notifyOnStatusChange").default(true),
+  notifyOnDueDate: boolean("notifyOnDueDate").default(true),
+  notifyOnAssignment: boolean("notifyOnAssignment").default(true),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type TaskWatcher = typeof taskWatchers.$inferSelect;
+export type InsertTaskWatcher = typeof taskWatchers.$inferInsert;
+
+// Task activity log
+export const taskActivityLog = mysqlTable("task_activity_log", {
+  id: int("id").autoincrement().primaryKey(),
+  taskId: int("taskId").notNull(),
+  userId: int("userId").notNull(),
+  activityType: mysqlEnum("activityType", [
+    "created", "updated", "status_changed", "assigned", "unassigned",
+    "priority_changed", "due_date_changed", "commented", "attachment_added",
+    "field_updated", "moved_to_project", "completed", "reopened"
+  ]).notNull(),
+  previousValue: text("previousValue"),
+  newValue: text("newValue"),
+  metadata: json("metadata"), // Additional context
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type TaskActivityLogEntry = typeof taskActivityLog.$inferSelect;
+export type InsertTaskActivityLogEntry = typeof taskActivityLog.$inferInsert;
+
+// Task dependencies
+export const taskDependencies = mysqlTable("task_dependencies", {
+  id: int("id").autoincrement().primaryKey(),
+  taskId: int("taskId").notNull(),
+  dependsOnTaskId: int("dependsOnTaskId").notNull(),
+  dependencyType: mysqlEnum("dependencyType", [
+    "finish_to_start", "start_to_start", "finish_to_finish", "start_to_finish"
+  ]).default("finish_to_start").notNull(),
+  lagDays: int("lagDays").default(0),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type TaskDependency = typeof taskDependencies.$inferSelect;
+export type InsertTaskDependency = typeof taskDependencies.$inferInsert;
+
+// Task tags
+export const projectTags = mysqlTable("project_tags", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  projectId: int("projectId"),
+  name: varchar("name", { length: 64 }).notNull(),
+  color: varchar("color", { length: 7 }).default("#6366f1"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type ProjectTag = typeof projectTags.$inferSelect;
+export type InsertProjectTag = typeof projectTags.$inferInsert;
+
+// Task to tags junction
+export const taskTagAssignments = mysqlTable("task_tag_assignments", {
+  id: int("id").autoincrement().primaryKey(),
+  taskId: int("taskId").notNull(),
+  tagId: int("tagId").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type TaskTagAssignment = typeof taskTagAssignments.$inferSelect;
+export type InsertTaskTagAssignment = typeof taskTagAssignments.$inferInsert;
+
+// ============================================
+// GOOGLE CHAT INTEGRATION
+// ============================================
+
+// Google Chat spaces/channels configuration
+export const googleChatSpaces = mysqlTable("google_chat_spaces", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  spaceName: varchar("spaceName", { length: 255 }).notNull(), // Display name
+  spaceId: varchar("spaceId", { length: 255 }), // Google Chat space ID (spaces/...)
+  webhookUrl: text("webhookUrl"), // Webhook URL for sending messages
+  isActive: boolean("isActive").default(true),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type GoogleChatSpace = typeof googleChatSpaces.$inferSelect;
+export type InsertGoogleChatSpace = typeof googleChatSpaces.$inferInsert;
+
+// Project to Google Chat space mapping
+export const projectChatMappings = mysqlTable("project_chat_mappings", {
+  id: int("id").autoincrement().primaryKey(),
+  projectId: int("projectId").notNull(),
+  chatSpaceId: int("chatSpaceId").notNull(),
+  notifyOnTaskCreate: boolean("notifyOnTaskCreate").default(true),
+  notifyOnTaskComplete: boolean("notifyOnTaskComplete").default(true),
+  notifyOnTaskAssign: boolean("notifyOnTaskAssign").default(true),
+  notifyOnComment: boolean("notifyOnComment").default(false),
+  notifyOnDueDateApproaching: boolean("notifyOnDueDateApproaching").default(true),
+  dueDateReminderDays: int("dueDateReminderDays").default(1),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ProjectChatMapping = typeof projectChatMappings.$inferSelect;
+export type InsertProjectChatMapping = typeof projectChatMappings.$inferInsert;
+
+// User Google Chat preferences
+export const userChatPreferences = mysqlTable("user_chat_preferences", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  googleChatUserId: varchar("googleChatUserId", { length: 255 }), // Google Chat user ID for mentions
+  receiveTaskAssignments: boolean("receiveTaskAssignments").default(true),
+  receiveDueDateReminders: boolean("receiveDueDateReminders").default(true),
+  receiveMentions: boolean("receiveMentions").default(true),
+  receiveProjectUpdates: boolean("receiveProjectUpdates").default(false),
+  quietHoursStart: varchar("quietHoursStart", { length: 5 }), // HH:MM format
+  quietHoursEnd: varchar("quietHoursEnd", { length: 5 }),
+  timezone: varchar("timezone", { length: 64 }).default("America/Los_Angeles"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type UserChatPreference = typeof userChatPreferences.$inferSelect;
+export type InsertUserChatPreference = typeof userChatPreferences.$inferInsert;
+
+// Google Chat message log - for tracking sent notifications
+export const chatMessageLog = mysqlTable("chat_message_log", {
+  id: int("id").autoincrement().primaryKey(),
+  chatSpaceId: int("chatSpaceId"),
+  messageType: mysqlEnum("messageType", [
+    "task_created", "task_assigned", "task_completed", "task_commented",
+    "due_date_reminder", "mention", "status_update", "custom"
+  ]).notNull(),
+  relatedEntityType: varchar("relatedEntityType", { length: 64 }), // task, project, etc.
+  relatedEntityId: int("relatedEntityId"),
+  messageContent: text("messageContent"),
+  googleMessageId: varchar("googleMessageId", { length: 255 }), // Response message ID from Google
+  status: mysqlEnum("status", ["pending", "sent", "failed"]).default("pending").notNull(),
+  errorMessage: text("errorMessage"),
+  sentAt: timestamp("sentAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type ChatMessageLogEntry = typeof chatMessageLog.$inferSelect;
+export type InsertChatMessageLogEntry = typeof chatMessageLog.$inferInsert;
+
+// Automation rules for project management
+export const projectAutomations = mysqlTable("project_automations", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  projectId: int("projectId"),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  isActive: boolean("isActive").default(true),
+  triggerType: mysqlEnum("triggerType", [
+    "task_created", "task_status_changed", "task_assigned", "task_due_soon",
+    "task_overdue", "task_completed", "comment_added", "field_changed"
+  ]).notNull(),
+  triggerConditions: json("triggerConditions"), // Conditions for when to trigger
+  actionType: mysqlEnum("actionType", [
+    "send_notification", "send_chat_message", "update_field", "assign_user",
+    "change_status", "add_comment", "send_email", "create_task"
+  ]).notNull(),
+  actionConfig: json("actionConfig"), // Configuration for the action
+  lastTriggeredAt: timestamp("lastTriggeredAt"),
+  triggerCount: int("triggerCount").default(0),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ProjectAutomation = typeof projectAutomations.$inferSelect;
+export type InsertProjectAutomation = typeof projectAutomations.$inferInsert;

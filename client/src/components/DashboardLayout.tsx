@@ -38,6 +38,7 @@ import {
   Users,
   Scale,
   FolderKanban,
+  ListTodo,
   Bot,
   Settings,
   Building2,
@@ -134,6 +135,7 @@ const menuGroups = [
     label: "Projects & Data",
     items: [
       { icon: FolderKanban, label: "Projects", path: "/projects" },
+      { icon: ListTodo, label: "Task Hub", path: "/tasks" },
       { icon: FolderLock, label: "Data Rooms", path: "/datarooms" },
     ],
   },
