@@ -129,7 +129,9 @@ export default function IntegrationsPage() {
 
   // Check for OAuth callback success/error in URL
   React.useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
+    if (!searchParams) return;
+    
+    const params = new URLSearchParams(searchParams);
     const shopifySuccess = params.get('shopify_success');
     const shopifyError = params.get('shopify_error');
     const shopName = params.get('shop');
@@ -179,7 +181,7 @@ export default function IntegrationsPage() {
       // Clean up URL
       window.history.replaceState({}, '', '/settings/integrations');
     }
-  }, [refetch]);
+  }, [searchParams, refetch]);
 
   const handleConnectShopify = () => {
     if (!shopifyShopDomain.trim()) {

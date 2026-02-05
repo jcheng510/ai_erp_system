@@ -1457,10 +1457,11 @@ export async function upsertQuickBooksOAuthToken(data: InsertQuickBooksOAuthToke
   
   if (existing) {
     // Update existing token
+    // Note: QuickBooks always returns a new refresh token on token refresh
     await db.update(quickbooksOAuthTokens)
       .set({
         accessToken: data.accessToken,
-        refreshToken: data.refreshToken || existing.refreshToken,
+        refreshToken: data.refreshToken ?? existing.refreshToken, // Use existing only if new one not provided
         expiresAt: data.expiresAt,
         scope: data.scope,
         realmId: data.realmId,

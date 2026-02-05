@@ -3379,10 +3379,11 @@ export const appRouter = router({
         }
         
         // Update token in database
+        // QuickBooks always returns a new refresh token on token refresh
         await db.upsertQuickBooksOAuthToken({
           userId: ctx.user.id,
           accessToken: refreshResult.access_token!,
-          refreshToken: refreshResult.refresh_token || token.refreshToken,
+          refreshToken: refreshResult.refresh_token!, // QuickBooks always provides a new refresh token
           expiresAt: new Date(Date.now() + (refreshResult.expires_in! * 1000)),
           realmId: token.realmId,
         });
