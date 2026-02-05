@@ -255,7 +255,7 @@ describe("Freight RFQ Workflow", () => {
     });
 
     it("should support all cargo types", () => {
-      const cargoTypes = [
+      const validCargoTypes = [
         "general",
         "hazardous",
         "refrigerated",
@@ -265,23 +265,13 @@ describe("Freight RFQ Workflow", () => {
         "bulk",
       ];
 
-      for (const cargoType of cargoTypes) {
-        expect(
-          [
-            "general",
-            "hazardous",
-            "refrigerated",
-            "oversized",
-            "fragile",
-            "liquid",
-            "bulk",
-          ].includes(cargoType)
-        ).toBe(true);
+      for (const cargoType of validCargoTypes) {
+        expect(validCargoTypes.includes(cargoType)).toBe(true);
       }
     });
 
     it("should support all shipping modes", () => {
-      const shippingModes = [
+      const validShippingModes = [
         "ocean_fcl",
         "ocean_lcl",
         "air",
@@ -291,18 +281,8 @@ describe("Freight RFQ Workflow", () => {
         "any",
       ];
 
-      for (const mode of shippingModes) {
-        expect(
-          [
-            "ocean_fcl",
-            "ocean_lcl",
-            "air",
-            "express",
-            "ground",
-            "rail",
-            "any",
-          ].includes(mode)
-        ).toBe(true);
+      for (const mode of validShippingModes) {
+        expect(validShippingModes.includes(mode)).toBe(true);
       }
     });
   });
@@ -390,7 +370,7 @@ describe("Freight RFQ Workflow", () => {
     });
 
     it("should support all carrier types", () => {
-      const carrierTypes = [
+      const validCarrierTypes = [
         "freight_forwarder",
         "shipping_line",
         "airline",
@@ -399,17 +379,8 @@ describe("Freight RFQ Workflow", () => {
         "customs_broker",
       ];
 
-      for (const type of carrierTypes) {
-        expect(
-          [
-            "freight_forwarder",
-            "shipping_line",
-            "airline",
-            "trucking",
-            "courier",
-            "customs_broker",
-          ].includes(type)
-        ).toBe(true);
+      for (const type of validCarrierTypes) {
+        expect(validCarrierTypes.includes(type)).toBe(true);
       }
     });
   });
