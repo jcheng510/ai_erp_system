@@ -391,6 +391,9 @@ If document type is unknown, return all as null.`;
             console.log("[DocumentImport] Converting PDF to images for OCR...");
             const convert = fromBuffer(buffer, options);
             
+            // Configure to use ImageMagick (not GraphicsMagick)
+            convert.setGMClass(true); // true = use ImageMagick
+            
             // Convert first page to base64 for vision OCR (limiting to first page for efficiency)
             const pageResult = await convert(1, { responseType: "base64" });
             
