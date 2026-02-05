@@ -9427,9 +9427,44 @@ Ask if they received the original request and if they can provide a quote.`;
             }
           }
 
-          // Check invitation-only mode
-          if (room.invitationOnly && !room.isPublic) {
-            const email = input.visitorEmail || visitor?.email;
+          // Strict access control - requires BOTH approved email AND signed NDA
+          const email = input.visitorEmail || visitor?.email;
+
+          if (room.requireApprovedAccess) {
+            // Email is required for strict access control
+            if (!email) {
+              throw new TRPCError({ code: 'FORBIDDEN', message: 'Email required for access' });
+            }
+
+            // Check if email has an approved invitation
+            if (!invitation) {
+              invitation = await db.getDataRoomInvitationByEmail(input.dataRoomId, email);
+            }
+            if (!invitation || (invitation.status !== 'pending' && invitation.status !== 'accepted')) {
+              throw new TRPCError({
+                code: 'FORBIDDEN',
+                message: 'Your email has not been approved for access to this data room. Please contact the administrator.'
+              });
+            }
+
+            // Check if NDA has been signed
+            const ndaSignature = await db.getVisitorNdaSignature(input.dataRoomId, email);
+            if (!ndaSignature) {
+              throw new TRPCError({
+                code: 'FORBIDDEN',
+                message: 'NDA_REQUIRED' // Special code for client to show NDA signing gate
+              });
+            }
+
+            // Mark invitation as accepted if it was pending (first successful access)
+            if (invitation.status === 'pending') {
+              await db.updateDataRoomInvitation(invitation.id, {
+                status: 'accepted',
+                acceptedAt: new Date()
+              });
+            }
+          } else if (room.invitationOnly && !room.isPublic) {
+            // Legacy invitation-only mode (without strict NDA requirement)
             if (!email) {
               throw new TRPCError({ code: 'FORBIDDEN', message: 'Email required for access' });
             }
@@ -9494,6 +9529,7 @@ Ask if they received the original request and if they can provide a quote.`;
               logoUrl: room.logoUrl,
               brandColor: room.brandColor,
               requiresNda: room.requiresNda,
+              requireApprovedAccess: room.requireApprovedAccess,
               ndaText: room.ndaText,
               invitationOnly: room.invitationOnly,
               watermarkEnabled: room.watermarkEnabled,
@@ -9531,6 +9567,50 @@ Ask if they received the original request and if they can provide a quote.`;
             deviceType: ctx.req.headers['user-agent']?.includes('Mobile') ? 'mobile' : 'desktop',
           });
           return { id };
+        }),
+
+      // Check access status for email - returns email approval and NDA signing status
+      checkAccessStatus: publicProcedure
+        .input(z.object({
+          dataRoomId: z.number(),
+          email: z.string().email(),
+        }))
+        .query(async ({ input }) => {
+          const room = await db.getDataRoomById(input.dataRoomId);
+          if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
+
+          // Check if email has an approved invitation
+          const invitation = await db.getDataRoomInvitationByEmail(input.dataRoomId, input.email);
+          const emailApproved = invitation && (invitation.status === 'pending' || invitation.status === 'accepted');
+
+          // Check if email has signed the NDA
+          const ndaSignature = await db.getVisitorNdaSignature(input.dataRoomId, input.email);
+          const ndaSigned = !!ndaSignature;
+
+          // Get NDA document info if NDA is required
+          let ndaDocument = null;
+          if (room.requireApprovedAccess || room.requiresNda) {
+            const ndaDocs = await db.getNdaDocuments(input.dataRoomId);
+            ndaDocument = ndaDocs.find(doc => doc.isActive) || null;
+          }
+
+          return {
+            requireApprovedAccess: room.requireApprovedAccess,
+            requiresNda: room.requiresNda || room.requireApprovedAccess,
+            emailApproved,
+            invitationStatus: invitation?.status || null,
+            ndaSigned,
+            ndaSignedAt: ndaSignature?.signedAt || null,
+            ndaDocumentId: ndaDocument?.id || null,
+            roomName: room.name,
+            roomDescription: room.description,
+            logoUrl: room.logoUrl,
+            brandColor: room.brandColor,
+            welcomeMessage: room.welcomeMessage,
+            ndaText: room.ndaText,
+            // Access is granted only if both conditions are met
+            accessGranted: emailApproved && (ndaSigned || !room.requireApprovedAccess && !room.requiresNda),
+          };
         }),
     }),
   }),

@@ -7,9 +7,9 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
-import { 
-  FolderOpen, FileText, File, Download, Eye, Lock, 
-  ChevronRight, Folder, ArrowLeft, Shield
+import {
+  FolderOpen, FileText, File, Download, Eye, Lock,
+  ChevronRight, Folder, ArrowLeft, Shield, Clock, Mail, AlertCircle
 } from "lucide-react";
 import { useRef } from "react";
 import { useParams } from "wouter";
@@ -17,7 +17,10 @@ import { useParams } from "wouter";
 export default function DataRoomPublic() {
   const params = useParams<{ code: string }>();
   const linkCode = params.code || "";
-  
+
+  // Access flow states
+  const [linkValidated, setLinkValidated] = useState(false);
+  const [emailSubmitted, setEmailSubmitted] = useState(false);
   const [accessGranted, setAccessGranted] = useState(false);
   const [password, setPassword] = useState("");
   const [visitorInfo, setVisitorInfo] = useState({
@@ -35,8 +38,8 @@ export default function DataRoomPublic() {
   const [currentFolderId, setCurrentFolderId] = useState<number | null>(null);
   const [requiresPassword, setRequiresPassword] = useState(false);
   const [requiredFields, setRequiredFields] = useState<string[]>([]);
-  const [showNda, setShowNda] = useState(false);
 
+  // Link validation mutation
   const accessMutation = trpc.dataRoom.public.accessByLink.useMutation({
     onSuccess: (data) => {
       if (data.requiresPassword) {
@@ -44,7 +47,8 @@ export default function DataRoomPublic() {
         return;
       }
       if (data.requiresInfo) {
-        setRequiredFields(data.requiredFields || []);
+        // Always require email for strict access control
+        setRequiredFields(['email', ...(data.requiredFields || []).filter(f => f !== 'email')]);
         return;
       }
       if (data.dataRoomId) {
@@ -54,7 +58,13 @@ export default function DataRoomPublic() {
           allowDownload: data.allowDownload ?? true,
           allowPrint: data.allowPrint ?? true,
         });
-        setAccessGranted(true);
+        setLinkValidated(true);
+        // Always require email even if link doesn't require it
+        if (!visitorInfo.email) {
+          setRequiredFields(['email']);
+        } else {
+          setEmailSubmitted(true);
+        }
       }
     },
     onError: (error) => {
@@ -62,14 +72,28 @@ export default function DataRoomPublic() {
     },
   });
 
-  const { data: content, isLoading: contentLoading } = trpc.dataRoom.public.getContent.useQuery(
-    { 
-      dataRoomId: dataRoomId!, 
-      visitorId: visitorId || undefined, 
+  // Check access status for the submitted email
+  const { data: accessStatus, isLoading: accessStatusLoading, refetch: refetchAccessStatus } =
+    trpc.dataRoom.public.checkAccessStatus.useQuery(
+      { dataRoomId: dataRoomId!, email: visitorInfo.email },
+      {
+        enabled: linkValidated && emailSubmitted && !!dataRoomId && !!visitorInfo.email,
+        retry: false,
+      }
+    );
+
+  // Get content only when fully authorized (email approved + NDA signed)
+  const { data: content, isLoading: contentLoading, error: contentError } = trpc.dataRoom.public.getContent.useQuery(
+    {
+      dataRoomId: dataRoomId!,
+      visitorId: visitorId || undefined,
       visitorEmail: visitorInfo.email || undefined,
-      folderId: currentFolderId 
+      folderId: currentFolderId
     },
-    { enabled: accessGranted && !!dataRoomId }
+    {
+      enabled: accessGranted && !!dataRoomId,
+      retry: false,
+    }
   );
 
   const recordViewMutation = trpc.dataRoom.public.recordView.useMutation();
@@ -81,6 +105,19 @@ export default function DataRoomPublic() {
     }
   }, [linkCode]);
 
+  // Check if access should be granted based on accessStatus
+  useEffect(() => {
+    if (accessStatus) {
+      if (accessStatus.emailApproved && accessStatus.ndaSigned) {
+        setNdaAccepted(true);
+        setAccessGranted(true);
+      } else if (accessStatus.emailApproved && !accessStatus.ndaSigned) {
+        // Email approved, need NDA signing
+        setNdaAccepted(false);
+      }
+    }
+  }, [accessStatus]);
+
   const handleAccessSubmit = () => {
     accessMutation.mutate({
       linkCode,
@@ -91,6 +128,14 @@ export default function DataRoomPublic() {
         company: visitorInfo.company || undefined,
       },
     });
+  };
+
+  const handleEmailSubmit = () => {
+    if (!visitorInfo.email) {
+      toast.error('Email is required');
+      return;
+    }
+    setEmailSubmitted(true);
   };
 
   const handleDocumentView = (documentId: number, storageUrl: string | null) => {
@@ -123,54 +168,74 @@ export default function DataRoomPublic() {
     }
   };
 
-  // Access Gate UI
-  if (!accessGranted) {
+  // Gate 1: Password Gate
+  if (requiresPassword && !linkValidated) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 flex items-center justify-center p-4">
         <Card className="w-full max-w-md">
           <CardHeader className="text-center">
             <div className="mx-auto w-12 h-12 bg-primary/10 rounded-full flex items-center justify-center mb-4">
-              <Shield className="h-6 w-6 text-primary" />
+              <Lock className="h-6 w-6 text-primary" />
             </div>
-            <CardTitle>Secure Data Room</CardTitle>
+            <CardTitle>Password Protected</CardTitle>
             <CardDescription>
-              {requiresPassword
-                ? "Enter the password to access this data room"
-                : requiredFields.length > 0
-                ? "Please provide your information to continue"
-                : "Verifying access..."}
+              Enter the password to access this data room
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            {requiresPassword && (
-              <div className="space-y-2">
-                <Label htmlFor="password">Password</Label>
-                <Input
-                  id="password"
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Enter password"
-                />
-              </div>
-            )}
-            
-            {requiredFields.includes("email") && (
-              <div className="space-y-2">
-                <Label htmlFor="email">Email *</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  value={visitorInfo.email}
-                  onChange={(e) => setVisitorInfo({ ...visitorInfo, email: e.target.value })}
-                  placeholder="your@email.com"
-                />
-              </div>
-            )}
-            
+            <div className="space-y-2">
+              <Label htmlFor="password">Password</Label>
+              <Input
+                id="password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Enter password"
+              />
+            </div>
+            <Button
+              className="w-full"
+              onClick={handleAccessSubmit}
+              disabled={accessMutation.isPending}
+            >
+              {accessMutation.isPending ? "Verifying..." : "Continue"}
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  // Gate 2: Email Entry Gate (always required for strict access)
+  if (!emailSubmitted && (requiredFields.length > 0 || linkValidated)) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 flex items-center justify-center p-4">
+        <Card className="w-full max-w-md">
+          <CardHeader className="text-center">
+            <div className="mx-auto w-12 h-12 bg-primary/10 rounded-full flex items-center justify-center mb-4">
+              <Mail className="h-6 w-6 text-primary" />
+            </div>
+            <CardTitle>Verify Your Identity</CardTitle>
+            <CardDescription>
+              Please enter your email address to access this secure data room.
+              Your email must be pre-approved by the administrator.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="email">Email Address *</Label>
+              <Input
+                id="email"
+                type="email"
+                value={visitorInfo.email}
+                onChange={(e) => setVisitorInfo({ ...visitorInfo, email: e.target.value })}
+                placeholder="your@email.com"
+              />
+            </div>
+
             {requiredFields.includes("name") && (
               <div className="space-y-2">
-                <Label htmlFor="name">Name *</Label>
+                <Label htmlFor="name">Name</Label>
                 <Input
                   id="name"
                   value={visitorInfo.name}
@@ -179,10 +244,10 @@ export default function DataRoomPublic() {
                 />
               </div>
             )}
-            
+
             {requiredFields.includes("company") && (
               <div className="space-y-2">
-                <Label htmlFor="company">Company *</Label>
+                <Label htmlFor="company">Company</Label>
                 <Input
                   id="company"
                   value={visitorInfo.company}
@@ -192,29 +257,87 @@ export default function DataRoomPublic() {
               </div>
             )}
 
-            {(requiresPassword || requiredFields.length > 0) && (
-              <Button 
-                className="w-full" 
-                onClick={handleAccessSubmit}
-                disabled={accessMutation.isPending}
-              >
-                {accessMutation.isPending ? "Verifying..." : "Continue"}
-              </Button>
-            )}
-
-            {!requiresPassword && requiredFields.length === 0 && accessMutation.isPending && (
-              <div className="text-center text-muted-foreground">
-                Loading...
-              </div>
-            )}
+            <Button
+              className="w-full"
+              onClick={() => {
+                if (!linkValidated) {
+                  handleAccessSubmit();
+                } else {
+                  handleEmailSubmit();
+                }
+              }}
+              disabled={accessMutation.isPending || !visitorInfo.email}
+            >
+              {accessMutation.isPending ? "Verifying..." : "Continue"}
+            </Button>
           </CardContent>
         </Card>
       </div>
     );
   }
 
-  // NDA Gate with E-Signature
-  if (content?.room.requiresNda && !ndaAccepted) {
+  // Gate 3: Loading access status
+  if (emailSubmitted && accessStatusLoading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 flex items-center justify-center p-4">
+        <Card className="w-full max-w-md">
+          <CardHeader className="text-center">
+            <div className="mx-auto w-12 h-12 bg-primary/10 rounded-full flex items-center justify-center mb-4">
+              <Shield className="h-6 w-6 text-primary animate-pulse" />
+            </div>
+            <CardTitle>Verifying Access</CardTitle>
+            <CardDescription>
+              Checking your email approval and NDA status...
+            </CardDescription>
+          </CardHeader>
+        </Card>
+      </div>
+    );
+  }
+
+  // Gate 4: Email not approved - awaiting approval
+  if (emailSubmitted && accessStatus && !accessStatus.emailApproved) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 flex items-center justify-center p-4">
+        <Card className="w-full max-w-md">
+          <CardHeader className="text-center">
+            <div className="mx-auto w-12 h-12 bg-amber-500/10 rounded-full flex items-center justify-center mb-4">
+              <Clock className="h-6 w-6 text-amber-500" />
+            </div>
+            <CardTitle>Access Pending Approval</CardTitle>
+            <CardDescription className="space-y-2">
+              <p>Your email <strong>{visitorInfo.email}</strong> has not been approved for access to this data room.</p>
+              <p className="text-sm">Please contact the data room administrator to request access.</p>
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {accessStatus.roomName && (
+              <div className="bg-muted/50 rounded-lg p-4">
+                <h4 className="font-medium">{accessStatus.roomName}</h4>
+                {accessStatus.roomDescription && (
+                  <p className="text-sm text-muted-foreground mt-1">{accessStatus.roomDescription}</p>
+                )}
+              </div>
+            )}
+            <div className="text-center">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setEmailSubmitted(false);
+                  setVisitorInfo({ ...visitorInfo, email: "" });
+                }}
+              >
+                Try a Different Email
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  // Gate 5: Email approved but NDA not signed
+  if (emailSubmitted && accessStatus && accessStatus.emailApproved && !accessStatus.ndaSigned && !ndaAccepted) {
     return (
       <NdaSigningGate
         dataRoomId={dataRoomId!}
@@ -222,9 +345,89 @@ export default function DataRoomPublic() {
         visitorEmail={visitorInfo.email}
         visitorName={visitorInfo.name}
         visitorCompany={visitorInfo.company}
-        ndaText={content.room.ndaText}
-        onSigned={() => setNdaAccepted(true)}
+        ndaText={accessStatus.ndaText || null}
+        ndaDocumentId={accessStatus.ndaDocumentId}
+        roomName={accessStatus.roomName}
+        roomDescription={accessStatus.roomDescription}
+        logoUrl={accessStatus.logoUrl}
+        brandColor={accessStatus.brandColor}
+        onSigned={() => {
+          setNdaAccepted(true);
+          refetchAccessStatus();
+          setAccessGranted(true);
+        }}
       />
+    );
+  }
+
+  // Gate 6: Show loading while waiting for initial validation
+  if (!accessGranted && accessMutation.isPending) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 flex items-center justify-center p-4">
+        <Card className="w-full max-w-md">
+          <CardHeader className="text-center">
+            <div className="mx-auto w-12 h-12 bg-primary/10 rounded-full flex items-center justify-center mb-4">
+              <Shield className="h-6 w-6 text-primary animate-pulse" />
+            </div>
+            <CardTitle>Secure Data Room</CardTitle>
+            <CardDescription>Verifying access...</CardDescription>
+          </CardHeader>
+        </Card>
+      </div>
+    );
+  }
+
+  // Gate 7: Content error handling
+  if (accessGranted && contentError) {
+    const errorMessage = contentError.message;
+    if (errorMessage === 'NDA_REQUIRED') {
+      // Refresh access status to show NDA gate
+      setAccessGranted(false);
+      setNdaAccepted(false);
+      return null;
+    }
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 flex items-center justify-center p-4">
+        <Card className="w-full max-w-md">
+          <CardHeader className="text-center">
+            <div className="mx-auto w-12 h-12 bg-red-500/10 rounded-full flex items-center justify-center mb-4">
+              <AlertCircle className="h-6 w-6 text-red-500" />
+            </div>
+            <CardTitle>Access Denied</CardTitle>
+            <CardDescription>{errorMessage}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button
+              variant="outline"
+              className="w-full"
+              onClick={() => {
+                setEmailSubmitted(false);
+                setAccessGranted(false);
+                setVisitorInfo({ ...visitorInfo, email: "" });
+              }}
+            >
+              Try a Different Email
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  // Gate 8: Wait for access to be granted
+  if (!accessGranted) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 flex items-center justify-center p-4">
+        <Card className="w-full max-w-md">
+          <CardHeader className="text-center">
+            <div className="mx-auto w-12 h-12 bg-primary/10 rounded-full flex items-center justify-center mb-4">
+              <Shield className="h-6 w-6 text-primary" />
+            </div>
+            <CardTitle>Secure Data Room</CardTitle>
+            <CardDescription>Initializing...</CardDescription>
+          </CardHeader>
+        </Card>
+      </div>
     );
   }
 
@@ -431,6 +634,11 @@ function NdaSigningGate({
   visitorName,
   visitorCompany,
   ndaText,
+  ndaDocumentId,
+  roomName,
+  roomDescription,
+  logoUrl,
+  brandColor,
   onSigned,
 }: {
   dataRoomId: number;
@@ -439,6 +647,11 @@ function NdaSigningGate({
   visitorName: string;
   visitorCompany: string;
   ndaText: string | null;
+  ndaDocumentId?: number | null;
+  roomName?: string | null;
+  roomDescription?: string | null;
+  logoUrl?: string | null;
+  brandColor?: string | null;
   onSigned: () => void;
 }) {
   const [step, setStep] = useState<'view' | 'sign'>('view');
@@ -452,7 +665,13 @@ function NdaSigningGate({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isDrawing, setIsDrawing] = useState(false);
 
-  const { data: activeNda } = trpc.nda.documents.getActive.useQuery({ dataRoomId });
+  // Use provided ndaDocumentId or fetch active NDA
+  const { data: activeNda } = trpc.nda.documents.getActive.useQuery(
+    { dataRoomId },
+    { enabled: !ndaDocumentId }
+  );
+  const effectiveNdaId = ndaDocumentId || activeNda?.id;
+
   const { data: existingSignature } = trpc.nda.signatures.checkSigned.useQuery(
     { dataRoomId, email: signerEmail },
     { enabled: !!signerEmail }
@@ -513,7 +732,7 @@ function NdaSigningGate({
   };
 
   const handleSign = async () => {
-    if (!activeNda) {
+    if (!effectiveNdaId) {
       toast.error('No NDA document found');
       return;
     }
@@ -534,7 +753,7 @@ function NdaSigningGate({
     }
 
     signMutation.mutate({
-      ndaDocumentId: activeNda.id,
+      ndaDocumentId: effectiveNdaId,
       dataRoomId,
       visitorId: visitorId || undefined,
       signerName,
@@ -564,13 +783,29 @@ function NdaSigningGate({
     <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 flex items-center justify-center p-4">
       <Card className="w-full max-w-2xl">
         <CardHeader>
+          {/* Room branding */}
+          {(logoUrl || roomName) && (
+            <div className="flex items-center gap-3 mb-4 pb-4 border-b">
+              {logoUrl && (
+                <img src={logoUrl} alt="Logo" className="h-10 w-auto" />
+              )}
+              {roomName && (
+                <div>
+                  <h3 className="font-semibold">{roomName}</h3>
+                  {roomDescription && (
+                    <p className="text-sm text-muted-foreground">{roomDescription}</p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
           <div className="flex items-center gap-2">
             <Shield className="h-6 w-6 text-primary" />
-            <CardTitle>Non-Disclosure Agreement</CardTitle>
+            <CardTitle>Non-Disclosure Agreement Required</CardTitle>
           </div>
           <CardDescription>
             {step === 'view'
-              ? 'Please review the NDA before signing'
+              ? 'Your email has been approved. Please review and sign the NDA to access the data room.'
               : 'Complete your signature to proceed'}
           </CardDescription>
         </CardHeader>

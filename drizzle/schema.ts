@@ -2203,6 +2203,8 @@ export const dataRooms = mysqlTable("data_rooms", {
   password: varchar("password", { length: 255 }), // Hashed password for protected rooms
   requiresNda: boolean("requiresNda").default(false).notNull(),
   ndaText: text("ndaText"),
+  // Strict access control - requires BOTH approved email (invitation) AND signed NDA
+  requireApprovedAccess: boolean("requireApprovedAccess").default(true).notNull(),
   
   // Customization
   logoUrl: varchar("logoUrl", { length: 512 }),
