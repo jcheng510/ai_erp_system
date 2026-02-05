@@ -129,13 +129,18 @@ export async function scanInbox(
   let client: ImapFlow | null = null;
 
   try {
-    // Create IMAP client
+    // Create IMAP client with proper TLS configuration
     client = new ImapFlow({
       host: config.host,
       port: config.port,
       secure: config.secure,
       auth: config.auth,
       logger: false, // Disable verbose logging
+      tls: {
+        servername: config.host, // Required for SNI (Server Name Indication)
+        rejectUnauthorized: true, // Verify SSL certificates
+      },
+      connectionTimeout: 30000, // 30 seconds timeout
     });
 
     // Connect to server
@@ -201,7 +206,7 @@ export async function scanInbox(
 
     result.success = true;
   } catch (error: any) {
-    result.errors.push(`IMAP connection error: ${error.message}`);
+    result.errors.push(`IMAP connection error: ${getImapErrorMessage(error, config.host)}`);
   } finally {
     // Close connection
     if (client) {
@@ -418,6 +423,43 @@ export async function scanAndCategorizeInbox(
 }
 
 /**
+ * Get user-friendly error message for IMAP errors
+ */
+function getImapErrorMessage(error: Error, host: string): string {
+  const message = error.message?.toLowerCase() || "";
+
+  // Gmail-specific errors
+  if (host.includes("gmail.com")) {
+    if (message.includes("invalid credentials") || message.includes("authentication failed") || message.includes("login")) {
+      return "Authentication failed. For Gmail, you must use an App Password (not your regular password). Go to Google Account > Security > 2-Step Verification > App passwords to generate one.";
+    }
+    if (message.includes("imap access") || message.includes("disabled")) {
+      return "IMAP access is disabled for this Gmail account. Enable it in Gmail Settings > See all settings > Forwarding and POP/IMAP > Enable IMAP.";
+    }
+  }
+
+  // Generic errors
+  if (message.includes("timeout") || message.includes("timed out")) {
+    return "Connection timed out. Please check your network connection and firewall settings.";
+  }
+  if (message.includes("certificate") || message.includes("ssl") || message.includes("tls")) {
+    return "SSL/TLS certificate error. The server's security certificate could not be verified.";
+  }
+  if (message.includes("refused") || message.includes("econnrefused")) {
+    return "Connection refused. Please verify the IMAP host and port are correct.";
+  }
+  if (message.includes("not found") || message.includes("enotfound") || message.includes("dns")) {
+    return "Server not found. Please verify the IMAP host address is correct.";
+  }
+  if (message.includes("invalid credentials") || message.includes("authentication failed") || message.includes("login")) {
+    return "Invalid username or password. Please verify your credentials.";
+  }
+
+  // Return original message if no specific match
+  return error.message;
+}
+
+/**
  * Test IMAP connection
  */
 export async function testImapConnection(config: EmailInboxConfig): Promise<{
@@ -428,16 +470,22 @@ export async function testImapConnection(config: EmailInboxConfig): Promise<{
   let client: ImapFlow | null = null;
 
   try {
+    // Create IMAP client with proper TLS configuration for testing
     client = new ImapFlow({
       host: config.host,
       port: config.port,
       secure: config.secure,
       auth: config.auth,
       logger: false,
+      tls: {
+        servername: config.host, // Required for SNI (Server Name Indication)
+        rejectUnauthorized: true, // Verify SSL certificates
+      },
+      connectionTimeout: 30000, // 30 seconds timeout
     });
 
     await client.connect();
-    
+
     // List mailboxes
     const mailboxes: string[] = [];
     const mailboxList = await client.list();
@@ -447,7 +495,7 @@ export async function testImapConnection(config: EmailInboxConfig): Promise<{
 
     return { success: true, mailboxes };
   } catch (error: any) {
-    return { success: false, error: error.message };
+    return { success: false, error: getImapErrorMessage(error, config.host) };
   } finally {
     if (client) {
       try {
