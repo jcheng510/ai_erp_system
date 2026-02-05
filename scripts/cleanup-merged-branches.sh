@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Script to clean up merged branches
 # This helps clean up branches that were merged before the automatic deletion workflow was in place
