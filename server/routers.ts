@@ -11,6 +11,7 @@ import * as emailService from "./_core/emailService";
 import * as sendgridProvider from "./_core/sendgridProvider";
 import { parseUploadedDocument, importPurchaseOrder, importFreightInvoice, importVendorInvoice, importCustomsDocument, matchLineItemsToMaterials } from "./documentImportService";
 import { processAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingActions, type AIAgentContext } from "./aiAgentService";
+import { autonomousWorkflowRouter } from "./autonomousWorkflowRouter";
 import * as db from "./db";
 import { storagePut } from "./storage";
 import { nanoid } from "nanoid";
@@ -154,7 +155,10 @@ function generateNumber(prefix: string) {
 
 export const appRouter = router({
   system: systemRouter,
-  
+
+  // Autonomous Supply Chain Workflows
+  autonomousWorkflows: autonomousWorkflowRouter,
+
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),
     logout: publicProcedure.mutation(({ ctx }) => {

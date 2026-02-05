@@ -1,5 +1,6 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { NotificationCenter } from "@/components/NotificationCenter";
+import { AutonomousAgentBar } from "@/components/AutonomousAgentBar";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -475,6 +476,9 @@ function DashboardLayoutContent({
       </div>
 
       <SidebarInset className="flex flex-col">
+        {/* Autonomous Agent Status Bar */}
+        <AutonomousAgentBar />
+
         {/* Top header bar */}
         <header className="flex h-14 items-center justify-between border-b border-border/40 bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/60 sticky top-0 z-40">
           <div className="flex items-center gap-3">
