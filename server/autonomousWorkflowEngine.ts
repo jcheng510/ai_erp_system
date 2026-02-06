@@ -13,13 +13,16 @@ import {
   exceptionLog,
   supplierPerformance,
   workflowNotifications,
+  users,
 } from "../drizzle/schema";
 import { eq, and, lt, lte, gte, desc, asc, sql, isNull, or, inArray } from "drizzle-orm";
-import { sendEmail } from "./_core/email";
+import { sendEmail, isEmailConfigured, formatEmailHtml } from "./_core/email";
 
 // ============================================
 // AUTONOMOUS WORKFLOW ENGINE
 // Core orchestration for supply chain automation
+// with retry, concurrency, circuit breaker,
+// batch AI, and workflow resumption
 // ============================================
 
 export interface WorkflowContext {
@@ -30,6 +33,8 @@ export interface WorkflowContext {
   stepResults: Map<number, any>;
   decisions: any[];
   exceptions: any[];
+  tokensUsed: number;
+  resumeFromStep?: number;
 }
 
 export interface StepResult {
@@ -59,12 +64,127 @@ export interface WorkflowResult {
 }
 
 // ============================================
+// CIRCUIT BREAKER
+// Protects against cascading LLM failures
+// ============================================
+
+type CircuitState = "closed" | "open" | "half_open";
+
+class CircuitBreaker {
+  private state: CircuitState = "closed";
+  private failureCount = 0;
+  private lastFailureTime = 0;
+  private readonly failureThreshold: number;
+  private readonly resetTimeoutMs: number;
+  private readonly halfOpenMaxAttempts: number;
+  private halfOpenAttempts = 0;
+
+  constructor(
+    failureThreshold = 5,
+    resetTimeoutMs = 60_000,
+    halfOpenMaxAttempts = 2
+  ) {
+    this.failureThreshold = failureThreshold;
+    this.resetTimeoutMs = resetTimeoutMs;
+    this.halfOpenMaxAttempts = halfOpenMaxAttempts;
+  }
+
+  canExecute(): boolean {
+    if (this.state === "closed") return true;
+    if (this.state === "open") {
+      // Check if enough time has passed to try half-open
+      if (Date.now() - this.lastFailureTime >= this.resetTimeoutMs) {
+        this.state = "half_open";
+        this.halfOpenAttempts = 0;
+        console.log("[CircuitBreaker] Transitioning to half-open state");
+        return true;
+      }
+      return false;
+    }
+    // half_open: allow limited attempts
+    return this.halfOpenAttempts < this.halfOpenMaxAttempts;
+  }
+
+  recordSuccess(): void {
+    if (this.state === "half_open") {
+      this.state = "closed";
+      this.failureCount = 0;
+      console.log("[CircuitBreaker] Circuit closed (recovered)");
+    }
+    this.failureCount = Math.max(0, this.failureCount - 1);
+  }
+
+  recordFailure(): void {
+    this.failureCount++;
+    this.lastFailureTime = Date.now();
+
+    if (this.state === "half_open") {
+      this.halfOpenAttempts++;
+      if (this.halfOpenAttempts >= this.halfOpenMaxAttempts) {
+        this.state = "open";
+        console.log("[CircuitBreaker] Circuit re-opened after half-open failures");
+      }
+    } else if (this.failureCount >= this.failureThreshold) {
+      this.state = "open";
+      console.log(`[CircuitBreaker] Circuit opened after ${this.failureCount} failures`);
+    }
+  }
+
+  getState(): { state: CircuitState; failureCount: number; lastFailure: number } {
+    return { state: this.state, failureCount: this.failureCount, lastFailure: this.lastFailureTime };
+  }
+}
+
+// ============================================
+// CONCURRENCY CONTROLLER
+// Prevents duplicate runs of the same workflow
+// ============================================
+
+class ConcurrencyController {
+  private activeRuns = new Map<number, Set<number>>(); // workflowId -> Set<runId>
+
+  acquire(workflowId: number, maxConcurrent: number, runId: number): boolean {
+    const active = this.activeRuns.get(workflowId) || new Set();
+    if (active.size >= maxConcurrent) {
+      return false;
+    }
+    active.add(runId);
+    this.activeRuns.set(workflowId, active);
+    return true;
+  }
+
+  release(workflowId: number, runId: number): void {
+    const active = this.activeRuns.get(workflowId);
+    if (active) {
+      active.delete(runId);
+      if (active.size === 0) {
+        this.activeRuns.delete(workflowId);
+      }
+    }
+  }
+
+  getActiveCount(workflowId: number): number {
+    return this.activeRuns.get(workflowId)?.size || 0;
+  }
+
+  getTotalActive(): number {
+    let total = 0;
+    for (const [, runs] of Array.from(this.activeRuns)) {
+      total += runs.size;
+    }
+    return total;
+  }
+}
+
+// ============================================
 // WORKFLOW EXECUTION ENGINE
 // ============================================
 
 export class WorkflowEngine {
   private db: any;
   private isInitialized = false;
+  private circuitBreaker = new CircuitBreaker();
+  private concurrency = new ConcurrencyController();
 
   async initialize(): Promise<void> {
     this.db = await getDb();
@@ -79,7 +199,10 @@ export class WorkflowEngine {
     }
   }
 
-  // Start a new workflow run
+  // ============================================
+  // WORKFLOW EXECUTION WITH RETRY
+  // ============================================
+
   async startWorkflow(
     workflowId: number,
     triggeredBy: "schedule" | "event" | "threshold" | "manual" | "dependency",
@@ -102,6 +225,54 @@ export class WorkflowEngine {
       return { success: false, runId: 0, status: "failed", itemsProcessed: 0, itemsSucceeded: 0, itemsFailed: 0, error: "Workflow is disabled" };
     }
 
+    const maxRetries = workflow.retryAttempts || 3;
+    const retryDelayMs = (workflow.retryDelayMinutes || 5) * 60_000;
+
+    // Attempt execution with retry and exponential backoff
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      const result = await this.executeWorkflowAttempt(
+        workflow,
+        triggeredBy,
+        inputData,
+        triggeredByUserId,
+        attempt,
+        attempt > 1 ? undefined : undefined // parentRunId for retries
+      );
+
+      if (result.success || result.status === "awaiting_approval") {
+        return result;
+      }
+
+      // Don't retry if it's a business-logic failure (not a transient error)
+      const isTransient = result.error?.includes("LLM invoke failed") ||
+        result.error?.includes("ECONNREFUSED") ||
+        result.error?.includes("timeout") ||
+        result.error?.includes("Circuit breaker");
+
+      if (!isTransient || attempt === maxRetries) {
+        // Move to dead letter queue
+        await this.moveToDeadLetterQueue(result.runId, workflow, result.error || "Unknown error");
+        return result;
+      }
+
+      // Exponential backoff: delay * 2^(attempt-1)
+      const backoffMs = retryDelayMs * Math.pow(2, attempt - 1);
+      console.log(`[WorkflowEngine] Retry ${attempt}/${maxRetries} for ${workflow.name} in ${backoffMs}ms`);
+      await new Promise(resolve => setTimeout(resolve, backoffMs));
+    }
+
+    // Should not reach here, but safety return
+    return { success: false, runId: 0, status: "failed", itemsProcessed: 0, itemsSucceeded: 0, itemsFailed: 0, error: "Max retries exceeded" };
+  }
+
+  private async executeWorkflowAttempt(
+    workflow: typeof supplyChainWorkflows.$inferSelect,
+    triggeredBy: "schedule" | "event" | "threshold" | "manual" | "dependency",
+    inputData: Record<string, any>,
+    triggeredByUserId: number | undefined,
+    attempt: number,
+    parentRunId?: number
+  ): Promise<WorkflowResult> {
     // Generate run number
     const runNumber = `WF-${workflow.workflowType.toUpperCase().slice(0, 4)}-${Date.now().toString(36).toUpperCase()}`;
 
@@ -109,7 +280,7 @@ export class WorkflowEngine {
     const [run] = await this.db
       .insert(workflowRuns)
       .values({
-        workflowId,
+        workflowId: workflow.id,
         runNumber,
         status: "running",
         triggeredBy,
@@ -117,28 +288,46 @@ export class WorkflowEngine {
         triggeredByUserId,
         startedAt: new Date(),
         inputData: JSON.stringify(inputData),
-        attemptNumber: 1,
+        attemptNumber: attempt,
+        parentRunId,
       })
       .$returningId();
 
     const runId = run.id;
+    const startTime = Date.now();
 
-    console.log(`[WorkflowEngine] Starting workflow ${workflow.name} (run ${runNumber})`);
+    // Check concurrency limits
+    const maxConcurrent = workflow.maxConcurrentRuns || 1;
+    if (!this.concurrency.acquire(workflow.id, maxConcurrent, runId)) {
+      await this.db
+        .update(workflowRuns)
+        .set({ status: "cancelled", errorMessage: "Concurrency limit reached" })
+        .where(eq(workflowRuns.id, runId));
+      return {
+        success: false, runId, status: "cancelled",
+        itemsProcessed: 0, itemsSucceeded: 0, itemsFailed: 0,
+        error: "Concurrency limit reached",
+      };
+    }
+
+    console.log(`[WorkflowEngine] Starting ${workflow.name} (run ${runNumber}, attempt ${attempt})`);
 
     // Create workflow context
     const context: WorkflowContext = {
-      workflowId,
+      workflowId: workflow.id,
       runId,
       config: workflow.executionConfig ? JSON.parse(workflow.executionConfig) : {},
       inputData,
       stepResults: new Map(),
       decisions: [],
       exceptions: [],
+      tokensUsed: 0,
     };
 
     try {
       // Execute workflow based on type
       const result = await this.executeWorkflowByType(workflow, context);
+      const durationMs = Date.now() - startTime;
 
       // Update workflow run with results
       await this.db
@@ -146,7 +335,7 @@ export class WorkflowEngine {
         .set({
           status: result.success ? "completed" : (result.pendingApprovals ? "awaiting_approval" : "failed"),
           completedAt: new Date(),
-          durationMs: Date.now() - new Date(run.startedAt || Date.now()).getTime(),
+          durationMs,
           outputData: JSON.stringify(result.outputData),
           itemsProcessed: result.itemsProcessed,
           itemsSucceeded: result.itemsSucceeded,
@@ -164,7 +353,16 @@ export class WorkflowEngine {
           successCount: result.success ? sql`${supplyChainWorkflows.successCount} + 1` : supplyChainWorkflows.successCount,
           failureCount: result.success ? supplyChainWorkflows.failureCount : sql`${supplyChainWorkflows.failureCount} + 1`,
         })
-        .where(eq(supplyChainWorkflows.id, workflowId));
+        .where(eq(supplyChainWorkflows.id, workflow.id));
+
+      // Record metrics
+      await this.recordMetrics(
+        workflow.id,
+        result,
+        durationMs,
+        context.decisions.length,
+        context.tokensUsed
+      );
 
       // Emit completion event
       await this.emitEvent(
@@ -179,12 +377,14 @@ export class WorkflowEngine {
       return { ...result, runId };
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
+      const durationMs = Date.now() - startTime;
 
       await this.db
         .update(workflowRuns)
         .set({
           status: "failed",
           completedAt: new Date(),
+          durationMs,
           errorMessage,
           errorDetails: JSON.stringify({ stack: err instanceof Error ? err.stack : undefined }),
         })
@@ -193,17 +393,15 @@ export class WorkflowEngine {
       await this.db
         .update(supplyChainWorkflows)
         .set({ failureCount: sql`${supplyChainWorkflows.failureCount} + 1` })
-        .where(eq(supplyChainWorkflows.id, workflowId));
+        .where(eq(supplyChainWorkflows.id, workflow.id));
 
       return {
-        success: false,
-        runId,
-        status: "failed",
-        itemsProcessed: 0,
-        itemsSucceeded: 0,
-        itemsFailed: 0,
+        success: false, runId, status: "failed",
+        itemsProcessed: 0, itemsSucceeded: 0, itemsFailed: 0,
         error: errorMessage,
       };
+    } finally {
+      this.concurrency.release(workflow.id, runId);
     }
   }
 
@@ -214,44 +412,110 @@ export class WorkflowEngine {
   ): Promise<WorkflowResult> {
     const { workflowProcessors } = await import("./workflowProcessors");
 
-    switch (workflow.workflowType) {
-      case "demand_forecasting":
-        return workflowProcessors.demandForecasting.execute(this, context);
-      case "production_planning":
-        return workflowProcessors.productionPlanning.execute(this, context);
-      case "material_requirements":
-        return workflowProcessors.materialRequirements.execute(this, context);
-      case "procurement":
-        return workflowProcessors.procurement.execute(this, context);
-      case "inventory_reorder":
-        return workflowProcessors.inventoryReorder.execute(this, context);
-      case "inventory_transfer":
-        return workflowProcessors.inventoryTransfer.execute(this, context);
-      case "inventory_optimization":
-        return workflowProcessors.inventoryOptimization.execute(this, context);
-      case "work_order_generation":
-        return workflowProcessors.workOrderGeneration.execute(this, context);
-      case "production_scheduling":
-        return workflowProcessors.productionScheduling.execute(this, context);
-      case "freight_procurement":
-        return workflowProcessors.freightProcurement.execute(this, context);
-      case "shipment_tracking":
-        return workflowProcessors.shipmentTracking.execute(this, context);
-      case "order_fulfillment":
-        return workflowProcessors.orderFulfillment.execute(this, context);
-      case "supplier_management":
-        return workflowProcessors.supplierManagement.execute(this, context);
-      case "quality_inspection":
-        return workflowProcessors.qualityInspection.execute(this, context);
-      case "invoice_matching":
-        return workflowProcessors.invoiceMatching.execute(this, context);
-      case "payment_processing":
-        return workflowProcessors.paymentProcessing.execute(this, context);
-      case "exception_handling":
-        return workflowProcessors.exceptionHandling.execute(this, context);
-      default:
-        throw new Error(`Unknown workflow type: ${workflow.workflowType}`);
+    const processorMap: Record<string, any> = {
+      demand_forecasting: workflowProcessors.demandForecasting,
+      production_planning: workflowProcessors.productionPlanning,
+      material_requirements: workflowProcessors.materialRequirements,
+      procurement: workflowProcessors.procurement,
+      inventory_reorder: workflowProcessors.inventoryReorder,
+      inventory_transfer: workflowProcessors.inventoryTransfer,
+      inventory_optimization: workflowProcessors.inventoryOptimization,
+      work_order_generation: workflowProcessors.workOrderGeneration,
+      production_scheduling: workflowProcessors.productionScheduling,
+      freight_procurement: workflowProcessors.freightProcurement,
+      shipment_tracking: workflowProcessors.shipmentTracking,
+      order_fulfillment: workflowProcessors.orderFulfillment,
+      supplier_management: workflowProcessors.supplierManagement,
+      quality_inspection: workflowProcessors.qualityInspection,
+      invoice_matching: workflowProcessors.invoiceMatching,
+      payment_processing: workflowProcessors.paymentProcessing,
+      exception_handling: workflowProcessors.exceptionHandling,
+    };
+
+    const processor = processorMap[workflow.workflowType];
+    if (!processor) {
+      throw new Error(`Unknown workflow type: ${workflow.workflowType}`);
     }
+    return processor.execute(this, context);
+  }
+
+  // ============================================
+  // DEAD LETTER QUEUE
+  // Failed workflows that exhausted retries
+  // ============================================
+
+  private async moveToDeadLetterQueue(
+    runId: number,
+    workflow: typeof supplyChainWorkflows.$inferSelect,
+    error: string
+  ): Promise<void> {
+    this.ensureInitialized();
+
+    // Mark the run as permanently failed
+    await this.db
+      .update(workflowRuns)
+      .set({
+        status: "failed",
+        errorMessage: `[DLQ] ${error}`,
+        errorDetails: JSON.stringify({
+          deadLetterQueue: true,
+          reason: "Max retries exhausted",
+          workflowType: workflow.workflowType,
+          timestamp: new Date().toISOString(),
+        }),
+      })
+      .where(eq(workflowRuns.id, runId));
+
+    // Send notification about the DLQ item
+    await this.sendNotification(
+      runId,
+      "error",
+      `Workflow Failed Permanently: ${workflow.name}`,
+      `Workflow "${workflow.name}" failed after all retry attempts. Error: ${error}. Manual intervention required.`,
+      ["admin", "ops"],
+      true,
+      `/autonomous/exceptions`
+    );
+
+    console.log(`[WorkflowEngine] Run ${runId} moved to dead letter queue: ${error}`);
+  }
+
+  // ============================================
+  // WORKFLOW RESUMPTION AFTER APPROVAL
+  // ============================================
+
+  async resumeAfterApproval(
+    runId: number,
+    approved: boolean
+  ): Promise<WorkflowResult | null> {
+    this.ensureInitialized();
+
+    const [run] = await this.db
+      .select()
+      .from(workflowRuns)
+      .where(eq(workflowRuns.id, runId));
+
+    if (!run || run.status !== "approved") {
+      return null;
+    }
+
+    const [workflow] = await this.db
+      .select()
+      .from(supplyChainWorkflows)
+      .where(eq(supplyChainWorkflows.id, run.workflowId));
+
+    if (!workflow || !approved) {
+      return null;
+    }
+
+    // Re-trigger the workflow with the original input + approval context
+    const originalInput = run.inputData ? JSON.parse(run.inputData) : {};
+    return this.startWorkflow(
+      workflow.id,
+      "dependency",
+      { ...originalInput, resumedFromRun: runId, approvalGranted: true },
+      run.approvedBy
+    );
   }
 
   // ============================================
@@ -266,6 +530,11 @@ export class WorkflowEngine {
     executor: () => Promise<StepResult>
   ): Promise<StepResult> {
     this.ensureInitialized();
+
+    // Skip steps if resuming from a later step
+    if (context.resumeFromStep && stepNumber < context.resumeFromStep) {
+      return { success: true, data: { skipped: true } };
+    }
 
     // Create step record
     const [step] = await this.db
@@ -294,6 +563,11 @@ export class WorkflowEngine {
 
     try {
       const result = await executor();
+
+      // Track tokens used
+      if (result.tokensUsed) {
+        context.tokensUsed += result.tokensUsed;
+      }
 
       await this.db
         .update(workflowSteps)
@@ -333,7 +607,7 @@ export class WorkflowEngine {
   }
 
   // ============================================
-  // AI DECISION MAKING
+  // AI DECISION MAKING (with circuit breaker)
   // ============================================
 
   async makeAIDecision(
@@ -345,13 +619,20 @@ export class WorkflowEngine {
   ): Promise<{ decision: any; reasoning: string; confidence: number }> {
     this.ensureInitialized();
 
-    const startTime = Date.now();
+    // Check circuit breaker
+    if (!this.circuitBreaker.canExecute()) {
+      const cbState = this.circuitBreaker.getState();
+      throw new Error(
+        `Circuit breaker is ${cbState.state}: LLM service unavailable (${cbState.failureCount} recent failures)`
+      );
+    }
 
-    const response = await invokeLLM({
-      messages: [
-        {
-          role: "system",
-          content: `You are an expert supply chain AI making autonomous decisions for an ERP system.
+    try {
+      const response = await invokeLLM({
+        messages: [
+          {
+            role: "system",
+            content: `You are an expert supply chain AI making autonomous decisions for an ERP system.
 You must analyze the data provided and make the best decision based on:
 - Cost optimization
 - Lead time efficiency
@@ -360,48 +641,171 @@ You must analyze the data provided and make the best decision based on:
 - Business rules and constraints
 
 Always provide clear reasoning for your decision.`,
+          },
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "decision_response",
+            strict: true,
+            schema: responseSchema,
+          },
         },
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
-      response_format: {
-        type: "json_schema",
-        json_schema: {
-          name: "decision_response",
-          strict: true,
-          schema: responseSchema,
+      });
+
+      this.circuitBreaker.recordSuccess();
+
+      const content = response.choices[0].message.content;
+      const decision = JSON.parse(typeof content === "string" ? content : "{}");
+      const tokensUsed = response.usage?.total_tokens || 0;
+      context.tokensUsed += tokensUsed;
+
+      // Log the decision
+      await this.db.insert(autonomousDecisions).values({
+        runId: context.runId,
+        decisionType,
+        decisionContext: prompt,
+        optionsConsidered: JSON.stringify(options),
+        chosenOption: JSON.stringify(decision.choice || decision),
+        aiReasoning: decision.reasoning || "",
+        confidence: (decision.confidence || 85).toString(),
+      });
+
+      context.decisions.push({
+        type: decisionType,
+        decision: decision.choice || decision,
+        reasoning: decision.reasoning,
+        confidence: decision.confidence || 85,
+        tokensUsed,
+      });
+
+      return {
+        decision: decision.choice || decision,
+        reasoning: decision.reasoning || "",
+        confidence: decision.confidence || 85,
+      };
+    } catch (err) {
+      this.circuitBreaker.recordFailure();
+      throw err;
+    }
+  }
+
+  // ============================================
+  // BATCH AI DECISION MAKING
+  // Process multiple items in a single LLM call
+  // ============================================
+
+  async makeBatchAIDecision(
+    context: WorkflowContext,
+    decisionType: string,
+    batchPrompt: string,
+    items: Array<{ id: number | string; data: string }>,
+    perItemSchema: any
+  ): Promise<Array<{ itemId: number | string; decision: any; reasoning: string; confidence: number }>> {
+    this.ensureInitialized();
+
+    if (items.length === 0) return [];
+
+    // Build a combined prompt for all items
+    const itemDescriptions = items
+      .map((item, idx) => `[Item ${idx + 1} (ID: ${item.id})]\n${item.data}`)
+      .join("\n\n");
+
+    const batchSchema = {
+      type: "object",
+      properties: {
+        results: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              itemId: { type: "string" },
+              ...perItemSchema.properties,
+            },
+            required: ["itemId", ...(perItemSchema.required || [])],
+            additionalProperties: false,
+          },
         },
       },
-    });
-
-    const content = response.choices[0].message.content;
-    const decision = JSON.parse(typeof content === "string" ? content : "{}");
-
-    // Log the decision
-    await this.db.insert(autonomousDecisions).values({
-      runId: context.runId,
-      decisionType,
-      decisionContext: prompt,
-      optionsConsidered: JSON.stringify(options),
-      chosenOption: JSON.stringify(decision.choice || decision),
-      aiReasoning: decision.reasoning || "",
-      confidence: (decision.confidence || 85).toString(),
-    });
-
-    context.decisions.push({
-      type: decisionType,
-      decision: decision.choice || decision,
-      reasoning: decision.reasoning,
-      confidence: decision.confidence || 85,
-    });
-
-    return {
-      decision: decision.choice || decision,
-      reasoning: decision.reasoning || "",
-      confidence: decision.confidence || 85,
+      required: ["results"],
+      additionalProperties: false,
     };
+
+    // Check circuit breaker
+    if (!this.circuitBreaker.canExecute()) {
+      throw new Error("Circuit breaker is open: LLM service unavailable");
+    }
+
+    try {
+      const response = await invokeLLM({
+        messages: [
+          {
+            role: "system",
+            content: `You are an expert supply chain AI making autonomous decisions for an ERP system.
+Process ALL items in the batch and provide individual decisions for each.
+Always provide clear reasoning for each decision.`,
+          },
+          {
+            role: "user",
+            content: `${batchPrompt}\n\n${itemDescriptions}\n\nProvide a decision for EACH item listed above. Return the itemId exactly as shown.`,
+          },
+        ],
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "batch_decision_response",
+            strict: true,
+            schema: batchSchema,
+          },
+        },
+      });
+
+      this.circuitBreaker.recordSuccess();
+
+      const content = response.choices[0].message.content;
+      const parsed = JSON.parse(typeof content === "string" ? content : '{"results":[]}');
+      const tokensUsed = response.usage?.total_tokens || 0;
+      context.tokensUsed += tokensUsed;
+
+      const results = (parsed.results || []).map((r: any) => ({
+        itemId: r.itemId,
+        decision: r,
+        reasoning: r.reasoning || "",
+        confidence: r.confidence || 85,
+      }));
+
+      // Log as a single batch decision
+      await this.db.insert(autonomousDecisions).values({
+        runId: context.runId,
+        decisionType,
+        decisionContext: `[BATCH: ${items.length} items] ${batchPrompt}`,
+        optionsConsidered: JSON.stringify(items.map(i => i.id)),
+        chosenOption: JSON.stringify(results),
+        aiReasoning: `Batch decision for ${items.length} items`,
+        confidence: results.length > 0
+          ? (results.reduce((sum: number, r: any) => sum + r.confidence, 0) / results.length).toString()
+          : "0",
+      });
+
+      context.decisions.push({
+        type: decisionType,
+        decision: results,
+        reasoning: `Batch: ${items.length} items processed`,
+        confidence: results.length > 0
+          ? results.reduce((sum: number, r: any) => sum + r.confidence, 0) / results.length
+          : 0,
+        tokensUsed,
+      });
+
+      return results;
+    } catch (err) {
+      this.circuitBreaker.recordFailure();
+      throw err;
+    }
   }
 
   // ============================================
@@ -425,7 +829,6 @@ Always provide clear reasoning for your decision.`,
       );
 
     if (!threshold) {
-      // No threshold configured, default to auto-approve for small amounts
       return { required: amount > 500, autoApprove: amount <= 500 };
     }
 
@@ -489,7 +892,6 @@ Always provide clear reasoning for your decision.`,
     const approvalCheck = await this.checkApprovalRequired(approvalType, amount);
 
     if (approvalCheck.autoApprove) {
-      // Auto-approve
       const [approval] = await this.db
         .insert(workflowApprovalQueue)
         .values({
@@ -516,7 +918,7 @@ Always provide clear reasoning for your decision.`,
 
     // Require manual approval
     const escalateAt = new Date();
-    escalateAt.setMinutes(escalateAt.getMinutes() + 60); // Default 60 min escalation
+    escalateAt.setMinutes(escalateAt.getMinutes() + 60);
 
     const [approval] = await this.db
       .insert(workflowApprovalQueue)
@@ -548,14 +950,14 @@ Always provide clear reasoning for your decision.`,
       })
       .where(eq(workflowRuns.id, context.runId));
 
-    // Send notification
+    // Send notification with actual email
     await this.sendNotification(
       context.runId,
       "approval_needed",
       title,
       `Approval required for ${approvalType}: ${description}. Amount: $${amount.toFixed(2)}`,
       approvalCheck.roles || [],
-      true, // send email
+      true,
       `/approvals/${approval.id}`
     );
 
@@ -602,10 +1004,11 @@ Always provide clear reasoning for your decision.`,
       })
       .where(eq(workflowRuns.id, approval.runId));
 
+    // Resume workflow if approved
+    let runResumed = false;
     if (approved) {
-      // Resume workflow execution
-      // This would trigger continuation of the workflow from where it paused
-      // For now, we'll mark it as approved and let the scheduler pick it up
+      const result = await this.resumeAfterApproval(approval.runId, true);
+      runResumed = result !== null && result.success;
     }
 
     // Send notification about resolution
@@ -618,7 +1021,23 @@ Always provide clear reasoning for your decision.`,
       false
     );
 
-    return { success: true, runResumed: approved };
+    // Emit event for downstream event-triggered workflows
+    await this.emitEvent(
+      "approval_needed",
+      "info",
+      "workflow",
+      "approval",
+      approvalId,
+      {
+        approved,
+        approvalType: approval.approvalType,
+        runId: approval.runId,
+        entityType: approval.relatedEntityType,
+        entityId: approval.relatedEntityId,
+      }
+    );
+
+    return { success: true, runResumed };
   }
 
   // ============================================
@@ -648,7 +1067,7 @@ Always provide clear reasoning for your decision.`,
       )
       .orderBy(asc(exceptionRules.priority));
 
-    let matchedRule = rules[0]; // Use first matching rule
+    const matchedRule = rules[0];
 
     // Log the exception
     const [exception] = await this.db
@@ -675,7 +1094,6 @@ Always provide clear reasoning for your decision.`,
     });
 
     if (!matchedRule) {
-      // No rule found, route to human
       await this.sendNotification(
         context.runId,
         "exception",
@@ -685,13 +1103,12 @@ Always provide clear reasoning for your decision.`,
         true,
         `/exceptions/${exception.id}`
       );
-
       return { handled: false, action: "routed_to_human", requiresHuman: true };
     }
 
     // Apply resolution strategy
     switch (matchedRule.resolutionStrategy) {
-      case "auto_resolve":
+      case "auto_resolve": {
         const autoAction = matchedRule.autoResolutionAction
           ? JSON.parse(matchedRule.autoResolutionAction)
           : { action: "ignore" };
@@ -707,9 +1124,23 @@ Always provide clear reasoning for your decision.`,
           .where(eq(exceptionLog.id, exception.id));
 
         return { handled: true, action: autoAction.action, requiresHuman: false };
+      }
 
-      case "ai_decide":
-        // Use AI to decide resolution
+      case "ai_decide": {
+        if (!this.circuitBreaker.canExecute()) {
+          // Fallback to human when circuit breaker is open
+          await this.sendNotification(
+            context.runId,
+            "exception",
+            `Action Required: ${title}`,
+            `AI unavailable. ${description}`,
+            matchedRule.notifyRoles ? JSON.parse(matchedRule.notifyRoles) : ["ops"],
+            true,
+            `/exceptions/${exception.id}`
+          );
+          return { handled: false, action: "routed_to_human", requiresHuman: true };
+        }
+
         const aiDecision = await this.makeAIDecision(
           context,
           "exception_handling",
@@ -748,6 +1179,7 @@ Decide the best resolution action from: accept_variance, reject_and_reorder, esc
           action: aiDecision.decision,
           requiresHuman: aiDecision.confidence <= 70,
         };
+      }
 
       case "route_to_human":
         await this.sendNotification(
@@ -759,7 +1191,6 @@ Decide the best resolution action from: accept_variance, reject_and_reorder, esc
           true,
           `/exceptions/${exception.id}`
         );
-
         return { handled: false, action: "routed_to_human", requiresHuman: true };
 
       case "escalate":
@@ -781,7 +1212,6 @@ Decide the best resolution action from: accept_variance, reject_and_reorder, esc
           true,
           `/exceptions/${exception.id}`
         );
-
         return { handled: false, action: "escalated", requiresHuman: true };
 
       case "notify_and_continue":
@@ -848,7 +1278,7 @@ Decide the best resolution action from: accept_variance, reject_and_reorder, esc
   }
 
   // ============================================
-  // NOTIFICATIONS
+  // NOTIFICATIONS (with actual email dispatch)
   // ============================================
 
   async sendNotification(
@@ -874,10 +1304,31 @@ Decide the best resolution action from: accept_variance, reject_and_reorder, esc
       actionLabel: actionUrl ? "View Details" : undefined,
     });
 
-    // TODO: Actually send email if configured
-    // if (sendEmailNotification) {
-    //   await sendEmail({ ... });
-    // }
+    // Actually send email notifications to users with matching roles
+    if (sendEmailNotification && isEmailConfigured() && targetRoles.length > 0) {
+      try {
+        const targetUsers = await this.db
+          .select({ email: users.email, name: users.name })
+          .from(users)
+          .where(inArray(users.role, targetRoles as any[]));
+
+        for (const user of targetUsers) {
+          if (user.email) {
+            await sendEmail({
+              to: user.email,
+              subject: `[ERP Workflow] ${title}`,
+              text: `${message}${actionUrl ? `\n\nView details: ${actionUrl}` : ""}`,
+              html: formatEmailHtml(
+                `${message}${actionUrl ? `\n\nView details: ${actionUrl}` : ""}`
+              ),
+            });
+          }
+        }
+      } catch (err) {
+        // Don't fail the workflow because of email errors
+        console.error("[WorkflowEngine] Failed to send notification emails:", err);
+      }
+    }
   }
 
   // ============================================
@@ -896,7 +1347,6 @@ Decide the best resolution action from: accept_variance, reject_and_reorder, esc
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    // Upsert metrics for today
     const [existing] = await this.db
       .select()
       .from(workflowMetrics)
@@ -924,6 +1374,8 @@ Decide the best resolution action from: accept_variance, reject_and_reorder, esc
             : workflowMetrics.totalValueProcessed,
           aiDecisionCount: sql`${workflowMetrics.aiDecisionCount} + ${aiDecisions}`,
           totalTokensUsed: sql`${workflowMetrics.totalTokensUsed} + ${tokensUsed}`,
+          // Estimate time saved: average of 15 min per manual workflow step
+          estimatedTimeSavedMinutes: sql`${workflowMetrics.estimatedTimeSavedMinutes} + ${runResult.itemsProcessed * 15}`,
         })
         .where(eq(workflowMetrics.id, existing.id));
     } else {
@@ -938,8 +1390,21 @@ Decide the best resolution action from: accept_variance, reject_and_reorder, esc
         totalValueProcessed: runResult.totalValue?.toString(),
         aiDecisionCount: aiDecisions,
         totalTokensUsed: tokensUsed,
+        estimatedTimeSavedMinutes: runResult.itemsProcessed * 15,
       });
     }
+  }
+
+  // ============================================
+  // DIAGNOSTICS
+  // ============================================
+
+  getCircuitBreakerState() {
+    return this.circuitBreaker.getState();
+  }
+
+  getConcurrencyInfo() {
+    return { totalActive: this.concurrency.getTotalActive() };
   }
 
   // ============================================

@@ -42,8 +42,12 @@ interface WorkflowProcessor {
   execute(engine: WorkflowEngine, context: WorkflowContext): Promise<WorkflowResult>;
 }
 
+// Max items to batch into a single AI call
+const BATCH_SIZE = 20;
+
 // ============================================
 // DEMAND FORECASTING WORKFLOW
+// Now uses batch AI for efficiency
 // ============================================
 
 const demandForecastingProcessor: WorkflowProcessor = {
@@ -52,7 +56,6 @@ const demandForecastingProcessor: WorkflowProcessor = {
     let itemsProcessed = 0;
     let itemsSucceeded = 0;
     let itemsFailed = 0;
-    const forecastsCreated: any[] = [];
 
     // Step 1: Fetch products for forecasting
     const step1 = await engine.recordStep(context, 1, "Fetch Active Products", "data_fetch", async () => {
@@ -95,34 +98,35 @@ const demandForecastingProcessor: WorkflowProcessor = {
       return { success: true, data: { salesData } };
     });
 
-    // Step 3: Generate forecasts using AI
-    const step3 = await engine.recordStep(context, 3, "Generate AI Forecasts", "ai_analysis", async () => {
+    // Step 3: Generate forecasts using BATCH AI (single call per batch)
+    const step3 = await engine.recordStep(context, 3, "Generate AI Forecasts (Batch)", "ai_analysis", async () => {
       const forecasts: any[] = [];
       const forecastPeriodStart = new Date();
       const forecastPeriodEnd = new Date();
       forecastPeriodEnd.setMonth(forecastPeriodEnd.getMonth() + 1);
 
-      for (const product of productList) {
-        try {
-          const productSales = step2.data?.salesData.find((s: any) => s.productId === product.id);
-          const historicalQty = productSales?.totalQuantity || 0;
-          const avgMonthly = historicalQty / 3;
+      // Build batch items with sales data
+      const batchItems = productList.map((product: any) => {
+        const productSales = step2.data?.salesData.find((s: any) => s.productId === product.id);
+        const historicalQty = productSales?.totalQuantity || 0;
+        const avgMonthly = historicalQty / 3;
+        return {
+          id: product.id,
+          data: `Product "${product.name}" (SKU: ${product.sku}): Sales last 3 months: ${historicalQty} units, avg monthly: ${avgMonthly.toFixed(2)}, orders: ${productSales?.orderCount || 0}`,
+        };
+      });
 
-          // Use AI to analyze and adjust forecast
-          const aiDecision = await engine.makeAIDecision(
+      // Process in batches of BATCH_SIZE
+      for (let i = 0; i < batchItems.length; i += BATCH_SIZE) {
+        const batch = batchItems.slice(i, i + BATCH_SIZE);
+
+        try {
+          const batchResults = await engine.makeBatchAIDecision(
             context,
             "forecast_adjustment",
-            `Generate demand forecast for product "${product.name}" (SKU: ${product.sku}).
-Historical data:
-- Total sales last 3 months: ${historicalQty} units
-- Average monthly: ${avgMonthly.toFixed(2)} units
-- Order count: ${productSales?.orderCount || 0}
-
-Consider seasonal factors, trends, and market conditions.
-Provide forecast quantity for next month and confidence level.`,
-            [],
+            "Generate demand forecasts for the following products. Consider seasonal factors, trends, and market conditions. Provide forecast quantity for next month and confidence level for each product.",
+            batch,
             {
-              type: "object",
               properties: {
                 forecastedQuantity: { type: "number" },
                 confidence: { type: "number" },
@@ -130,48 +134,58 @@ Provide forecast quantity for next month and confidence level.`,
                 reasoning: { type: "string" },
               },
               required: ["forecastedQuantity", "confidence", "trend", "reasoning"],
-              additionalProperties: false,
             }
           );
 
-          // Create forecast record
-          const forecastNumber = `FC-${Date.now().toString(36).toUpperCase()}-${product.id}`;
-          const [forecast] = await db
-            .insert(demandForecasts)
-            .values({
-              forecastNumber,
-              productId: product.id,
-              forecastDate: new Date(),
-              forecastPeriodStart,
-              forecastPeriodEnd,
-              forecastedQuantity: aiDecision.decision.forecastedQuantity.toString(),
-              confidenceLevel: aiDecision.decision.confidence.toString(),
-              forecastMethod: "ai_trend",
-              trendDirection: aiDecision.decision.trend as any,
-              historicalDataMonths: 3,
-              status: "active",
-            })
-            .$returningId();
+          // Create forecast records for each item in the batch
+          for (const result of batchResults) {
+            try {
+              const productId = typeof result.itemId === "string" ? parseInt(result.itemId, 10) : result.itemId;
+              const product = productList.find((p: any) => p.id === productId);
 
-          forecasts.push({
-            id: forecast.id,
-            productId: product.id,
-            productName: product.name,
-            quantity: aiDecision.decision.forecastedQuantity,
-            confidence: aiDecision.decision.confidence,
-          });
+              const forecastNumber = `FC-${Date.now().toString(36).toUpperCase()}-${productId}`;
+              const [forecast] = await db
+                .insert(demandForecasts)
+                .values({
+                  forecastNumber,
+                  productId,
+                  forecastDate: new Date(),
+                  forecastPeriodStart,
+                  forecastPeriodEnd,
+                  forecastedQuantity: result.decision.forecastedQuantity.toString(),
+                  confidenceLevel: result.confidence.toString(),
+                  forecastMethod: "ai_trend",
+                  trendDirection: (result.decision.trend || "stable") as any,
+                  historicalDataMonths: 3,
+                  status: "active",
+                })
+                .$returningId();
 
-          itemsSucceeded++;
+              forecasts.push({
+                id: forecast.id,
+                productId,
+                productName: product?.name,
+                quantity: result.decision.forecastedQuantity,
+                confidence: result.confidence,
+              });
+
+              itemsSucceeded++;
+            } catch (err) {
+              itemsFailed++;
+              console.error(`Failed to create forecast for item ${result.itemId}:`, err);
+            }
+          }
         } catch (err) {
-          itemsFailed++;
-          console.error(`Failed to forecast product ${product.id}:`, err);
+          // If batch AI fails, count all items in this batch as failed
+          itemsFailed += batch.length;
+          console.error(`Batch forecast failed:`, err);
         }
       }
 
       return {
         success: true,
         data: { forecasts },
-        confidence: forecasts.length > 0 ? forecasts.reduce((sum, f) => sum + f.confidence, 0) / forecasts.length : 0,
+        confidence: forecasts.length > 0 ? forecasts.reduce((sum: number, f: any) => sum + f.confidence, 0) / forecasts.length : 0,
       };
     });
 
@@ -244,82 +258,98 @@ const productionPlanningProcessor: WorkflowProcessor = {
     const forecasts = step1.data.forecasts;
     itemsProcessed = forecasts.length;
 
-    // Step 3: Generate production plans
-    const step3 = await engine.recordStep(context, 3, "Generate Production Plans", "ai_decision", async () => {
+    // Step 3: Generate production plans (batch AI)
+    const step3 = await engine.recordStep(context, 3, "Generate Production Plans (Batch)", "ai_decision", async () => {
       const plans: any[] = [];
 
+      // Pre-fetch BOMs for all products
+      const productIds = forecasts.map((f: any) => f.productId);
+      const boms = productIds.length > 0 ? await db
+        .select()
+        .from(billOfMaterials)
+        .where(
+          and(
+            inArray(billOfMaterials.productId, productIds),
+            eq(billOfMaterials.status, "active")
+          )
+        ) : [];
+
+      // Build batch items only for products that need production
+      const batchItems: Array<{ id: number | string; data: string; forecast: any; availableQty: number; gap: number; bom: any }> = [];
+
       for (const forecast of forecasts) {
+        const invLevel = step2.data?.inventory.find((i: any) => i.productId === forecast.productId);
+        const availableQty = (invLevel?.totalQty || 0) - (invLevel?.reservedQty || 0);
+        const forecastedQty = parseFloat(forecast.forecastedQuantity);
+        const gap = forecastedQty - availableQty;
+
+        if (gap <= 0) {
+          itemsSucceeded++;
+          continue;
+        }
+
+        const bom = boms.find((b: any) => b.productId === forecast.productId);
+        batchItems.push({
+          id: forecast.productId,
+          data: `Forecasted demand: ${forecastedQty}, Available inventory: ${availableQty}, Gap: ${gap}, Has BOM: ${bom ? "Yes" : "No"}`,
+          forecast,
+          availableQty,
+          gap,
+          bom,
+        });
+      }
+
+      // Process in batches
+      for (let i = 0; i < batchItems.length; i += BATCH_SIZE) {
+        const batch = batchItems.slice(i, i + BATCH_SIZE);
+
         try {
-          const invLevel = step2.data?.inventory.find((i: any) => i.productId === forecast.productId);
-          const availableQty = (invLevel?.totalQty || 0) - (invLevel?.reservedQty || 0);
-          const forecastedQty = parseFloat(forecast.forecastedQuantity);
-          const gap = forecastedQty - availableQty;
-
-          if (gap <= 0) {
-            // No production needed
-            itemsSucceeded++;
-            continue;
-          }
-
-          // Get BOM for this product
-          const [bom] = await db
-            .select()
-            .from(billOfMaterials)
-            .where(
-              and(
-                eq(billOfMaterials.productId, forecast.productId),
-                eq(billOfMaterials.isActive, true)
-              )
-            );
-
-          // AI decides production quantity (may produce more for efficiency)
-          const aiDecision = await engine.makeAIDecision(
+          const batchResults = await engine.makeBatchAIDecision(
             context,
             "quantity_calculation",
-            `Calculate optimal production quantity:
-- Forecasted demand: ${forecastedQty} units
-- Current available inventory: ${availableQty} units
-- Gap to fill: ${gap} units
-- Has BOM: ${bom ? "Yes" : "No"}
-
-Consider batch sizes, production efficiency, and safety stock.`,
-            [],
+            "Calculate optimal production quantities. Consider batch sizes, production efficiency, and safety stock for each product.",
+            batch.map(b => ({ id: b.id, data: b.data })),
             {
-              type: "object",
               properties: {
                 plannedQuantity: { type: "number" },
                 reasoning: { type: "string" },
                 confidence: { type: "number" },
               },
               required: ["plannedQuantity", "reasoning", "confidence"],
-              additionalProperties: false,
             }
           );
 
-          const planNumber = `PP-${Date.now().toString(36).toUpperCase()}`;
-          const [plan] = await db
-            .insert(productionPlans)
-            .values({
-              planNumber,
-              demandForecastId: forecast.id,
-              productId: forecast.productId,
-              bomId: bom?.id,
-              plannedQuantity: aiDecision.decision.plannedQuantity.toString(),
-              currentInventory: availableQty.toString(),
-              safetyStock: Math.ceil(forecastedQty * 0.1).toString(), // 10% safety stock
-              status: "draft",
-            })
-            .$returningId();
+          for (const result of batchResults) {
+            try {
+              const productId = typeof result.itemId === "string" ? parseInt(result.itemId, 10) : result.itemId;
+              const batchItem = batch.find(b => b.id === productId);
+              if (!batchItem) continue;
 
-          plans.push({
-            id: plan.id,
-            productId: forecast.productId,
-            quantity: aiDecision.decision.plannedQuantity,
-          });
+              const forecastedQty = parseFloat(batchItem.forecast.forecastedQuantity);
+              const planNumber = `PP-${Date.now().toString(36).toUpperCase()}-${productId}`;
+              const [plan] = await db
+                .insert(productionPlans)
+                .values({
+                  planNumber,
+                  demandForecastId: batchItem.forecast.id,
+                  productId,
+                  bomId: batchItem.bom?.id,
+                  plannedQuantity: result.decision.plannedQuantity.toString(),
+                  currentInventory: batchItem.availableQty.toString(),
+                  safetyStock: Math.ceil(forecastedQty * 0.1).toString(),
+                  status: "draft",
+                })
+                .$returningId();
 
-          itemsSucceeded++;
+              plans.push({ id: plan.id, productId, quantity: result.decision.plannedQuantity });
+              itemsSucceeded++;
+            } catch (err) {
+              itemsFailed++;
+            }
+          }
         } catch (err) {
-          itemsFailed++;
+          itemsFailed += batch.length;
+          console.error("Batch production planning failed:", err);
         }
       }
 
@@ -495,8 +525,8 @@ const materialRequirementsProcessor: WorkflowProcessor = {
 
       const suggestedPOs: any[] = [];
 
-      for (const [vendorId, items] of vendorReqs) {
-        const poTotal = items.reduce((sum, item) => sum + item.cost, 0);
+      for (const [vendorId, items] of Array.from(vendorReqs)) {
+        const poTotal = items.reduce((sum: number, item: any) => sum + item.cost, 0);
         const suggestedPoNumber = `SPO-${Date.now().toString(36).toUpperCase()}`;
 
         const [spo] = await db
@@ -612,7 +642,7 @@ const procurementProcessor: WorkflowProcessor = {
             .where(eq(suggestedPoItems.suggestedPoId, spo.id));
 
           // Calculate totals
-          const subtotal = items.reduce((sum, item) => sum + parseFloat(item.totalPrice || "0"), 0);
+          const subtotal = items.reduce((sum: number, item: any) => sum + parseFloat(item.totalPrice || "0"), 0);
 
           // Create PO
           const poNumber = `PO-${Date.now().toString(36).toUpperCase()}`;
@@ -787,54 +817,71 @@ const inventoryReorderProcessor: WorkflowProcessor = {
 
     itemsProcessed = step1.data.lowStockItems.length;
 
-    // Step 2: Calculate reorder quantities
-    const step2 = await engine.recordStep(context, 2, "Calculate Reorder Quantities", "ai_decision", async () => {
+    // Step 2: Calculate reorder quantities (batch AI)
+    const step2 = await engine.recordStep(context, 2, "Calculate Reorder Quantities (Batch)", "ai_decision", async () => {
       const reorderRecommendations: any[] = [];
 
-      for (const item of step1.data.lowStockItems) {
+      // Build batch items
+      const batchItems = step1.data.lowStockItems.map((item: any) => {
         const currentQty = parseFloat(item.inventory.quantity) - parseFloat(item.inventory.reservedQuantity || "0");
         const reorderLevel = parseFloat(item.inventory.reorderLevel || "0");
         const reorderQty = parseFloat(item.inventory.reorderQuantity || "100");
-
-        const aiDecision = await engine.makeAIDecision(
-          context,
-          "reorder_trigger",
-          `Determine optimal reorder quantity for product "${item.product.name}":
-- Current available: ${currentQty} units
-- Reorder level: ${reorderLevel} units
-- Default reorder quantity: ${reorderQty} units
-- Unit cost: $${item.product.costPrice || item.product.unitPrice}
-
-Consider demand trends and storage capacity.`,
-          [],
-          {
-            type: "object",
-            properties: {
-              recommendedQuantity: { type: "number" },
-              urgency: { type: "string" },
-              reasoning: { type: "string" },
-              confidence: { type: "number" },
-            },
-            required: ["recommendedQuantity", "urgency", "reasoning", "confidence"],
-            additionalProperties: false,
-          }
-        );
-
         const unitCost = parseFloat(item.product.costPrice || item.product.unitPrice);
-        const orderValue = aiDecision.decision.recommendedQuantity * unitCost;
-        totalValue += orderValue;
 
-        reorderRecommendations.push({
-          productId: item.product.id,
-          productName: item.product.name,
+        return {
+          id: item.product.id,
+          data: `Product "${item.product.name}": Available: ${currentQty}, Reorder level: ${reorderLevel}, Default qty: ${reorderQty}, Unit cost: $${unitCost}`,
+          item,
           currentQty,
-          recommendedQty: aiDecision.decision.recommendedQuantity,
-          urgency: aiDecision.decision.urgency,
-          value: orderValue,
-          vendorId: item.product.preferredVendorId,
-        });
+        };
+      });
 
-        itemsSucceeded++;
+      // Process in batches
+      for (let i = 0; i < batchItems.length; i += BATCH_SIZE) {
+        const batch = batchItems.slice(i, i + BATCH_SIZE);
+
+        try {
+          const batchResults = await engine.makeBatchAIDecision(
+            context,
+            "reorder_trigger",
+            "Determine optimal reorder quantities for the following low-stock products. Consider demand trends and storage capacity.",
+            batch.map((b: any) => ({ id: b.id, data: b.data })),
+            {
+              properties: {
+                recommendedQuantity: { type: "number" },
+                urgency: { type: "string" },
+                reasoning: { type: "string" },
+                confidence: { type: "number" },
+              },
+              required: ["recommendedQuantity", "urgency", "reasoning", "confidence"],
+            }
+          );
+
+          for (const result of batchResults) {
+            const productId = typeof result.itemId === "string" ? parseInt(result.itemId, 10) : result.itemId;
+            const batchItem = batch.find((b: any) => b.id === productId);
+            if (!batchItem) continue;
+
+            const unitCost = parseFloat(batchItem.item.product.costPrice || batchItem.item.product.unitPrice);
+            const orderValue = result.decision.recommendedQuantity * unitCost;
+            totalValue += orderValue;
+
+            reorderRecommendations.push({
+              productId: batchItem.item.product.id,
+              productName: batchItem.item.product.name,
+              currentQty: batchItem.currentQty,
+              recommendedQty: result.decision.recommendedQuantity,
+              urgency: result.decision.urgency,
+              value: orderValue,
+              vendorId: batchItem.item.product.preferredVendorId,
+            });
+
+            itemsSucceeded++;
+          }
+        } catch (err) {
+          itemsFailed += batch.length;
+          console.error("Batch reorder calculation failed:", err);
+        }
       }
 
       return { success: true, data: { recommendations: reorderRecommendations } };
@@ -853,8 +900,8 @@ Consider demand trends and storage capacity.`,
 
       const createdPOs: any[] = [];
 
-      for (const [vendorId, items] of vendorGroups) {
-        const poTotal = items.reduce((sum, item) => sum + item.value, 0);
+      for (const [vendorId, items] of Array.from(vendorGroups)) {
+        const poTotal = items.reduce((sum: number, item: any) => sum + item.value, 0);
 
         // Request approval for each PO
         await engine.requestApproval(
@@ -941,17 +988,17 @@ const inventoryTransferProcessor: WorkflowProcessor = {
 
       const transferRecommendations: any[] = [];
 
-      for (const [productId, locations] of productDistribution) {
+      for (const [productId, locations] of Array.from(productDistribution)) {
         if (locations.length < 2) continue;
 
         // Find locations with excess and shortage
-        const excess = locations.filter(l => {
+        const excess = locations.filter((l: any) => {
           const available = parseFloat(l.quantity) - parseFloat(l.reservedQuantity || "0");
           const reorderLevel = parseFloat(l.reorderLevel || "0");
           return available > reorderLevel * 2;
         });
 
-        const shortage = locations.filter(l => {
+        const shortage = locations.filter((l: any) => {
           const available = parseFloat(l.quantity) - parseFloat(l.reservedQuantity || "0");
           const reorderLevel = parseFloat(l.reorderLevel || "0");
           return available < reorderLevel;
@@ -962,8 +1009,8 @@ const inventoryTransferProcessor: WorkflowProcessor = {
             context,
             "allocation_decision",
             `Determine optimal inventory transfer for product #${productId}:
-Locations with excess: ${JSON.stringify(excess.map(e => ({ warehouseId: e.warehouseId, qty: e.quantity })))}
-Locations with shortage: ${JSON.stringify(shortage.map(s => ({ warehouseId: s.warehouseId, qty: s.quantity, reorderLevel: s.reorderLevel })))}
+Locations with excess: ${JSON.stringify(excess.map((e: any) => ({ warehouseId: e.warehouseId, qty: e.quantity })))}
+Locations with shortage: ${JSON.stringify(shortage.map((s: any) => ({ warehouseId: s.warehouseId, qty: s.quantity, reorderLevel: s.reorderLevel })))}
 
 Recommend transfer quantity and from/to warehouses.`,
             [],
@@ -1269,8 +1316,8 @@ const productionSchedulingProcessor: WorkflowProcessor = {
       const orders = await db
         .select()
         .from(workOrders)
-        .where(eq(workOrders.status, "planned"))
-        .orderBy(asc(workOrders.plannedStartDate));
+        .where(eq(workOrders.status, "draft" as any))
+        .orderBy(asc(workOrders.createdAt));
 
       return { success: true, data: { workOrders: orders } };
     });
@@ -1432,7 +1479,7 @@ const freightProcurementProcessor: WorkflowProcessor = {
       const carriers = await db
         .select()
         .from(freightCarriers)
-        .where(eq(freightCarriers.status, "active"));
+        .where(eq(freightCarriers.isActive, true));
 
       return { success: true, data: { carriers } };
     });

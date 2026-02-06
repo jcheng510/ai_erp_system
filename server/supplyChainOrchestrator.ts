@@ -1,5 +1,6 @@
 import { getDb } from "./db";
 import { getWorkflowEngine } from "./autonomousWorkflowEngine";
+import { getPipelineExecutor, SUPPLY_CHAIN_PIPELINES } from "./workflowPipeline";
 import {
   supplyChainWorkflows,
   workflowRuns,
@@ -10,34 +11,120 @@ import {
   users,
 } from "../drizzle/schema";
 import { eq, and, lt, lte, gte, desc, asc, sql, isNull, or, inArray } from "drizzle-orm";
-import { sendEmail } from "./_core/email";
+import { sendEmail, isEmailConfigured } from "./_core/email";
 
 // ============================================
 // AUTONOMOUS SUPPLY CHAIN ORCHESTRATOR
-// Master controller for all supply chain automation
+// Master controller with pipeline support,
+// improved cron parsing, and event-driven
+// workflow triggering
 // ============================================
 
 interface OrchestratorConfig {
-  schedulerIntervalMs: number;    // How often to check for scheduled workflows
-  eventPollingIntervalMs: number; // How often to poll for new events
-  escalationCheckIntervalMs: number; // How often to check for escalations
+  schedulerIntervalMs: number;
+  eventPollingIntervalMs: number;
+  escalationCheckIntervalMs: number;
+  thresholdCheckIntervalMs: number;
   maxConcurrentWorkflows: number;
   enableAutoStart: boolean;
 }
 
 const defaultConfig: OrchestratorConfig = {
-  schedulerIntervalMs: 60000,       // 1 minute
-  eventPollingIntervalMs: 30000,    // 30 seconds
-  escalationCheckIntervalMs: 300000, // 5 minutes
+  schedulerIntervalMs: 60_000,
+  eventPollingIntervalMs: 30_000,
+  escalationCheckIntervalMs: 300_000,
+  thresholdCheckIntervalMs: 120_000,
   maxConcurrentWorkflows: 5,
   enableAutoStart: true,
 };
+
+// ============================================
+// CRON PARSER
+// Supports: minute hour day-of-month month day-of-week
+// ============================================
+
+function parseCronSchedule(cronSchedule: string): Date {
+  const now = new Date();
+  const parts = cronSchedule.split(" ");
+  if (parts.length < 5) {
+    // Fallback: next hour
+    const next = new Date(now);
+    next.setHours(next.getHours() + 1, 0, 0, 0);
+    return next;
+  }
+
+  const [minuteSpec, hourSpec, dayOfMonthSpec, monthSpec, dayOfWeekSpec] = parts;
+
+  const parseField = (spec: string, min: number, max: number): number[] => {
+    if (spec === "*") return [];
+    const values: number[] = [];
+
+    for (const part of spec.split(",")) {
+      if (part.includes("/")) {
+        const [range, step] = part.split("/");
+        const stepNum = parseInt(step, 10);
+        const start = range === "*" ? min : parseInt(range, 10);
+        for (let i = start; i <= max; i += stepNum) {
+          values.push(i);
+        }
+      } else if (part.includes("-")) {
+        const [low, high] = part.split("-").map(Number);
+        for (let i = low; i <= high; i++) values.push(i);
+      } else {
+        values.push(parseInt(part, 10));
+      }
+    }
+
+    return values;
+  };
+
+  const minutes = parseField(minuteSpec, 0, 59);
+  const hours = parseField(hourSpec, 0, 23);
+  const daysOfWeek = parseField(dayOfWeekSpec, 0, 6);
+
+  // Search for next matching time in the next 7 days
+  const candidate = new Date(now);
+  candidate.setSeconds(0, 0);
+
+  for (let dayOffset = 0; dayOffset < 8; dayOffset++) {
+    const checkDate = new Date(candidate);
+    checkDate.setDate(checkDate.getDate() + dayOffset);
+
+    // Check day-of-week
+    if (daysOfWeek.length > 0 && !daysOfWeek.includes(checkDate.getDay())) {
+      continue;
+    }
+
+    const startHour = dayOffset === 0 ? now.getHours() : 0;
+    const hoursToCheck = hours.length > 0 ? hours.filter(h => h >= startHour) : Array.from({ length: 24 - startHour }, (_, i) => i + startHour);
+
+    for (const hour of hoursToCheck) {
+      const startMinute = dayOffset === 0 && hour === now.getHours() ? now.getMinutes() + 1 : 0;
+      const minutesToCheck = minutes.length > 0 ? minutes.filter(m => m >= startMinute) : [startMinute];
+
+      for (const minute of minutesToCheck) {
+        const next = new Date(checkDate);
+        next.setHours(hour, minute, 0, 0);
+        if (next > now) {
+          return next;
+        }
+      }
+    }
+  }
+
+  // Absolute fallback
+  const fallback = new Date(now);
+  fallback.setDate(fallback.getDate() + 1);
+  fallback.setHours(0, 0, 0, 0);
+  return fallback;
+}
 
 class SupplyChainOrchestrator {
   private config: OrchestratorConfig;
   private schedulerInterval: NodeJS.Timeout | null = null;
   private eventInterval: NodeJS.Timeout | null = null;
   private escalationInterval: NodeJS.Timeout | null = null;
+  private thresholdInterval: NodeJS.Timeout | null = null;
   private isRunning = false;
   private activeWorkflows = 0;
 
@@ -58,35 +145,60 @@ class SupplyChainOrchestrator {
     console.log("[Orchestrator] Starting autonomous supply chain orchestrator...");
     this.isRunning = true;
 
-    // Initialize workflow engine
-    const engine = await getWorkflowEngine();
+    await getWorkflowEngine();
 
-    // Start scheduler loop
+    // Guard each interval against overlapping runs
+    let schedulerRunning = false;
     this.schedulerInterval = setInterval(async () => {
+      if (schedulerRunning) return;
+      schedulerRunning = true;
       try {
         await this.runScheduledWorkflows();
       } catch (err) {
         console.error("[Orchestrator] Scheduler error:", err);
+      } finally {
+        schedulerRunning = false;
       }
     }, this.config.schedulerIntervalMs);
 
-    // Start event processing loop
+    let eventRunning = false;
     this.eventInterval = setInterval(async () => {
+      if (eventRunning) return;
+      eventRunning = true;
       try {
         await this.processEvents();
       } catch (err) {
         console.error("[Orchestrator] Event processing error:", err);
+      } finally {
+        eventRunning = false;
       }
     }, this.config.eventPollingIntervalMs);
 
-    // Start escalation check loop
+    let escalationRunning = false;
     this.escalationInterval = setInterval(async () => {
+      if (escalationRunning) return;
+      escalationRunning = true;
       try {
         await this.checkEscalations();
       } catch (err) {
         console.error("[Orchestrator] Escalation check error:", err);
+      } finally {
+        escalationRunning = false;
       }
     }, this.config.escalationCheckIntervalMs);
+
+    let thresholdRunning = false;
+    this.thresholdInterval = setInterval(async () => {
+      if (thresholdRunning) return;
+      thresholdRunning = true;
+      try {
+        await this.checkThresholds();
+      } catch (err) {
+        console.error("[Orchestrator] Threshold check error:", err);
+      } finally {
+        thresholdRunning = false;
+      }
+    }, this.config.thresholdCheckIntervalMs);
 
     // Run initial checks
     await this.runScheduledWorkflows();
@@ -103,30 +215,17 @@ class SupplyChainOrchestrator {
 
     console.log("[Orchestrator] Stopping...");
 
-    if (this.schedulerInterval) {
-      clearInterval(this.schedulerInterval);
-      this.schedulerInterval = null;
-    }
-
-    if (this.eventInterval) {
-      clearInterval(this.eventInterval);
-      this.eventInterval = null;
-    }
-
-    if (this.escalationInterval) {
-      clearInterval(this.escalationInterval);
-      this.escalationInterval = null;
-    }
+    if (this.schedulerInterval) { clearInterval(this.schedulerInterval); this.schedulerInterval = null; }
+    if (this.eventInterval) { clearInterval(this.eventInterval); this.eventInterval = null; }
+    if (this.escalationInterval) { clearInterval(this.escalationInterval); this.escalationInterval = null; }
+    if (this.thresholdInterval) { clearInterval(this.thresholdInterval); this.thresholdInterval = null; }
 
     this.isRunning = false;
     console.log("[Orchestrator] Stopped");
   }
 
   getStatus(): { isRunning: boolean; activeWorkflows: number } {
-    return {
-      isRunning: this.isRunning,
-      activeWorkflows: this.activeWorkflows,
-    };
+    return { isRunning: this.isRunning, activeWorkflows: this.activeWorkflows };
   }
 
   // ============================================
@@ -137,7 +236,6 @@ class SupplyChainOrchestrator {
     const db = await getDb();
     if (!db) return;
 
-    // Check capacity
     if (this.activeWorkflows >= this.config.maxConcurrentWorkflows) {
       console.log(`[Orchestrator] At max capacity (${this.activeWorkflows}/${this.config.maxConcurrentWorkflows})`);
       return;
@@ -145,7 +243,6 @@ class SupplyChainOrchestrator {
 
     const now = new Date();
 
-    // Get workflows due for execution
     const dueWorkflows = await db
       .select()
       .from(supplyChainWorkflows)
@@ -162,7 +259,7 @@ class SupplyChainOrchestrator {
       .limit(this.config.maxConcurrentWorkflows - this.activeWorkflows);
 
     for (const workflow of dueWorkflows) {
-      // Check if already running
+      // Skip if already running (concurrency check)
       const [runningInstance] = await db
         .select()
         .from(workflowRuns)
@@ -174,40 +271,19 @@ class SupplyChainOrchestrator {
         );
 
       if (runningInstance && workflow.maxConcurrentRuns === 1) {
-        continue; // Skip if already running
+        continue;
       }
 
-      // Execute workflow
+      // Execute workflow async
       this.executeWorkflowAsync(workflow, "schedule");
 
-      // Calculate next run time based on cron schedule
-      const nextRun = this.calculateNextRun(workflow.cronSchedule || "0 0 * * *");
+      // Calculate next run time using improved cron parser
+      const nextRun = parseCronSchedule(workflow.cronSchedule || "0 0 * * *");
       await db
         .update(supplyChainWorkflows)
         .set({ nextScheduledRun: nextRun })
         .where(eq(supplyChainWorkflows.id, workflow.id));
     }
-  }
-
-  private calculateNextRun(cronSchedule: string): Date {
-    // Simplified cron parsing - in production, use a cron library
-    const next = new Date();
-
-    // Default: run at next hour
-    const parts = cronSchedule.split(" ");
-    if (parts.length >= 2) {
-      const minute = parseInt(parts[0]) || 0;
-      const hour = parts[1] === "*" ? next.getHours() + 1 : parseInt(parts[1]) || 0;
-
-      next.setHours(hour, minute, 0, 0);
-      if (next <= new Date()) {
-        next.setDate(next.getDate() + 1);
-      }
-    } else {
-      next.setHours(next.getHours() + 1, 0, 0, 0);
-    }
-
-    return next;
   }
 
   // ============================================
@@ -218,7 +294,6 @@ class SupplyChainOrchestrator {
     const db = await getDb();
     if (!db) return;
 
-    // Get unprocessed events
     const unprocessedEvents = await db
       .select()
       .from(supplyChainEvents)
@@ -227,7 +302,6 @@ class SupplyChainOrchestrator {
       .limit(50);
 
     for (const event of unprocessedEvents) {
-      // Find workflows triggered by this event type
       const triggeredWorkflows = await db
         .select()
         .from(supplyChainWorkflows)
@@ -242,7 +316,6 @@ class SupplyChainOrchestrator {
         const triggerEvents = workflow.triggerEvents ? JSON.parse(workflow.triggerEvents) : [];
 
         if (triggerEvents.includes(event.eventType)) {
-          // Trigger the workflow
           const eventData = event.eventData ? JSON.parse(event.eventData) : {};
           this.executeWorkflowAsync(workflow, "event", {
             eventId: event.id,
@@ -268,7 +341,6 @@ class SupplyChainOrchestrator {
     const db = await getDb();
     if (!db) return;
 
-    // Get threshold-triggered workflows
     const thresholdWorkflows = await db
       .select()
       .from(supplyChainWorkflows)
@@ -283,8 +355,14 @@ class SupplyChainOrchestrator {
       const thresholdConfig = workflow.thresholdConfig ? JSON.parse(workflow.thresholdConfig) : null;
       if (!thresholdConfig) continue;
 
-      const shouldTrigger = await this.evaluateThreshold(thresholdConfig);
+      // Cooldown: don't trigger if last run was within 10 minutes
+      if (workflow.lastRunAt) {
+        const cooldownMs = 10 * 60_000;
+        const elapsed = Date.now() - new Date(workflow.lastRunAt).getTime();
+        if (elapsed < cooldownMs) continue;
+      }
 
+      const shouldTrigger = await this.evaluateThreshold(thresholdConfig);
       if (shouldTrigger) {
         this.executeWorkflowAsync(workflow, "threshold", { thresholdConfig });
       }
@@ -296,32 +374,31 @@ class SupplyChainOrchestrator {
     if (!db) return false;
 
     switch (config.type) {
-      case "inventory_below":
-        // Check if any inventory is below threshold
-        const { inventory } = await import("../drizzle/schema");
-        const [lowStock] = await db.execute(sql`
+      case "inventory_below": {
+        const lowStockResult = await db.execute(sql`
           SELECT COUNT(*) as count
           FROM inventory
           WHERE CAST(quantity AS DECIMAL) - CAST(reservedQuantity AS DECIMAL) < CAST(reorderLevel AS DECIMAL)
         `);
-        return ((lowStock as any[])[0]?.count || 0) > 0;
+        return ((lowStockResult as unknown as any[])[0]?.count || 0) > 0;
+      }
 
-      case "pending_approvals":
-        // Check pending approval count
+      case "pending_approvals": {
         const [pendingCount] = await db
           .select({ count: sql<number>`COUNT(*)` })
           .from(workflowApprovalQueue)
           .where(eq(workflowApprovalQueue.status, "pending"));
         return (pendingCount?.count || 0) >= (config.threshold || 10);
+      }
 
-      case "exception_count":
-        // Check open exception count
+      case "exception_count": {
         const { exceptionLog } = await import("../drizzle/schema");
         const [exceptionCount] = await db
           .select({ count: sql<number>`COUNT(*)` })
           .from(exceptionLog)
           .where(eq(exceptionLog.status, "open"));
         return (exceptionCount?.count || 0) >= (config.threshold || 5);
+      }
 
       default:
         return false;
@@ -353,7 +430,7 @@ class SupplyChainOrchestrator {
         console.log(`  - Total value: $${result.totalValue.toFixed(2)}`);
       }
 
-      // Check for dependent workflows
+      // Trigger dependent workflows
       if (result.success) {
         await this.triggerDependentWorkflows(workflow.id);
       }
@@ -368,7 +445,6 @@ class SupplyChainOrchestrator {
     const db = await getDb();
     if (!db) return;
 
-    // Find workflows that depend on the completed one
     const dependentWorkflows = await db
       .select()
       .from(supplyChainWorkflows)
@@ -382,6 +458,37 @@ class SupplyChainOrchestrator {
         this.executeWorkflowAsync(workflow, "dependency", { triggeredByWorkflowId: completedWorkflowId });
       }
     }
+  }
+
+  // ============================================
+  // PIPELINE EXECUTION
+  // ============================================
+
+  async executePipeline(
+    pipelineId: string,
+    inputData: Record<string, any> = {},
+    userId?: number
+  ): Promise<any> {
+    const executor = await getPipelineExecutor();
+    return executor.executePipeline(pipelineId, inputData, userId);
+  }
+
+  getAvailablePipelines() {
+    return Object.entries(SUPPLY_CHAIN_PIPELINES).map(([id, pipeline]) => ({
+      id,
+      name: pipeline.name,
+      description: pipeline.description,
+      stageCount: pipeline.stages.length,
+      stages: pipeline.stages.map(s => ({
+        workflowType: s.workflowType,
+        dependsOn: s.dependsOn,
+      })),
+    }));
+  }
+
+  async getPipelinePlan(pipelineId: string) {
+    const executor = await getPipelineExecutor();
+    return executor.getExecutionPlan(pipelineId);
   }
 
   // Manual workflow trigger
@@ -425,7 +532,6 @@ class SupplyChainOrchestrator {
 
     const now = new Date();
 
-    // Get approvals past their escalation time
     const toEscalate = await db
       .select()
       .from(workflowApprovalQueue)
@@ -441,14 +547,13 @@ class SupplyChainOrchestrator {
       await this.escalateApproval(approval);
     }
 
-    // Check for stale "escalated" items that need further escalation
     const staleEscalated = await db
       .select()
       .from(workflowApprovalQueue)
       .where(
         and(
           eq(workflowApprovalQueue.status, "escalated"),
-          lt(workflowApprovalQueue.escalationLevel, 3) // Max 3 levels of escalation
+          lt(workflowApprovalQueue.escalationLevel, 3)
         )
       );
 
@@ -456,7 +561,6 @@ class SupplyChainOrchestrator {
       const escalatedAt = approval.escalatedAt ? new Date(approval.escalatedAt) : new Date();
       const hoursSinceEscalation = (now.getTime() - escalatedAt.getTime()) / (1000 * 60 * 60);
 
-      // Escalate again after 2 hours at each level
       if (hoursSinceEscalation > 2) {
         await this.escalateApproval(approval);
       }
@@ -469,23 +573,14 @@ class SupplyChainOrchestrator {
 
     const newLevel = (approval.escalationLevel || 0) + 1;
 
-    // Determine escalation targets based on level
     let escalationRoles: string[];
     switch (newLevel) {
-      case 1:
-        escalationRoles = ["ops", "admin"];
-        break;
-      case 2:
-        escalationRoles = ["admin", "exec"];
-        break;
-      case 3:
-        escalationRoles = ["exec"];
-        break;
-      default:
-        escalationRoles = ["exec"];
+      case 1: escalationRoles = ["ops", "admin"]; break;
+      case 2: escalationRoles = ["admin", "exec"]; break;
+      case 3: escalationRoles = ["exec"]; break;
+      default: escalationRoles = ["exec"];
     }
 
-    // Get users with escalation roles
     const escalationUsers = await db
       .select()
       .from(users)
@@ -504,7 +599,6 @@ class SupplyChainOrchestrator {
       })
       .where(eq(workflowApprovalQueue.id, approval.id));
 
-    // Create escalation notification
     await db.insert(workflowNotifications).values({
       runId: approval.runId,
       notificationType: "warning",
@@ -518,14 +612,15 @@ class SupplyChainOrchestrator {
       actionLabel: "Review Now",
     });
 
-    // Send escalation email
-    for (const user of escalationUsers) {
-      if (user.email) {
-        try {
-          await sendEmail({
-            to: user.email,
-            subject: `[ESCALATED] Approval Required: ${approval.title}`,
-            text: `An approval request has been escalated to you and requires immediate attention.
+    // Send actual escalation emails
+    if (isEmailConfigured()) {
+      for (const user of escalationUsers) {
+        if (user.email) {
+          try {
+            await sendEmail({
+              to: user.email,
+              subject: `[ESCALATED] Approval Required: ${approval.title}`,
+              text: `An approval request has been escalated to you and requires immediate attention.
 
 Title: ${approval.title}
 Description: ${approval.description || "N/A"}
@@ -533,9 +628,10 @@ Value: $${approval.monetaryValue}
 Escalation Level: ${newLevel}
 
 Please review and approve/reject at your earliest convenience.`,
-          });
-        } catch (err) {
-          console.error(`Failed to send escalation email to ${user.email}:`, err);
+            });
+          } catch (err) {
+            console.error(`Failed to send escalation email to ${user.email}:`, err);
+          }
         }
       }
     }
@@ -543,21 +639,17 @@ Please review and approve/reject at your earliest convenience.`,
     console.log(`[Orchestrator] Escalated approval ${approval.id} to level ${newLevel}`);
   }
 
-  // Process approval decision
   async processApprovalDecision(
     approvalId: number,
     approved: boolean,
     userId: number,
     notes?: string
   ): Promise<{ success: boolean; workflowResumed: boolean }> {
-    const db = await getDb();
-    if (!db) return { success: false, workflowResumed: false };
-
     const engine = await getWorkflowEngine();
-    return engine.processApproval(approvalId, approved, userId, notes);
+    const result = await engine.processApproval(approvalId, approved, userId, notes);
+    return { success: result.success, workflowResumed: result.runResumed };
   }
 
-  // Get pending approvals for a user
   async getPendingApprovals(userId: number, role: string): Promise<any[]> {
     const db = await getDb();
     if (!db) return [];
@@ -596,7 +688,7 @@ Please review and approve/reject at your earliest convenience.`,
         workflowType: "demand_forecasting" as const,
         description: "Generate daily demand forecasts for all active products",
         triggerType: "scheduled" as const,
-        cronSchedule: "0 6 * * *", // 6 AM daily
+        cronSchedule: "0 6 * * *",
         requiresApproval: false,
       },
       {
@@ -604,8 +696,8 @@ Please review and approve/reject at your earliest convenience.`,
         workflowType: "production_planning" as const,
         description: "Create production plans from forecasts",
         triggerType: "scheduled" as const,
-        cronSchedule: "0 7 * * *", // 7 AM daily
-        dependsOnWorkflows: "[]", // Will be updated after demand_forecasting is created
+        cronSchedule: "0 7 * * *",
+        dependsOnWorkflows: "[]",
         requiresApproval: false,
       },
       {
@@ -613,7 +705,7 @@ Please review and approve/reject at your earliest convenience.`,
         workflowType: "material_requirements" as const,
         description: "Calculate material needs and generate suggested POs",
         triggerType: "scheduled" as const,
-        cronSchedule: "0 8 * * *", // 8 AM daily
+        cronSchedule: "0 8 * * *",
         requiresApproval: true,
         autoApproveThreshold: "1000",
       },
@@ -639,7 +731,7 @@ Please review and approve/reject at your earliest convenience.`,
         workflowType: "inventory_optimization" as const,
         description: "Analyze and optimize inventory distribution",
         triggerType: "scheduled" as const,
-        cronSchedule: "0 2 * * 0", // 2 AM Sunday
+        cronSchedule: "0 2 * * 0",
         requiresApproval: false,
       },
       {
@@ -655,7 +747,7 @@ Please review and approve/reject at your earliest convenience.`,
         workflowType: "production_scheduling" as const,
         description: "Schedule work orders based on capacity and materials",
         triggerType: "scheduled" as const,
-        cronSchedule: "0 5 * * *", // 5 AM daily
+        cronSchedule: "0 5 * * *",
         requiresApproval: false,
       },
       {
@@ -671,7 +763,7 @@ Please review and approve/reject at your earliest convenience.`,
         workflowType: "shipment_tracking" as const,
         description: "Track in-transit shipments and detect delays",
         triggerType: "scheduled" as const,
-        cronSchedule: "0 */2 * * *", // Every 2 hours
+        cronSchedule: "0 */2 * * *",
         requiresApproval: false,
       },
       {
@@ -679,7 +771,7 @@ Please review and approve/reject at your earliest convenience.`,
         workflowType: "supplier_management" as const,
         description: "Calculate supplier performance metrics",
         triggerType: "scheduled" as const,
-        cronSchedule: "0 0 1 * *", // 1st of each month
+        cronSchedule: "0 0 1 * *",
         requiresApproval: false,
       },
       {
@@ -695,7 +787,7 @@ Please review and approve/reject at your earliest convenience.`,
         workflowType: "payment_processing" as const,
         description: "Process approved invoices for payment",
         triggerType: "scheduled" as const,
-        cronSchedule: "0 10 * * 1,3,5", // 10 AM Mon/Wed/Fri
+        cronSchedule: "0 10 * * 1,3,5",
         requiresApproval: true,
         autoApproveThreshold: "2000",
       },
@@ -710,7 +802,6 @@ Please review and approve/reject at your earliest convenience.`,
     ];
 
     for (const wf of defaultWorkflows) {
-      // Check if already exists
       const [existing] = await db
         .select()
         .from(supplyChainWorkflows)
@@ -801,8 +892,12 @@ Please review and approve/reject at your earliest convenience.`,
     pendingApprovals: number;
     openExceptions: number;
     todayMetrics: any;
+    circuitBreaker: any;
+    availablePipelines: number;
   }> {
     const db = await getDb();
+    const engine = await getWorkflowEngine();
+
     if (!db) {
       return {
         isRunning: this.isRunning,
@@ -810,6 +905,8 @@ Please review and approve/reject at your earliest convenience.`,
         pendingApprovals: 0,
         openExceptions: 0,
         todayMetrics: null,
+        circuitBreaker: engine.getCircuitBreakerState(),
+        availablePipelines: Object.keys(SUPPLY_CHAIN_PIPELINES).length,
       };
     }
 
@@ -851,6 +948,8 @@ Please review and approve/reject at your earliest convenience.`,
         completed: todayRuns?.completed || 0,
         failed: todayRuns?.failed || 0,
       },
+      circuitBreaker: engine.getCircuitBreakerState(),
+      availablePipelines: Object.keys(SUPPLY_CHAIN_PIPELINES).length,
     };
   }
 

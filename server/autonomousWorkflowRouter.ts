@@ -3,6 +3,7 @@ import { TRPCError } from "@trpc/server";
 import { protectedProcedure, router } from "./_core/trpc";
 import { getOrchestrator, startOrchestrator, stopOrchestrator } from "./supplyChainOrchestrator";
 import { getWorkflowEngine } from "./autonomousWorkflowEngine";
+import { getPipelineExecutor, SUPPLY_CHAIN_PIPELINES } from "./workflowPipeline";
 import { getDb } from "./db";
 import {
   supplyChainWorkflows,
@@ -186,7 +187,7 @@ export const autonomousWorkflowRouter = router({
     trigger: opsOrAdminProcedure
       .input(z.object({
         id: z.number(),
-        inputData: z.record(z.any()).optional(),
+        inputData: z.record(z.string(), z.any()).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const orchestrator = getOrchestrator();
@@ -535,7 +536,7 @@ export const autonomousWorkflowRouter = router({
         sourceSystem: z.string(),
         sourceEntityType: z.string().optional(),
         sourceEntityId: z.number().optional(),
-        eventData: z.record(z.any()).optional(),
+        eventData: z.record(z.string(), z.any()).optional(),
         summary: z.string().optional(),
       }))
       .mutation(async ({ input }) => {
@@ -849,7 +850,7 @@ export const autonomousWorkflowRouter = router({
       .input(z.object({
         id: z.number(),
         reason: z.string().min(1),
-        newDecision: z.record(z.any()),
+        newDecision: z.record(z.string(), z.any()),
       }))
       .mutation(async ({ input, ctx }) => {
         const db = await getDb();
@@ -866,6 +867,122 @@ export const autonomousWorkflowRouter = router({
           .where(eq(autonomousDecisions.id, input.id));
 
         return { success: true };
+      }),
+  }),
+
+  // ============================================
+  // PIPELINE MANAGEMENT
+  // ============================================
+  pipelines: router({
+    // List available pipelines
+    list: opsOrAdminProcedure.query(async () => {
+      const orchestrator = getOrchestrator();
+      return orchestrator.getAvailablePipelines();
+    }),
+
+    // Get execution plan for a pipeline
+    plan: opsOrAdminProcedure
+      .input(z.object({ pipelineId: z.string() }))
+      .query(async ({ input }) => {
+        const orchestrator = getOrchestrator();
+        const plan = await orchestrator.getPipelinePlan(input.pipelineId);
+        if (!plan) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Pipeline not found" });
+        }
+        return plan;
+      }),
+
+    // Execute a pipeline
+    execute: adminOnlyProcedure
+      .input(z.object({
+        pipelineId: z.string(),
+        inputData: z.record(z.string(), z.any()).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const orchestrator = getOrchestrator();
+        const result = await orchestrator.executePipeline(
+          input.pipelineId,
+          input.inputData || {},
+          ctx.user.id
+        );
+
+        return {
+          success: result.success,
+          pipelineId: result.pipelineId,
+          stagesCompleted: result.stagesCompleted,
+          stagesTotal: result.stagesTotal,
+          duration: result.duration,
+          failedStage: result.failedStage,
+          awaitingApproval: result.awaitingApproval,
+        };
+      }),
+  }),
+
+  // ============================================
+  // DIAGNOSTICS
+  // ============================================
+  diagnostics: router({
+    // Circuit breaker state
+    circuitBreaker: opsOrAdminProcedure.query(async () => {
+      const engine = await getWorkflowEngine();
+      return engine.getCircuitBreakerState();
+    }),
+
+    // Concurrency info
+    concurrency: opsOrAdminProcedure.query(async () => {
+      const engine = await getWorkflowEngine();
+      return engine.getConcurrencyInfo();
+    }),
+
+    // Dead letter queue (failed permanently)
+    deadLetterQueue: opsOrAdminProcedure
+      .input(z.object({ limit: z.number().optional() }).optional())
+      .query(async ({ input }) => {
+        const db = await getDb();
+        if (!db) return [];
+
+        const dlqRuns = await db
+          .select({
+            run: workflowRuns,
+            workflow: supplyChainWorkflows,
+          })
+          .from(workflowRuns)
+          .innerJoin(supplyChainWorkflows, eq(workflowRuns.workflowId, supplyChainWorkflows.id))
+          .where(
+            and(
+              eq(workflowRuns.status, "failed"),
+              sql`${workflowRuns.errorMessage} LIKE '[DLQ]%'`
+            )
+          )
+          .orderBy(desc(workflowRuns.createdAt))
+          .limit(input?.limit || 50);
+
+        return dlqRuns;
+      }),
+
+    // Retry a dead letter queue item
+    retryDlq: adminOnlyProcedure
+      .input(z.object({ runId: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const db = await getDb();
+        if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+        const [run] = await db
+          .select()
+          .from(workflowRuns)
+          .where(eq(workflowRuns.id, input.runId));
+
+        if (!run) throw new TRPCError({ code: "NOT_FOUND" });
+
+        const engine = await getWorkflowEngine();
+        const result = await engine.startWorkflow(
+          run.workflowId,
+          "manual",
+          run.inputData ? JSON.parse(run.inputData) : {},
+          ctx.user.id
+        );
+
+        return { success: result.success, newRunId: result.runId };
       }),
   }),
 });
