@@ -68,6 +68,7 @@ import {
   MessageSquare,
   Heart,
   Mic,
+  BookOpen,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -136,6 +137,7 @@ const menuGroups = [
     items: [
       { icon: FolderKanban, label: "Projects", path: "/projects" },
       { icon: FolderLock, label: "Data Rooms", path: "/datarooms" },
+      { icon: BookOpen, label: "SOPs", path: "/sops" },
     ],
   },
   {

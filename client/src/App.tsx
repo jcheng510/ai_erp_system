@@ -99,6 +99,9 @@ import Team from "./pages/settings/Team";
 import CopackerPortal from "./pages/portal/CopackerPortal";
 import VendorPortal from "./pages/portal/VendorPortal";
 
+// SOPs
+import SOPs from "./pages/SOPs";
+
 // Data Room
 import DataRooms from "./pages/DataRooms";
 import DataRoomDetail from "./pages/DataRoomDetail";
@@ -213,6 +216,9 @@ function Router() {
         {/* Portals */}
         <Route path="/portal/copacker" component={CopackerPortal} />
         <Route path="/portal/vendor" component={VendorPortal} />
+
+        {/* SOPs */}
+        <Route path="/sops" component={SOPs} />
 
         {/* Data Room */}
         <Route path="/datarooms" component={DataRooms} />
