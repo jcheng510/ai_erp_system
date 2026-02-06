@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -156,6 +156,28 @@ export default function DocumentImport() {
   const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0 });
   const [batchResults, setBatchResults] = useState<Array<{ fileName: string; success: boolean; error?: string; data?: any }>>([]);
 
+  // Handle OAuth callback redirect
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("success") === "connected") {
+      toast.success("Google Drive connected successfully!");
+      googleConnectionQuery.refetch();
+      setActiveTab("drive");
+      window.history.replaceState({}, '', window.location.pathname);
+    } else if (params.get("error")) {
+      const error = params.get("error");
+      const errorMessages: Record<string, string> = {
+        'missing_params': 'Missing parameters from Google OAuth',
+        'invalid_state': 'Invalid OAuth state',
+        'not_configured': 'Google OAuth is not configured on the server',
+        'token_exchange_failed': 'Failed to exchange authorization code',
+        'oauth_failed': 'Google OAuth flow failed',
+      };
+      toast.error(errorMessages[error || ''] || `Connection failed: ${error}`);
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
+
   const parseMutation = trpc.documentImport.parse.useMutation();
   const importPOMutation = trpc.documentImport.importPO.useMutation();
   const importFreightMutation = trpc.documentImport.importFreightInvoice.useMutation();
@@ -165,8 +187,8 @@ export default function DocumentImport() {
   const historyQuery = trpc.documentImport.getHistory.useQuery({ limit: 50 });
   
   // Google Drive queries
-  const googleConnectionQuery = trpc.sheetsImport.getConnectionStatus.useQuery();
-  const googleAuthUrlQuery = trpc.sheetsImport.getAuthUrl.useQuery();
+  const googleConnectionQuery = trpc.googleDrive.getConnectionStatus.useQuery();
+  const googleAuthUrlQuery = trpc.googleDrive.getAuthUrl.useQuery();
   const driveFoldersQuery = trpc.documentImport.listDriveFolders.useQuery(
     { parentFolderId: currentFolderId || undefined },
     { enabled: googleConnectionQuery.data?.connected && activeTab === "drive" }
@@ -643,9 +665,14 @@ export default function DocumentImport() {
                     </a>
                   </Button>
                 ) : (
-                  <p className="text-sm text-muted-foreground">
-                    Google OAuth is not configured. Please add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to enable this feature.
-                  </p>
+                  <div className="space-y-2">
+                    <p className="text-sm text-muted-foreground">
+                      {googleAuthUrlQuery.data?.error || 'Google OAuth is not configured. Please add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to enable this feature.'}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Configure these in Settings &rarr; Secrets, or set them as environment variables.
+                    </p>
+                  </div>
                 )}
               </CardContent>
             </Card>

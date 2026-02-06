@@ -18,6 +18,7 @@ import { nanoid } from "nanoid";
 import { sendGmailMessage, createGmailDraft, listGmailMessages, getGmailMessage, replyToGmailMessage, getGmailProfile } from "./_core/gmail";
 import { createGoogleDoc, insertTextInDoc, getGoogleDoc, updateGoogleDoc, createGoogleSheet, updateGoogleSheet, appendToGoogleSheet, getGoogleSheetValues, shareGoogleFile, getFileShareableLink } from "./_core/googleWorkspace";
 import { getGoogleFullAccessAuthUrl, syncDriveFolder, listDriveFolders, getFolderInfo, getSimpleFileType } from "./_core/googleDrive";
+import { ENV } from "./_core/env";
 import { getQuickBooksAuthUrl, validateOAuthState, exchangeCodeForToken, refreshQuickBooksToken, getCompanyInfo } from "./_core/quickbooks";
 
 // Role-based access middleware
@@ -80,9 +81,9 @@ async function createAuditLog(userId: number, action: 'create' | 'update' | 'del
 
 // Helper to refresh Google OAuth token
 async function refreshGoogleToken(refreshToken: string): Promise<{ accessToken?: string; expiresAt?: Date; error?: string }> {
-  const clientId = process.env.GOOGLE_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-  
+  const clientId = ENV.googleClientId;
+  const clientSecret = ENV.googleClientSecret;
+
   if (!clientId || !clientSecret) {
     return { error: 'Google OAuth not configured' };
   }
@@ -2175,6 +2176,12 @@ export const appRouter = router({
           status: googleConnected ? 'connected' : 'not_configured',
           email: googleToken?.googleEmail,
         },
+        googleDrive: {
+          configured: googleConnected,
+          status: googleConnected ? 'connected' : 'not_configured',
+          email: googleToken?.googleEmail,
+          oauthConfigured: !!ENV.googleClientId,
+        },
         gmail: {
           configured: googleConnected,
           status: googleConnected ? 'connected' : 'not_configured',
@@ -2588,17 +2595,16 @@ export const appRouter = router({
     
     // Get Google OAuth URL for connecting account
     getAuthUrl: protectedProcedure.query(async ({ ctx }) => {
-      const clientId = process.env.GOOGLE_CLIENT_ID;
-      if (!clientId) {
+      if (!ENV.googleClientId) {
         return { url: null, error: 'Google OAuth not configured' };
       }
-      
-      const redirectUri = `${process.env.VITE_APP_URL || 'http://localhost:3000'}/api/google/callback`;
+
+      const redirectUri = ENV.googleRedirectUri || `${ENV.appUrl}/api/google/callback`;
       const scope = encodeURIComponent('https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/spreadsheets.readonly');
-      const state = ctx.user.id.toString();
-      
-      const url = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${scope}&access_type=offline&prompt=consent&state=${state}`;
-      
+      const state = `${ctx.user.id}:import`;
+
+      const url = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${ENV.googleClientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${scope}&access_type=offline&prompt=consent&state=${state}`;
+
       return { url, error: null };
     }),
     
@@ -2982,6 +2988,49 @@ export const appRouter = router({
   }),
 
   // ============================================
+  // GOOGLE DRIVE INTEGRATION
+  // ============================================
+  googleDrive: router({
+    // Get connection status for Google Drive
+    getConnectionStatus: protectedProcedure.query(async ({ ctx }) => {
+      const token = await db.getGoogleOAuthToken(ctx.user.id);
+      if (!token) {
+        return { connected: false, email: null, configured: !!ENV.googleClientId };
+      }
+      const isExpired = token.expiresAt && new Date(token.expiresAt) < new Date();
+      return {
+        connected: !isExpired,
+        email: token.googleEmail,
+        needsRefresh: isExpired,
+        configured: !!ENV.googleClientId,
+      };
+    }),
+
+    // Get Google OAuth URL for Drive access
+    getAuthUrl: protectedProcedure.query(async ({ ctx }) => {
+      if (!ENV.googleClientId) {
+        return { url: null, error: 'Google OAuth not configured. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to your environment.' };
+      }
+
+      const redirectUri = ENV.googleRedirectUri || `${ENV.appUrl}/api/google/callback`;
+      const scope = encodeURIComponent(
+        'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/spreadsheets.readonly'
+      );
+      const state = `${ctx.user.id}:document-import`;
+
+      const url = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${ENV.googleClientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${scope}&access_type=offline&prompt=consent&state=${state}`;
+
+      return { url, error: null };
+    }),
+
+    // Disconnect Google Drive
+    disconnect: protectedProcedure.mutation(async ({ ctx }) => {
+      await db.deleteGoogleOAuthToken(ctx.user.id);
+      return { success: true };
+    }),
+  }),
+
+  // ============================================
   // GMAIL INTEGRATION
   // ============================================
   gmail: router({
@@ -2993,12 +3042,12 @@ export const appRouter = router({
       }
       // Check if token is expired
       const isExpired = token.expiresAt && new Date(token.expiresAt) < new Date();
-      
+
       // Get Gmail profile if connected
       if (!isExpired) {
         const profileResult = await getGmailProfile(token.accessToken);
-        return { 
-          connected: true, 
+        return {
+          connected: true,
           email: profileResult.profile?.emailAddress || token.googleEmail,
           messagesTotal: profileResult.profile?.messagesTotal,
           threadsTotal: profileResult.profile?.threadsTotal,
@@ -3014,15 +3063,14 @@ export const appRouter = router({
     
     // Get full access OAuth URL
     getAuthUrl: protectedProcedure.query(async ({ ctx }) => {
-      const clientId = process.env.GOOGLE_CLIENT_ID;
-      if (!clientId) {
+      if (!ENV.googleClientId) {
         return { url: null, error: 'Google OAuth not configured' };
       }
-      
-      const url = getGoogleFullAccessAuthUrl(ctx.user.id);
+
+      const url = getGoogleFullAccessAuthUrl(ctx.user.id, 'integrations');
       return { url, error: null };
     }),
-    
+
     // Send email via Gmail
     sendEmail: protectedProcedure
       .input(z.object({
@@ -3167,15 +3215,14 @@ export const appRouter = router({
     
     // Get full access OAuth URL
     getAuthUrl: protectedProcedure.query(async ({ ctx }) => {
-      const clientId = process.env.GOOGLE_CLIENT_ID;
-      if (!clientId) {
+      if (!ENV.googleClientId) {
         return { url: null, error: 'Google OAuth not configured' };
       }
-      
-      const url = getGoogleFullAccessAuthUrl(ctx.user.id);
+
+      const url = getGoogleFullAccessAuthUrl(ctx.user.id, 'integrations');
       return { url, error: null };
     }),
-    
+
     // Create Google Doc
     createDoc: protectedProcedure
       .input(z.object({
@@ -11196,47 +11243,16 @@ Ask if they received the original request and if they can provide a quote.`;
 
     // List folders from Google Drive
     listDriveFolders: protectedProcedure
-      .input(z.object({ 
+      .input(z.object({
         parentFolderId: z.string().optional(),
-        pageToken: z.string().optional() 
+        pageToken: z.string().optional()
       }).optional())
       .query(async ({ ctx, input }) => {
-        const token = await db.getGoogleOAuthToken(ctx.user.id);
-        if (!token) {
-          // Return empty result instead of throwing error
+        const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+        if (error || !accessToken) {
           return { folders: [], nextPageToken: undefined, notConnected: true };
         }
-        
-        // Refresh token if needed
-        let accessToken = token.accessToken;
-        if (token.expiresAt && new Date(token.expiresAt) < new Date() && token.refreshToken) {
-          const clientId = process.env.GOOGLE_CLIENT_ID;
-          const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-          
-          if (clientId && clientSecret) {
-            const refreshResponse = await fetch('https://oauth2.googleapis.com/token', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-              body: new URLSearchParams({
-                client_id: clientId,
-                client_secret: clientSecret,
-                refresh_token: token.refreshToken,
-                grant_type: 'refresh_token',
-              }),
-            });
-            
-            if (refreshResponse.ok) {
-              const refreshData = await refreshResponse.json();
-              accessToken = refreshData.access_token;
-              await db.upsertGoogleOAuthToken({
-                userId: ctx.user.id,
-                accessToken: refreshData.access_token,
-                expiresAt: new Date(Date.now() + refreshData.expires_in * 1000),
-              });
-            }
-          }
-        }
-        
+
         // Build query for folders
         const parentQuery = input?.parentFolderId 
           ? `'${input.parentFolderId}' in parents` 
@@ -11266,47 +11282,16 @@ Ask if they received the original request and if they can provide a quote.`;
 
     // List files in a Google Drive folder (PDFs, Excel, CSV, images)
     listDriveFiles: protectedProcedure
-      .input(z.object({ 
+      .input(z.object({
         folderId: z.string(),
-        pageToken: z.string().optional() 
+        pageToken: z.string().optional()
       }))
       .query(async ({ ctx, input }) => {
-        const token = await db.getGoogleOAuthToken(ctx.user.id);
-        if (!token) {
-          // Return empty result instead of throwing error
+        const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+        if (error || !accessToken) {
           return { files: [], nextPageToken: undefined, notConnected: true };
         }
-        
-        // Refresh token if needed
-        let accessToken = token.accessToken;
-        if (token.expiresAt && new Date(token.expiresAt) < new Date() && token.refreshToken) {
-          const clientId = process.env.GOOGLE_CLIENT_ID;
-          const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-          
-          if (clientId && clientSecret) {
-            const refreshResponse = await fetch('https://oauth2.googleapis.com/token', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-              body: new URLSearchParams({
-                client_id: clientId,
-                client_secret: clientSecret,
-                refresh_token: token.refreshToken,
-                grant_type: 'refresh_token',
-              }),
-            });
-            
-            if (refreshResponse.ok) {
-              const refreshData = await refreshResponse.json();
-              accessToken = refreshData.access_token;
-              await db.upsertGoogleOAuthToken({
-                userId: ctx.user.id,
-                accessToken: refreshData.access_token,
-                expiresAt: new Date(Date.now() + refreshData.expires_in * 1000),
-              });
-            }
-          }
-        }
-        
+
         // Query for supported file types
         const mimeTypes = [
           "mimeType='application/pdf'",
@@ -11347,41 +11332,11 @@ Ask if they received the original request and if they can provide a quote.`;
         mimeType: z.string(),
       }))
       .mutation(async ({ ctx, input }) => {
-        const token = await db.getGoogleOAuthToken(ctx.user.id);
-        if (!token) {
-          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Google account not connected. Please connect your Google account first.' });
+        const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+        if (error || !accessToken) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error || 'Google account not connected. Please connect your Google account first.' });
         }
-        
-        // Refresh token if needed
-        let accessToken = token.accessToken;
-        if (token.expiresAt && new Date(token.expiresAt) < new Date() && token.refreshToken) {
-          const clientId = process.env.GOOGLE_CLIENT_ID;
-          const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-          
-          if (clientId && clientSecret) {
-            const refreshResponse = await fetch('https://oauth2.googleapis.com/token', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-              body: new URLSearchParams({
-                client_id: clientId,
-                client_secret: clientSecret,
-                refresh_token: token.refreshToken,
-                grant_type: 'refresh_token',
-              }),
-            });
-            
-            if (refreshResponse.ok) {
-              const refreshData = await refreshResponse.json();
-              accessToken = refreshData.access_token;
-              await db.upsertGoogleOAuthToken({
-                userId: ctx.user.id,
-                accessToken: refreshData.access_token,
-                expiresAt: new Date(Date.now() + refreshData.expires_in * 1000),
-              });
-            }
-          }
-        }
-        
+
         // Download file content
         const downloadUrl = `https://www.googleapis.com/drive/v3/files/${input.fileId}?alt=media`;
         const response = await fetch(downloadUrl, {
@@ -11413,41 +11368,11 @@ Ask if they received the original request and if they can provide a quote.`;
         })),
       }))
       .mutation(async ({ ctx, input }) => {
-        const token = await db.getGoogleOAuthToken(ctx.user.id);
-        if (!token) {
-          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Google account not connected. Please connect your Google account first.' });
+        const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+        if (error || !accessToken) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error || 'Google account not connected. Please connect your Google account first.' });
         }
-        
-        // Refresh token if needed
-        let accessToken = token.accessToken;
-        if (token.expiresAt && new Date(token.expiresAt) < new Date() && token.refreshToken) {
-          const clientId = process.env.GOOGLE_CLIENT_ID;
-          const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-          
-          if (clientId && clientSecret) {
-            const refreshResponse = await fetch('https://oauth2.googleapis.com/token', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-              body: new URLSearchParams({
-                client_id: clientId,
-                client_secret: clientSecret,
-                refresh_token: token.refreshToken,
-                grant_type: 'refresh_token',
-              }),
-            });
-            
-            if (refreshResponse.ok) {
-              const refreshData = await refreshResponse.json();
-              accessToken = refreshData.access_token;
-              await db.upsertGoogleOAuthToken({
-                userId: ctx.user.id,
-                accessToken: refreshData.access_token,
-                expiresAt: new Date(Date.now() + refreshData.expires_in * 1000),
-              });
-            }
-          }
-        }
-        
+
         const results: Array<{
           fileId: string;
           fileName: string;

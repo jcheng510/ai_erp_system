@@ -48,27 +48,27 @@ const GOOGLE_DOCS_EXPORT_TYPES: Record<string, { mimeType: string; extension: st
 /**
  * Get OAuth URL for Google Drive access
  */
-export function getGoogleDriveAuthUrl(userId: number): string {
+export function getGoogleDriveAuthUrl(userId: number, origin: string = 'document-import'): string {
   const clientId = ENV.googleClientId;
-  const redirectUri = ENV.googleRedirectUri || `${ENV.appUrl}/api/oauth/google/callback`;
-  
+  const redirectUri = ENV.googleRedirectUri || `${ENV.appUrl}/api/google/callback`;
+
   // Request drive.readonly scope for reading files and folders
   const scope = encodeURIComponent(
     "https://www.googleapis.com/auth/drive.readonly " +
     "https://www.googleapis.com/auth/spreadsheets.readonly"
   );
-  
-  const state = userId.toString();
-  
+
+  const state = `${userId}:${origin}`;
+
   return `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${scope}&access_type=offline&prompt=consent&state=${state}`;
 }
 
 /**
  * Get comprehensive OAuth URL for all Google services (Drive, Gmail, Workspace)
  */
-export function getGoogleFullAccessAuthUrl(userId: number): string {
+export function getGoogleFullAccessAuthUrl(userId: number, origin: string = 'integrations'): string {
   const clientId = ENV.googleClientId;
-  const redirectUri = ENV.googleRedirectUri || `${ENV.appUrl}/api/oauth/google/callback`;
+  const redirectUri = ENV.googleRedirectUri || `${ENV.appUrl}/api/google/callback`;
   
   // Request all necessary scopes for Drive, Gmail, Docs, and Sheets
   const scope = encodeURIComponent(
@@ -81,8 +81,8 @@ export function getGoogleFullAccessAuthUrl(userId: number): string {
     "https://www.googleapis.com/auth/gmail.readonly"
   );
   
-  const state = userId.toString();
-  
+  const state = `${userId}:${origin}`;
+
   return `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${scope}&access_type=offline&prompt=consent&state=${state}`;
 }
 

@@ -154,59 +154,71 @@ async function startServer() {
   // Google OAuth callback for Drive/Sheets integration
   app.get('/api/google/callback', async (req, res) => {
     const { code, state } = req.query;
-    
-    if (!code || !state) {
-      return res.redirect('/import?error=missing_params');
+
+    // Parse state: format is "userId:origin" (e.g., "42:document-import" or "42:import")
+    const stateStr = state as string || '';
+    const colonIdx = stateStr.indexOf(':');
+    const userIdStr = colonIdx > 0 ? stateStr.substring(0, colonIdx) : stateStr;
+    const origin = colonIdx > 0 ? stateStr.substring(colonIdx + 1) : 'import';
+
+    // Map origin to redirect path
+    const redirectPaths: Record<string, string> = {
+      'document-import': '/operations/document-import',
+      'import': '/import',
+      'integrations': '/settings/integrations',
+    };
+    const redirectBase = redirectPaths[origin] || '/import';
+
+    if (!code || !stateStr) {
+      return res.redirect(`${redirectBase}?error=missing_params`);
     }
-    
-    // Validate state parameter (user ID)
-    const userId = parseInt(state as string, 10);
+
+    const userId = parseInt(userIdStr, 10);
     if (isNaN(userId) || userId <= 0) {
-      return res.redirect('/import?error=invalid_state');
+      return res.redirect(`${redirectBase}?error=invalid_state`);
     }
-    
-    const clientId = process.env.GOOGLE_CLIENT_ID;
-    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-    
-    if (!clientId || !clientSecret) {
-      return res.redirect('/import?error=not_configured');
+
+    if (!ENV.googleClientId || !ENV.googleClientSecret) {
+      return res.redirect(`${redirectBase}?error=not_configured`);
     }
-    
+
+    const redirectUri = ENV.googleRedirectUri || `${ENV.appUrl}/api/google/callback`;
+
     try {
       // Exchange code for tokens
       const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
-          client_id: clientId,
-          client_secret: clientSecret,
+          client_id: ENV.googleClientId,
+          client_secret: ENV.googleClientSecret,
           code: code as string,
           grant_type: 'authorization_code',
-          redirect_uri: `${process.env.VITE_APP_URL || 'http://localhost:3000'}/api/google/callback`,
+          redirect_uri: redirectUri,
         }),
       });
-      
+
       if (!tokenResponse.ok) {
-        console.error('Token exchange failed:', await tokenResponse.text());
-        return res.redirect('/import?error=token_exchange_failed');
+        console.error('[Google OAuth] Token exchange failed:', await tokenResponse.text());
+        return res.redirect(`${redirectBase}?error=token_exchange_failed`);
       }
-      
+
       const tokens = await tokenResponse.json();
-      
+
       // Get user info from Google
       const userInfoResponse = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
         headers: { Authorization: `Bearer ${tokens.access_token}` },
       });
-      
+
       let googleEmail = null;
       if (userInfoResponse.ok) {
         const userInfo = await userInfoResponse.json();
         googleEmail = userInfo.email;
       }
-      
+
       // Import db functions dynamically to avoid circular deps
       const { upsertGoogleOAuthToken } = await import('../db');
-      
+
       // Save tokens to database
       await upsertGoogleOAuthToken({
         userId,
@@ -216,11 +228,11 @@ async function startServer() {
         scope: tokens.scope,
         googleEmail,
       });
-      
-      res.redirect('/import?success=connected');
+
+      res.redirect(`${redirectBase}?success=connected`);
     } catch (error) {
-      console.error('Google OAuth error:', error);
-      res.redirect('/import?error=oauth_failed');
+      console.error('[Google OAuth] Callback error:', error);
+      res.redirect(`${redirectBase}?error=oauth_failed`);
     }
   });
 

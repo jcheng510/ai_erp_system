@@ -27,7 +27,8 @@ import {
   History,
   Settings,
   Loader2,
-  ExternalLink
+  ExternalLink,
+  HardDrive
 } from "lucide-react";
 
 export default function IntegrationsPage() {
@@ -41,11 +42,13 @@ export default function IntegrationsPage() {
   const { data: status, isLoading, refetch } = trpc.integrations.getStatus.useQuery();
   const { data: syncHistory } = trpc.integrations.getSyncHistory.useQuery({ limit: 20 });
 
-  // Get OAuth URLs for Gmail and Google Workspace
+  // Get OAuth URLs for Gmail, Google Workspace, and Google Drive
   const { data: gmailAuthUrl } = trpc.gmail.getAuthUrl.useQuery();
   const { data: workspaceAuthUrl } = trpc.googleWorkspace.getAuthUrl.useQuery();
   const { data: sheetsAuthUrl } = trpc.sheetsImport.getAuthUrl.useQuery();
-  
+  const { data: driveAuthUrl } = trpc.googleDrive.getAuthUrl.useQuery();
+  const { data: driveConnectionStatus } = trpc.googleDrive.getConnectionStatus.useQuery();
+
   // Get QuickBooks OAuth URL
   const { data: quickbooksAuthUrl } = trpc.quickbooks.getAuthUrl.useQuery();
 
@@ -435,6 +438,45 @@ export default function IntegrationsPage() {
                   >
                     <Settings className="w-4 h-4 mr-2" />
                     Configure
+                  </Button>
+                </CardContent>
+              </Card>
+
+              {/* Google Drive Card */}
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-yellow-500/10 rounded-lg">
+                      <HardDrive className="w-5 h-5 text-yellow-500" />
+                    </div>
+                    <div>
+                      <CardTitle className="text-lg">Google Drive</CardTitle>
+                      <CardDescription>Document import from Drive</CardDescription>
+                    </div>
+                  </div>
+                  {getStatusBadge(driveConnectionStatus?.connected ? 'connected' : 'not_configured')}
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm text-muted-foreground mb-4">
+                    {driveConnectionStatus?.connected
+                      ? `Connected as ${driveConnectionStatus.email}. Import documents directly from Google Drive.`
+                      : "Connect Google Drive to import purchase orders, invoices, and customs documents."}
+                  </p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      if (driveConnectionStatus?.connected) {
+                        window.location.href = '/operations/document-import';
+                      } else if (driveAuthUrl?.url) {
+                        window.location.href = driveAuthUrl.url;
+                      } else {
+                        toast.error(driveAuthUrl?.error || "Google OAuth not configured");
+                      }
+                    }}
+                  >
+                    <Settings className="w-4 h-4 mr-2" />
+                    {driveConnectionStatus?.connected ? "Open Document Import" : "Connect"}
                   </Button>
                 </CardContent>
               </Card>
