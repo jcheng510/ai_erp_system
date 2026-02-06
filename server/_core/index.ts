@@ -154,7 +154,9 @@ async function startServer() {
   // ============================================
   // SHOPIFY WEBHOOK ENDPOINTS
   // ============================================
-  app.post('/webhooks/shopify/orders', express.raw({ type: 'application/json' }), async (req, res) => {
+  
+  // Generic Shopify webhook handler to reduce code duplication
+  const handleShopifyWebhook = async (req: any, res: any, endpointType: 'orders' | 'inventory') => {
     try {
       const rawBody = req.body.toString();
       const { processShopifyWebhook } = await import('./shopify');
@@ -173,38 +175,10 @@ async function startServer() {
         return res.status(result.error === 'Invalid signature' ? 401 : 400).json({ error: result.error });
       }
 
-      console.log(`[Shopify Webhook] Received ${result.topic} for order ${result.payload?.id}`);
-      
-      // Process in background (webhook processing logic already exists in routers.ts handleWebhook)
-      // For now, we'll just acknowledge receipt and process asynchronously
-      res.status(200).json({ success: true });
-
-    } catch (error) {
-      console.error('[Shopify Webhook] Error:', error);
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-
-  app.post('/webhooks/shopify/inventory', express.raw({ type: 'application/json' }), async (req, res) => {
-    try {
-      const rawBody = req.body.toString();
-      const { processShopifyWebhook } = await import('./shopify');
-      
-      const result = await processShopifyWebhook(rawBody, {
-        hmac: req.headers['x-shopify-hmac-sha256'] as string,
-        shopDomain: req.headers['x-shopify-shop-domain'] as string,
-        topic: req.headers['x-shopify-topic'] as string,
-      });
-
-      if (!result.shouldProcess) {
-        if (result.error === 'Already processed') {
-          return res.status(200).json({ success: true, message: 'Already processed' });
-        }
-        console.warn('[Shopify Webhook]', result.error);
-        return res.status(result.error === 'Invalid signature' ? 401 : 400).json({ error: result.error });
-      }
-
-      console.log(`[Shopify Webhook] Received ${result.topic} for inventory`);
+      const logMessage = endpointType === 'orders' 
+        ? `Received ${result.topic} for order ${result.payload?.id}`
+        : `Received ${result.topic} for inventory`;
+      console.log(`[Shopify Webhook] ${logMessage}`);
       
       res.status(200).json({ success: true });
 
@@ -212,7 +186,15 @@ async function startServer() {
       console.error('[Shopify Webhook] Error:', error);
       res.status(500).json({ error: 'Internal server error' });
     }
-  });
+  };
+
+  app.post('/webhooks/shopify/orders', express.raw({ type: 'application/json' }), (req, res) => 
+    handleShopifyWebhook(req, res, 'orders')
+  );
+
+  app.post('/webhooks/shopify/inventory', express.raw({ type: 'application/json' }), (req, res) => 
+    handleShopifyWebhook(req, res, 'inventory')
+  );
   
   // Google OAuth callback for Drive/Sheets integration
   app.get('/api/google/callback', async (req, res) => {

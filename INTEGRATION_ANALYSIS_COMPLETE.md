@@ -55,49 +55,55 @@ After comprehensive analysis of the AI ERP system codebase, I found that **most 
 - ✅ **Transaction Ledger**: Full audit trail of inventory movements
 - **Location**: `drizzle/schema.ts` (lines 1782-2102)
 
-#### 6. **Shopify (Partial - Missing OAuth & Webhooks)**
+#### 6. **Shopify OAuth (Already Complete)**
+- ✅ **Complete OAuth implementation** in `server/_core/index.ts` (lines 291-427)
 - ✅ Database tables: `shopifyStores`, `shopifySkuMappings`, `shopifyLocationMappings`
 - ✅ API routers for store management and product mapping
-- ✅ OAuth callback route (already implemented)
+- ✅ OAuth callback route at `/api/shopify/callback`
 - ✅ Order sync logic
 - ✅ Customer sync capability
-- ⚠️ **Missing**: OAuth client helper functions
+- ✅ User authentication validation and company scoping
 - ⚠️ **Missing**: Webhook endpoint registration
-- ⚠️ **Missing**: Environment variable configuration
+- ⚠️ **Missing**: Multi-tenant `companyId` field in schema
 
 ### ✅ Newly Implemented Components (This PR)
 
-#### Shopify Integration Completion
+#### Shopify Webhook Integration & Bug Fixes
 
-1. **OAuth Client** (`server/_core/shopify.ts`)
-   - OAuth authorization URL generation
-   - State parameter validation with CSRF protection
-   - Token exchange for access tokens
+**What This PR Actually Added:**
+
+1. **Webhook Verification** (`server/_core/shopify.ts`)
    - HMAC SHA256 webhook signature verification
-   - API request helper functions
-   - Shop info retrieval for testing
+   - `processShopifyWebhook()` helper with common validation logic
+   - Idempotency key generation with race condition protection
+   - **Note**: OAuth implementation already existed in `server/_core/index.ts`
 
 2. **Webhook Endpoints** (`server/_core/index.ts`)
    - `POST /webhooks/shopify/orders` - Order creation/updates
    - `POST /webhooks/shopify/inventory` - Inventory level changes
+   - Generic handler function to reduce code duplication
    - HMAC signature verification
    - Idempotency protection
    - Event logging to `webhookEvents` table
 
-3. **Environment Configuration**
+3. **Database Schema Updates** (`drizzle/schema.ts`)
+   - Added `companyId` field to `shopifyStores` table for multi-tenant support
+   - Fixes runtime error where OAuth callback set non-existent field
+
+4. **Environment Configuration**
    - Added `SHOPIFY_CLIENT_ID` to `.env.example`
    - Added `SHOPIFY_CLIENT_SECRET` to `.env.example`
    - Added `SHOPIFY_REDIRECT_URI` to `.env.example`
    - Updated `server/_core/env.ts` with Shopify variables
 
-4. **Database Functions** (`server/db.ts`)
+5. **Database Functions** (`server/db.ts`)
    - `upsertShopifyStore()` - Create or update store connection
    - Type-safe implementation
 
-5. **Helper Function** (`server/_core/shopify.ts`)
-   - `processShopifyWebhook()` - Common webhook validation logic
-   - Reduces code duplication
-   - Centralizes signature verification and idempotency checking
+6. **Documentation**
+   - `SHOPIFY_OAUTH_SETUP.md` - Complete setup guide with manual webhook configuration steps
+   - `INTEGRATION_ANALYSIS_COMPLETE.md` - Comprehensive analysis
+   - Corrected inaccurate claims about OAuth being added (it already existed)
 
 6. **Documentation** (`SHOPIFY_OAUTH_SETUP.md`)
    - Complete setup guide
