@@ -2556,7 +2556,7 @@ Rank all quotes and identify the best option.`;
         approvalResult = {
           autoApproved: true,
           approvalId: null,
-          message: `Quote auto-approved. Total: $${bestQuoteTotal.toFixed(2)} is below threshold $${autoApproveThreshold}`,
+          message: `Quote auto-approved. Total: $${bestQuoteTotal.toFixed(2)} is at or below threshold $${autoApproveThreshold}`,
         };
       } else {
         // Request approval
@@ -2590,6 +2590,8 @@ Rank all quotes and identify the best option.`;
       const vendor = await db.select().from(vendors).where(eq(vendors.id, bestQuote.vendorId));
 
       if (step3.data.autoApproved) {
+        const procurementEmail = process.env.PROCUREMENT_EMAIL || "procurement@company.com";
+        
         // Send award notification email
         await db.insert(vendorRfqEmails).values({
           rfqId,
@@ -2597,7 +2599,7 @@ Rank all quotes and identify the best option.`;
           quoteId: bestQuote.id,
           direction: "outbound",
           emailType: "award_notification",
-          fromEmail: "procurement@company.com",
+          fromEmail: procurementEmail,
           toEmail: vendor[0]?.email,
           subject: `Award Notification - ${rfq.rfqNumber}`,
           body: `Congratulations! Your quote has been selected for ${rfq.materialName}.`,
@@ -2616,7 +2618,7 @@ Rank all quotes and identify the best option.`;
             quoteId: quote.id,
             direction: "outbound",
             emailType: "rejection_notification",
-            fromEmail: "procurement@company.com",
+            fromEmail: procurementEmail,
             toEmail: otherVendor[0]?.email,
             subject: `Quote Response - ${rfq.rfqNumber}`,
             body: `Thank you for your quote. We have selected another vendor for this RFQ.`,
@@ -2867,7 +2869,10 @@ Return vendor IDs in order of preference.`;
 
     // Step 3: Create RFQ
     const step3 = await engine.recordStep(context, 3, "Create RFQ", "data_create", async () => {
-      const rfqNumber = `RFQ-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+      // Generate unique RFQ number with timestamp and random component
+      const timestamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+      const randomPart = Math.random().toString(36).substring(2, 8).toUpperCase();
+      const rfqNumber = `RFQ-${timestamp}-${randomPart}`;
 
       const [rfq] = await db
         .insert(vendorRfqs)
@@ -2983,7 +2988,7 @@ Generate a professional, concise email requesting a quote.`;
             vendorId: vendor.id,
             direction: "outbound",
             emailType: "rfq_request",
-            fromEmail: "procurement@company.com", // TODO: Get from config
+            fromEmail: process.env.PROCUREMENT_EMAIL || "procurement@company.com",
             toEmail: vendor.email,
             subject: emailContent.subject,
             body: emailContent.body,
