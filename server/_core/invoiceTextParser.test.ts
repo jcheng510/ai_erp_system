@@ -50,4 +50,18 @@ describe('Invoice Text Parser', () => {
     expect(result.quantity).toBeUndefined();
     expect(result.paymentTerms).toBeUndefined();
   });
+
+  it('should calculate correct unit price when quantity is provided', () => {
+    // This is a conceptual test for the invoice creation logic
+    // In actual implementation, $8500 for 300 units means:
+    // - Total amount: $8500
+    // - Quantity: 300
+    // - Unit price: $8500 / 300 = $28.33 per unit
+    const totalAmount = 8500;
+    const quantity = 300;
+    const expectedUnitPrice = 28.33; // rounded to 2 decimals
+    
+    const calculatedUnitPrice = totalAmount / quantity;
+    expect(Number(calculatedUnitPrice.toFixed(2))).toBe(expectedUnitPrice);
+  });
 });

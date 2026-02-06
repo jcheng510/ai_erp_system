@@ -1,6 +1,6 @@
 /**
  * Natural Language Invoice Parser
- * Parses simple text like "$8500 invoice to for 300lbs beef barbacoa bill to sysco net 30"
+ * Parses simple text like "$8500 invoice for 300lbs beef barbacoa bill to sysco net 30"
  * into structured invoice data using AI
  */
 

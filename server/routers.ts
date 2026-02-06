@@ -708,11 +708,15 @@ export const appRouter = router({
           ? `${parsed.quantity}${parsed.unit} ${parsed.description}`
           : parsed.description;
         
+        // Calculate unit price: if quantity is provided, divide total by quantity
+        const quantity = parsed.quantity ?? 1;
+        const unitPrice = parsed.amount / quantity;
+        
         await db.createInvoiceItem({
           invoiceId: invoice.id,
           description,
-          quantity: parsed.quantity?.toString() || '1',
-          unitPrice: parsed.amount.toFixed(2),
+          quantity: quantity.toString(),
+          unitPrice: unitPrice.toFixed(2),
           taxRate: '0',
           taxAmount: '0.00',
           totalAmount: parsed.amount.toFixed(2),
