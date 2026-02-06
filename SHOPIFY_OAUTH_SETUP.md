@@ -97,16 +97,33 @@ For Shopify Partner apps (public apps):
 7. You'll be redirected to Shopify to authorize the connection
 8. After authorization, you'll be redirected back to the ERP system
 
-### Configure Webhooks (Automatic)
+### Configure Webhooks (Manual Setup Required)
 
-The system automatically registers webhooks when you connect a store:
-- `orders/create` - New orders
-- `orders/updated` - Order updates
-- `inventory_levels/update` - Inventory changes
+After connecting your store, you need to manually register webhooks in your Shopify admin panel:
 
-Webhook endpoints:
-- `https://your-domain.com/webhooks/shopify/orders`
-- `https://your-domain.com/webhooks/shopify/inventory`
+1. In your Shopify admin, go to **Settings** → **Notifications**
+2. Scroll down to the **Webhooks** section
+3. Click **Create webhook** for each of the following:
+
+   **Order webhooks:**
+   - Event: `Order creation`
+   - Format: `JSON`
+   - URL: `https://your-domain.com/webhooks/shopify/orders`
+   - API version: `2024-01` or later
+
+   **Inventory webhooks:**
+   - Event: `Inventory levels update`
+   - Format: `JSON`
+   - URL: `https://your-domain.com/webhooks/shopify/inventory`
+   - API version: `2024-01` or later
+
+4. Click **Save** for each webhook
+
+Webhook endpoints in your ERP system:
+- `https://your-domain.com/webhooks/shopify/orders` - Receives order creation and updates
+- `https://your-domain.com/webhooks/shopify/inventory` - Receives inventory level changes
+
+**Note:** Automatic webhook registration is not currently implemented. Webhooks must be manually configured in the Shopify admin panel.
 
 ### Manage Connected Stores
 
