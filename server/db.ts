@@ -262,6 +262,13 @@ export async function getCustomerByEmail(email: string) {
   return result[0];
 }
 
+export async function getCustomerByQuickBooksId(qbId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(customers).where(eq(customers.quickbooksCustomerId, qbId)).limit(1);
+  return result[0];
+}
+
 export async function createCustomer(data: InsertCustomer) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -314,6 +321,13 @@ export async function updateVendor(id: number, data: Partial<InsertVendor>) {
   await db.update(vendors).set(data).where(eq(vendors.id, id));
 }
 
+export async function getVendorByQuickBooksId(qbId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(vendors).where(eq(vendors.quickbooksVendorId, qbId)).limit(1);
+  return result[0];
+}
+
 export async function deleteVendor(id: number) {
   const db = await getDb();
   if (!db) return;
@@ -360,6 +374,13 @@ export async function updateProduct(id: number, data: Partial<InsertProduct>) {
   await db.update(products).set(data).where(eq(products.id, id));
 }
 
+export async function getProductByQuickBooksId(qbId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(products).where(eq(products.quickbooksItemId, qbId)).limit(1);
+  return result[0];
+}
+
 export async function deleteProduct(id: number) {
   const db = await getDb();
   if (!db) return;
@@ -397,6 +418,20 @@ export async function updateAccount(id: number, data: Partial<InsertAccount>) {
   const db = await getDb();
   if (!db) return;
   await db.update(accounts).set(data).where(eq(accounts.id, id));
+}
+
+export async function getAccountByQuickBooksId(qbId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(accounts).where(eq(accounts.quickbooksAccountId, qbId)).limit(1);
+  return result[0];
+}
+
+export async function getAccountByCode(code: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(accounts).where(eq(accounts.code, code)).limit(1);
+  return result[0];
 }
 
 // ============================================
@@ -500,6 +535,19 @@ export async function updateInvoice(id: number, data: Partial<InsertInvoice>) {
   await db.update(invoices).set(data).where(eq(invoices.id, id));
 }
 
+export async function getInvoiceByQuickBooksId(qbId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(invoices).where(eq(invoices.quickbooksInvoiceId, qbId)).limit(1);
+  return result[0];
+}
+
+export async function getInvoiceItems(invoiceId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(invoiceItems).where(eq(invoiceItems.invoiceId, invoiceId));
+}
+
 export async function createInvoiceItem(data: typeof invoiceItems.$inferInsert) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -544,6 +592,13 @@ export async function updatePayment(id: number, data: Partial<InsertPayment>) {
   const db = await getDb();
   if (!db) return;
   await db.update(payments).set(data).where(eq(payments.id, id));
+}
+
+export async function getPaymentByQuickBooksId(qbId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(payments).where(eq(payments.quickbooksPaymentId, qbId)).limit(1);
+  return result[0];
 }
 
 // ============================================
@@ -1479,6 +1534,12 @@ export async function deleteQuickBooksOAuthToken(userId: number) {
   const db = await getDb();
   if (!db) return;
   await db.delete(quickbooksOAuthTokens).where(eq(quickbooksOAuthTokens.userId, userId));
+}
+
+export async function getAllQuickBooksConnections() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(quickbooksOAuthTokens);
 }
 
 // ============================================

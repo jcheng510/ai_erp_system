@@ -127,6 +127,30 @@ export default function IntegrationsPage() {
     },
   });
 
+  const { data: qbSyncStatus, refetch: refetchQbSync } = trpc.quickbooks.getSyncStatus.useQuery();
+
+  const qbFullSyncMutation = trpc.quickbooks.fullSync.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Sync complete: ${data.totalProcessed} records synced (${data.totalErrors} errors)`);
+      refetch();
+      refetchQbSync();
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const qbSyncEntityMutation = trpc.quickbooks.syncEntity.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Imported ${data.imported}, updated ${data.updated}${data.errors ? `, ${data.errors} errors` : ''}`);
+      refetch();
+      refetchQbSync();
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
   // Check for OAuth callback success/error in URL
   React.useEffect(() => {
     if (!searchParams) return;
@@ -455,8 +479,8 @@ export default function IntegrationsPage() {
                 </CardHeader>
                 <CardContent>
                   <p className="text-sm text-muted-foreground mb-4">
-                    {status?.quickbooks?.configured 
-                      ? `Connected to QuickBooks company ${status.quickbooks.realmId}. Sync financial data automatically.`
+                    {status?.quickbooks?.configured
+                      ? `Connected to QuickBooks company ${status.quickbooks.realmId}. Auto-syncing every 15 minutes.`
                       : "Connect QuickBooks for automatic financial sync. Add QUICKBOOKS_CLIENT_ID and QUICKBOOKS_CLIENT_SECRET in Settings → Secrets."}
                   </p>
                   <Button 
@@ -1040,6 +1064,26 @@ export default function IntegrationsPage() {
                   </div>
                 ) : (
                   <div className="space-y-4">
+                    {/* Auto-sync status banner */}
+                    <div className="p-3 bg-green-500/5 border border-green-500/20 rounded-lg">
+                      <div className="flex items-center gap-2 text-sm">
+                        <RefreshCw className="w-4 h-4 text-green-500" />
+                        <span className="font-medium text-green-700 dark:text-green-400">
+                          Continuous sync is active
+                        </span>
+                        <span className="text-muted-foreground">
+                          {qbSyncStatus?.lastSyncAt
+                            ? `Last synced ${new Date(qbSyncStatus.lastSyncAt).toLocaleString()}`
+                            : "Waiting for first sync..."}
+                        </span>
+                        {qbSyncStatus?.nextSyncAt && (
+                          <span className="text-muted-foreground ml-auto">
+                            Next: {new Date(qbSyncStatus.nextSyncAt).toLocaleTimeString()}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
                     <div className="grid gap-4 md:grid-cols-2">
                       <div className="p-4 border rounded-lg">
                         <h4 className="font-medium mb-2">Connection Info</h4>
@@ -1052,24 +1096,58 @@ export default function IntegrationsPage() {
                             <span className="text-muted-foreground">Status:</span>
                             <Badge className="bg-green-500/10 text-green-500 border-green-500/20">Active</Badge>
                           </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Auto-sync:</span>
+                            <Badge className="bg-blue-500/10 text-blue-500 border-blue-500/20">
+                              Every 15 min
+                            </Badge>
+                          </div>
                         </div>
                       </div>
 
                       <div className="p-4 border rounded-lg">
-                        <h4 className="font-medium mb-2">Quick Actions</h4>
-                        <div className="space-y-2">
-                          <Button variant="outline" size="sm" className="w-full justify-start" disabled>
-                            <RefreshCw className="w-4 h-4 mr-2" />
-                            Sync Customers
-                          </Button>
-                          <Button variant="outline" size="sm" className="w-full justify-start" disabled>
-                            <RefreshCw className="w-4 h-4 mr-2" />
-                            Sync Invoices
-                          </Button>
-                        </div>
-                        <p className="text-xs text-muted-foreground mt-2">
-                          Sync features coming soon
+                        <h4 className="font-medium mb-2">Full Sync</h4>
+                        <p className="text-xs text-muted-foreground mb-3">
+                          Pull all data from QuickBooks now
                         </p>
+                        <Button
+                          variant="default"
+                          size="sm"
+                          className="w-full"
+                          onClick={() => qbFullSyncMutation.mutate()}
+                          disabled={qbFullSyncMutation.isPending}
+                        >
+                          {qbFullSyncMutation.isPending ? (
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          ) : (
+                            <RefreshCw className="w-4 h-4 mr-2" />
+                          )}
+                          {qbFullSyncMutation.isPending ? "Syncing..." : "Sync All Now"}
+                        </Button>
+                      </div>
+                    </div>
+
+                    {/* Individual entity sync buttons */}
+                    <div className="p-4 border rounded-lg">
+                      <h4 className="font-medium mb-3">Sync Individual Entities</h4>
+                      <div className="grid gap-2 md:grid-cols-3">
+                        {(["customers", "vendors", "accounts", "products", "invoices", "payments"] as const).map((entity) => (
+                          <Button
+                            key={entity}
+                            variant="outline"
+                            size="sm"
+                            className="justify-start capitalize"
+                            onClick={() => qbSyncEntityMutation.mutate({ entityType: entity })}
+                            disabled={qbSyncEntityMutation.isPending || qbFullSyncMutation.isPending}
+                          >
+                            {qbSyncEntityMutation.isPending ? (
+                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            ) : (
+                              <RefreshCw className="w-4 h-4 mr-2" />
+                            )}
+                            Sync {entity}
+                          </Button>
+                        ))}
                       </div>
                     </div>
 
@@ -1078,11 +1156,11 @@ export default function IntegrationsPage() {
                         <div>
                           <h4 className="font-medium">Disconnect QuickBooks</h4>
                           <p className="text-sm text-muted-foreground">
-                            Remove QuickBooks integration from your account
+                            Remove QuickBooks integration and stop auto-sync
                           </p>
                         </div>
-                        <Button 
-                          variant="outline" 
+                        <Button
+                          variant="outline"
                           size="sm"
                           onClick={() => quickbooksDisconnectMutation.mutate()}
                         >

@@ -19,6 +19,8 @@ import { sendGmailMessage, createGmailDraft, listGmailMessages, getGmailMessage,
 import { createGoogleDoc, insertTextInDoc, getGoogleDoc, updateGoogleDoc, createGoogleSheet, updateGoogleSheet, appendToGoogleSheet, getGoogleSheetValues, shareGoogleFile, getFileShareableLink } from "./_core/googleWorkspace";
 import { getGoogleFullAccessAuthUrl, syncDriveFolder, listDriveFolders, getFolderInfo, getSimpleFileType } from "./_core/googleDrive";
 import { getQuickBooksAuthUrl, validateOAuthState, exchangeCodeForToken, refreshQuickBooksToken, getCompanyInfo } from "./_core/quickbooks";
+import { syncEntityFromQB, pushCustomerToQB, pushInvoiceToQB } from "./quickbooksSyncService";
+import { triggerQuickBooksSync, getQuickBooksSyncWorkerStatus } from "./quickbooksSyncWorker";
 
 // Role-based access middleware
 const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
@@ -3398,11 +3400,68 @@ export const appRouter = router({
         throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error });
       }
 
-      return { 
-        success: true, 
+      return {
+        success: true,
         message: 'QuickBooks connection is working',
-        companyName: result.data?.CompanyInfo?.CompanyName 
+        companyName: result.data?.CompanyInfo?.CompanyName
       };
+    }),
+
+    // Full sync - pull all data from QuickBooks
+    fullSync: protectedProcedure.mutation(async ({ ctx }) => {
+      const result = await triggerQuickBooksSync(ctx.user.id);
+      if ("error" in result) {
+        throw new TRPCError({ code: 'PRECONDITION_FAILED', message: result.error });
+      }
+      return result;
+    }),
+
+    // Sync a single entity type from QuickBooks
+    syncEntity: protectedProcedure
+      .input(z.object({
+        entityType: z.enum(["customers", "vendors", "products", "accounts", "invoices", "payments"]),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await syncEntityFromQB(ctx.user.id, input.entityType);
+        if ("error" in result) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: result.error });
+        }
+        return result;
+      }),
+
+    // Push a customer to QuickBooks
+    pushCustomer: protectedProcedure
+      .input(z.object({ customerId: z.number() }))
+      .mutation(async ({ ctx }) => {
+        const token = await db.getQuickBooksOAuthToken(ctx.user.id);
+        if (!token || !token.realmId) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'QuickBooks not connected' });
+        }
+        const result = await pushCustomerToQB(token.accessToken, token.realmId, ctx.user.id);
+        if (result.error) {
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error });
+        }
+        return { success: true, qbId: result.qbId };
+      }),
+
+    // Push an invoice to QuickBooks
+    pushInvoice: protectedProcedure
+      .input(z.object({ invoiceId: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const token = await db.getQuickBooksOAuthToken(ctx.user.id);
+        if (!token || !token.realmId) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'QuickBooks not connected' });
+        }
+        const result = await pushInvoiceToQB(token.accessToken, token.realmId, input.invoiceId);
+        if (result.error) {
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error });
+        }
+        return { success: true, qbId: result.qbId };
+      }),
+
+    // Get sync worker status
+    getSyncStatus: protectedProcedure.query(() => {
+      return getQuickBooksSyncWorkerStatus();
     }),
   }),
 

@@ -12,6 +12,7 @@ import * as sendgridProvider from "./sendgridProvider";
 import * as emailService from "./emailService";
 import * as db from "../db";
 import { startEmailQueueWorker } from "../emailQueueWorker";
+import { startQuickBooksSyncWorker } from "../quickbooksSyncWorker";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -455,6 +456,9 @@ async function startServer() {
 
     // Start the email queue worker
     startEmailQueueWorker();
+
+    // Start the QuickBooks continuous sync worker (every 15 minutes)
+    startQuickBooksSyncWorker();
   });
 }
 
