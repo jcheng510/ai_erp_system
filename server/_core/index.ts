@@ -8,6 +8,7 @@ import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { ENV, validateEmailConfig } from "./env";
+import { oauthRateLimiter } from "./rateLimit";
 import * as sendgridProvider from "./sendgridProvider";
 import * as emailService from "./emailService";
 import * as db from "../db";
@@ -152,7 +153,7 @@ async function startServer() {
   });
   
   // Google OAuth callback for Drive/Sheets integration
-  app.get('/api/google/callback', async (req, res) => {
+  app.get('/api/google/callback', oauthRateLimiter, async (req, res) => {
     const { code, state } = req.query;
     
     if (!code || !state) {
@@ -225,7 +226,7 @@ async function startServer() {
   });
 
   // Shopify OAuth callback
-  app.get('/api/shopify/callback', async (req, res) => {
+  app.get('/api/shopify/callback', oauthRateLimiter, async (req, res) => {
     const { code, shop, state } = req.query;
     
     if (!code || !shop || !state) {
@@ -364,7 +365,7 @@ async function startServer() {
   });
 
   // QuickBooks OAuth callback
-  app.get('/api/oauth/quickbooks/callback', async (req, res) => {
+  app.get('/api/oauth/quickbooks/callback', oauthRateLimiter, async (req, res) => {
     const { code, state, realmId } = req.query;
     
     if (!code || !state || !realmId) {
