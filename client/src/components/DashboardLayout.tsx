@@ -44,7 +44,6 @@ import {
   FileText,
   CreditCard,
   TrendingUp,
-  Warehouse,
   Truck,
   UserCog,
   FileSignature,
@@ -108,6 +107,7 @@ const menuGroups = [
       { icon: Target, label: "CRM Hub", path: "/crm/hub" },
       { icon: Users, label: "Contacts", path: "/crm/contacts" },
       { icon: MessageSquare, label: "Messaging", path: "/crm/messaging" },
+      { icon: Mail, label: "Email Inbox", path: "/operations/email-inbox" },
     ],
   },
   {
@@ -115,12 +115,7 @@ const menuGroups = [
     items: [
       { icon: Package, label: "Operations", path: "/operations" },
       { icon: Package, label: "Inventory", path: "/operations/inventory-hub" },
-      { icon: ClipboardList, label: "Inventory Mgmt", path: "/operations/inventory-management" },
-      { icon: Warehouse, label: "Manufacturing", path: "/operations/manufacturing-hub" },
-      { icon: Building2, label: "Procurement", path: "/operations/procurement-hub" },
       { icon: Truck, label: "Logistics", path: "/operations/logistics-hub" },
-      { icon: Mail, label: "Email Inbox", path: "/operations/email-inbox" },
-      { icon: FileSpreadsheet, label: "Document Import", path: "/operations/document-import" },
     ],
   },
   {
@@ -143,6 +138,7 @@ const menuGroups = [
       { icon: Users, label: "Team", path: "/settings/team" },
       { icon: Plug, label: "Integrations", path: "/settings/integrations" },
       { icon: FileSpreadsheet, label: "Import Data", path: "/import" },
+      { icon: FileSpreadsheet, label: "Document Import", path: "/operations/document-import" },
       { icon: Settings, label: "Settings", path: "/settings" },
     ],
   },
