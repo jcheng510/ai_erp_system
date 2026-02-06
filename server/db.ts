@@ -87,7 +87,13 @@ import {
   crmContacts, crmTags, crmContactTags, whatsappMessages, crmInteractions,
   crmPipelines, crmDeals, contactCaptures, crmEmailCampaigns, crmCampaignRecipients,
   InsertCrmContact, InsertCrmTag, InsertWhatsappMessage, InsertCrmInteraction,
-  InsertCrmPipeline, InsertCrmDeal, InsertContactCapture, InsertCrmEmailCampaign, InsertCrmCampaignRecipient
+  InsertCrmPipeline, InsertCrmDeal, InsertContactCapture, InsertCrmEmailCampaign, InsertCrmCampaignRecipient,
+  // Inventory costing & COGS
+  inventoryCostingConfig, inventoryCostLayers, cogsRecords, cogsPeriodSummary,
+  InsertInventoryCostingConfig, InsertInventoryCostLayer, InsertCogsRecord, InsertCogsPeriodSummary,
+  // Vendor negotiations
+  vendorNegotiations, negotiationRounds,
+  InsertVendorNegotiation, InsertNegotiationRound
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -8005,5 +8011,299 @@ export async function checkAndTriggerLowStockPurchaseOrder(
     triggered: true,
     purchaseOrderId: poResult.id,
     reason: `Auto-generated PO ${poNumber} for ${orderQty} units`
+  };
+}
+
+
+// ============================================
+// INVENTORY COSTING CONFIG
+// ============================================
+
+export async function getInventoryCostingConfigs(filters?: { companyId?: number; productId?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.companyId) conditions.push(eq(inventoryCostingConfig.companyId, filters.companyId));
+  if (filters?.productId) conditions.push(eq(inventoryCostingConfig.productId, filters.productId));
+  let query = db.select().from(inventoryCostingConfig);
+  if (conditions.length > 0) query = query.where(and(...conditions)) as any;
+  return query.orderBy(desc(inventoryCostingConfig.updatedAt));
+}
+
+export async function getInventoryCostingConfigByProduct(productId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(inventoryCostingConfig)
+    .where(and(eq(inventoryCostingConfig.productId, productId), eq(inventoryCostingConfig.isActive, true)));
+  return result[0] || null;
+}
+
+export async function createInventoryCostingConfig(data: InsertInventoryCostingConfig) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(inventoryCostingConfig).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateInventoryCostingConfig(id: number, data: Partial<InsertInventoryCostingConfig>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(inventoryCostingConfig).set(data as any).where(eq(inventoryCostingConfig.id, id));
+}
+
+// ============================================
+// INVENTORY COST LAYERS
+// ============================================
+
+export async function getInventoryCostLayers(filters?: {
+  companyId?: number; productId?: number; warehouseId?: number; status?: string;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.companyId) conditions.push(eq(inventoryCostLayers.companyId, filters.companyId));
+  if (filters?.productId) conditions.push(eq(inventoryCostLayers.productId, filters.productId));
+  if (filters?.warehouseId) conditions.push(eq(inventoryCostLayers.warehouseId, filters.warehouseId));
+  if (filters?.status) conditions.push(eq(inventoryCostLayers.status, filters.status as any));
+  let query = db.select().from(inventoryCostLayers);
+  if (conditions.length > 0) query = query.where(and(...conditions)) as any;
+  return query.orderBy(inventoryCostLayers.layerDate);
+}
+
+export async function getActiveCostLayers(productId: number, order: 'asc' | 'desc' = 'asc') {
+  const db = await getDb();
+  if (!db) return [];
+  const query = db.select().from(inventoryCostLayers)
+    .where(and(
+      eq(inventoryCostLayers.productId, productId),
+      eq(inventoryCostLayers.status, 'active')
+    ));
+  if (order === 'desc') {
+    return query.orderBy(desc(inventoryCostLayers.layerDate));
+  }
+  return query.orderBy(inventoryCostLayers.layerDate);
+}
+
+export async function createInventoryCostLayer(data: InsertInventoryCostLayer) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(inventoryCostLayers).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateInventoryCostLayer(id: number, data: Partial<InsertInventoryCostLayer>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(inventoryCostLayers).set(data as any).where(eq(inventoryCostLayers.id, id));
+}
+
+export async function getWeightedAverageCost(productId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select({
+    totalValue: sql<string>`SUM(CAST(${inventoryCostLayers.remainingQuantity} AS DECIMAL(15,4)) * CAST(${inventoryCostLayers.unitCost} AS DECIMAL(15,4)))`,
+    totalQuantity: sql<string>`SUM(CAST(${inventoryCostLayers.remainingQuantity} AS DECIMAL(15,4)))`,
+  }).from(inventoryCostLayers)
+    .where(and(
+      eq(inventoryCostLayers.productId, productId),
+      eq(inventoryCostLayers.status, 'active')
+    ));
+
+  if (!result[0] || !result[0].totalQuantity || parseFloat(result[0].totalQuantity) === 0) return null;
+  const totalValue = parseFloat(result[0].totalValue || '0');
+  const totalQuantity = parseFloat(result[0].totalQuantity || '0');
+  return {
+    averageCost: totalValue / totalQuantity,
+    totalValue,
+    totalQuantity,
+  };
+}
+
+// ============================================
+// COGS RECORDS
+// ============================================
+
+export async function getCogsRecords(filters?: {
+  companyId?: number; productId?: number; orderId?: number;
+  startDate?: Date; endDate?: Date;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.companyId) conditions.push(eq(cogsRecords.companyId, filters.companyId));
+  if (filters?.productId) conditions.push(eq(cogsRecords.productId, filters.productId));
+  if (filters?.orderId) conditions.push(eq(cogsRecords.orderId, filters.orderId));
+  if (filters?.startDate) conditions.push(gte(cogsRecords.periodDate, filters.startDate));
+  if (filters?.endDate) conditions.push(lte(cogsRecords.periodDate, filters.endDate));
+  let query = db.select().from(cogsRecords);
+  if (conditions.length > 0) query = query.where(and(...conditions)) as any;
+  return query.orderBy(desc(cogsRecords.periodDate));
+}
+
+export async function createCogsRecord(data: InsertCogsRecord) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(cogsRecords).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getCogsSummary(filters?: {
+  companyId?: number; productId?: number; periodType?: string;
+  startDate?: Date; endDate?: Date;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.companyId) conditions.push(eq(cogsPeriodSummary.companyId, filters.companyId));
+  if (filters?.productId) conditions.push(eq(cogsPeriodSummary.productId, filters.productId));
+  if (filters?.periodType) conditions.push(eq(cogsPeriodSummary.periodType, filters.periodType as any));
+  if (filters?.startDate) conditions.push(gte(cogsPeriodSummary.periodStart, filters.startDate));
+  if (filters?.endDate) conditions.push(lte(cogsPeriodSummary.periodEnd, filters.endDate));
+  let query = db.select().from(cogsPeriodSummary);
+  if (conditions.length > 0) query = query.where(and(...conditions)) as any;
+  return query.orderBy(desc(cogsPeriodSummary.periodStart));
+}
+
+export async function createCogsPeriodSummaryRecord(data: InsertCogsPeriodSummary) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(cogsPeriodSummary).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateCogsPeriodSummaryRecord(id: number, data: Partial<InsertCogsPeriodSummary>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(cogsPeriodSummary).set(data as any).where(eq(cogsPeriodSummary.id, id));
+}
+
+// Aggregated COGS dashboard stats
+export async function getCogsDashboardStats(companyId?: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const conditions = [];
+  if (companyId) conditions.push(eq(cogsRecords.companyId, companyId));
+
+  const now = new Date();
+  const thirtyDaysAgo = new Date(now);
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  conditions.push(gte(cogsRecords.periodDate, thirtyDaysAgo));
+
+  const result = await db.select({
+    totalCogs: sql<string>`COALESCE(SUM(CAST(${cogsRecords.totalCogs} AS DECIMAL(15,2))), 0)`,
+    totalRevenue: sql<string>`COALESCE(SUM(CAST(${cogsRecords.totalRevenue} AS DECIMAL(15,2))), 0)`,
+    totalQuantitySold: sql<string>`COALESCE(SUM(CAST(${cogsRecords.quantitySold} AS DECIMAL(15,4))), 0)`,
+    recordCount: sql<number>`COUNT(*)`,
+  }).from(cogsRecords)
+    .where(and(...conditions));
+
+  const totalCogs = parseFloat(result[0]?.totalCogs || '0');
+  const totalRevenue = parseFloat(result[0]?.totalRevenue || '0');
+  return {
+    totalCogs,
+    totalRevenue,
+    grossMargin: totalRevenue - totalCogs,
+    grossMarginPercent: totalRevenue > 0 ? ((totalRevenue - totalCogs) / totalRevenue) * 100 : 0,
+    totalQuantitySold: parseFloat(result[0]?.totalQuantitySold || '0'),
+    recordCount: result[0]?.recordCount || 0,
+  };
+}
+
+// ============================================
+// VENDOR NEGOTIATIONS
+// ============================================
+
+export async function getVendorNegotiations(filters?: {
+  companyId?: number; vendorId?: number; status?: string; type?: string; assignedTo?: number;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.companyId) conditions.push(eq(vendorNegotiations.companyId, filters.companyId));
+  if (filters?.vendorId) conditions.push(eq(vendorNegotiations.vendorId, filters.vendorId));
+  if (filters?.status) conditions.push(eq(vendorNegotiations.status, filters.status as any));
+  if (filters?.type) conditions.push(eq(vendorNegotiations.type, filters.type as any));
+  if (filters?.assignedTo) conditions.push(eq(vendorNegotiations.assignedTo, filters.assignedTo));
+  let query = db.select().from(vendorNegotiations);
+  if (conditions.length > 0) query = query.where(and(...conditions)) as any;
+  return query.orderBy(desc(vendorNegotiations.updatedAt));
+}
+
+export async function getVendorNegotiationById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(vendorNegotiations).where(eq(vendorNegotiations.id, id));
+  return result[0] || null;
+}
+
+export async function createVendorNegotiation(data: InsertVendorNegotiation) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(vendorNegotiations).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateVendorNegotiation(id: number, data: Partial<InsertVendorNegotiation>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(vendorNegotiations).set(data as any).where(eq(vendorNegotiations.id, id));
+}
+
+export async function getNegotiationRounds(negotiationId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(negotiationRounds)
+    .where(eq(negotiationRounds.negotiationId, negotiationId))
+    .orderBy(negotiationRounds.roundNumber);
+}
+
+export async function createNegotiationRound(data: InsertNegotiationRound) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(negotiationRounds).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getVendorNegotiationStats(companyId?: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const conditions: any[] = [];
+  if (companyId) conditions.push(eq(vendorNegotiations.companyId, companyId));
+
+  const allNegotiations = await db.select().from(vendorNegotiations)
+    .where(conditions.length > 0 ? and(...conditions) : undefined);
+
+  const active = allNegotiations.filter(n => ['in_progress', 'counter_offered', 'analyzing', 'ready'].includes(n.status));
+  const completed = allNegotiations.filter(n => n.status === 'accepted');
+  const totalSavings = completed.reduce((sum, n) => sum + parseFloat(n.estimatedSavings || '0'), 0);
+
+  return {
+    total: allNegotiations.length,
+    active: active.length,
+    completed: completed.length,
+    rejected: allNegotiations.filter(n => n.status === 'rejected').length,
+    totalEstimatedSavings: totalSavings,
+    avgConfidenceScore: completed.length > 0
+      ? completed.reduce((sum, n) => sum + parseFloat(n.aiConfidenceScore || '0'), 0) / completed.length
+      : 0,
+  };
+}
+
+// Get vendor spending history for negotiation leverage
+export async function getVendorSpendingHistory(vendorId: number) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const poData = await db.select({
+    totalSpend: sql<string>`COALESCE(SUM(CAST(${purchaseOrders.totalAmount} AS DECIMAL(15,2))), 0)`,
+    orderCount: sql<number>`COUNT(*)`,
+    avgOrderValue: sql<string>`COALESCE(AVG(CAST(${purchaseOrders.totalAmount} AS DECIMAL(15,2))), 0)`,
+  }).from(purchaseOrders)
+    .where(eq(purchaseOrders.vendorId, vendorId));
+
+  return {
+    totalSpend: parseFloat(poData[0]?.totalSpend || '0'),
+    orderCount: poData[0]?.orderCount || 0,
+    avgOrderValue: parseFloat(poData[0]?.avgOrderValue || '0'),
   };
 }

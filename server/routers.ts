@@ -11,6 +11,8 @@ import * as emailService from "./_core/emailService";
 import * as sendgridProvider from "./_core/sendgridProvider";
 import { parseUploadedDocument, importPurchaseOrder, importFreightInvoice, importVendorInvoice, importCustomsDocument, matchLineItemsToMaterials } from "./documentImportService";
 import { processAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingActions, type AIAgentContext } from "./aiAgentService";
+import { addCostLayer, recordCogs, getInventoryValuation, generateCogsPeriodSummary } from "./inventoryCostingService";
+import { analyzeNegotiationOpportunity, initiateNegotiation, addNegotiationRound, generateNegotiationDraft } from "./vendorNegotiationService";
 import { autonomousWorkflowRouter } from "./autonomousWorkflowRouter";
 import * as db from "./db";
 import { storagePut } from "./storage";
@@ -12324,6 +12326,241 @@ Ask if they received the original request and if they can provide a quote.`;
           return { success: true };
         }),
     }),
+  }),
+
+  // ============================================
+  // INVENTORY COSTING & COGS
+  // ============================================
+  inventoryCosting: router({
+    // Costing config per product
+    configs: router({
+      list: opsProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          productId: z.number().optional(),
+        }).optional())
+        .query(({ input }) => db.getInventoryCostingConfigs(input)),
+      getByProduct: opsProcedure
+        .input(z.object({ productId: z.number() }))
+        .query(({ input }) => db.getInventoryCostingConfigByProduct(input.productId)),
+      create: opsProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          productId: z.number(),
+          costingMethod: z.enum(["fifo", "lifo", "weighted_average"]),
+          isActive: z.boolean().optional(),
+          effectiveDate: z.date().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createInventoryCostingConfig({
+            ...input,
+            createdBy: ctx.user.id,
+          });
+          await createAuditLog(ctx.user.id, 'create', 'inventoryCostingConfig', result.id);
+          return result;
+        }),
+      update: opsProcedure
+        .input(z.object({
+          id: z.number(),
+          costingMethod: z.enum(["fifo", "lifo", "weighted_average"]).optional(),
+          isActive: z.boolean().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateInventoryCostingConfig(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'inventoryCostingConfig', id);
+          return { success: true };
+        }),
+    }),
+
+    // Cost layers
+    layers: router({
+      list: opsProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          productId: z.number().optional(),
+          warehouseId: z.number().optional(),
+          status: z.string().optional(),
+        }).optional())
+        .query(({ input }) => db.getInventoryCostLayers(input)),
+      create: opsProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          productId: z.number(),
+          warehouseId: z.number().optional(),
+          purchaseOrderId: z.number().optional(),
+          lotId: z.number().optional(),
+          quantity: z.number(),
+          unitCost: z.number(),
+          referenceType: z.string().optional(),
+          referenceId: z.number().optional(),
+          layerDate: z.date().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await addCostLayer({ ...input, createdBy: ctx.user.id });
+          await createAuditLog(ctx.user.id, 'create', 'inventoryCostLayer', result.id);
+          return result;
+        }),
+      getWeightedAverage: opsProcedure
+        .input(z.object({ productId: z.number() }))
+        .query(({ input }) => db.getWeightedAverageCost(input.productId)),
+    }),
+
+    // Valuation
+    valuation: opsProcedure
+      .input(z.object({ productId: z.number() }))
+      .query(({ input }) => getInventoryValuation(input.productId)),
+
+    // COGS
+    cogs: router({
+      list: financeProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          productId: z.number().optional(),
+          orderId: z.number().optional(),
+          startDate: z.date().optional(),
+          endDate: z.date().optional(),
+        }).optional())
+        .query(({ input }) => db.getCogsRecords(input)),
+      record: opsProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          productId: z.number(),
+          warehouseId: z.number().optional(),
+          orderId: z.number().optional(),
+          salesOrderLineId: z.number().optional(),
+          quantitySold: z.number(),
+          unitRevenue: z.number().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await recordCogs({ ...input, calculatedBy: ctx.user.id });
+          await createAuditLog(ctx.user.id, 'create', 'cogsRecord', result.cogsRecordId);
+          return result;
+        }),
+      summary: financeProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          productId: z.number().optional(),
+          periodType: z.string().optional(),
+          startDate: z.date().optional(),
+          endDate: z.date().optional(),
+        }).optional())
+        .query(({ input }) => db.getCogsSummary(input)),
+      generateSummary: financeProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          productId: z.number().optional(),
+          periodType: z.enum(["daily", "weekly", "monthly", "quarterly", "yearly"]),
+          periodStart: z.date(),
+          periodEnd: z.date(),
+        }))
+        .mutation(({ input }) => generateCogsPeriodSummary(input)),
+      dashboard: financeProcedure
+        .input(z.object({ companyId: z.number().optional() }).optional())
+        .query(({ input }) => db.getCogsDashboardStats(input?.companyId)),
+    }),
+  }),
+
+  // ============================================
+  // AUTOMATED VENDOR NEGOTIATIONS
+  // ============================================
+  vendorNegotiations: router({
+    list: opsProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        vendorId: z.number().optional(),
+        status: z.string().optional(),
+        type: z.string().optional(),
+        assignedTo: z.number().optional(),
+      }).optional())
+      .query(({ input }) => db.getVendorNegotiations(input)),
+    get: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const negotiation = await db.getVendorNegotiationById(input.id);
+        const rounds = negotiation ? await db.getNegotiationRounds(input.id) : [];
+        return { negotiation, rounds };
+      }),
+    create: opsProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        vendorId: z.number(),
+        title: z.string(),
+        type: z.enum(["price_reduction", "volume_discount", "payment_terms", "lead_time", "contract_renewal", "new_contract"]),
+        productIds: z.array(z.number()).optional(),
+        rawMaterialIds: z.array(z.number()).optional(),
+        currentUnitPrice: z.number().optional(),
+        currentPaymentTerms: z.number().optional(),
+        currentLeadTimeDays: z.number().optional(),
+        currentMinOrderAmount: z.number().optional(),
+        currentAnnualVolume: z.number().optional(),
+        autoAnalyze: z.boolean().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await initiateNegotiation({ ...input, initiatedBy: ctx.user.id });
+        await createAuditLog(ctx.user.id, 'create', 'vendorNegotiation', result.id);
+        return result;
+      }),
+    update: opsProcedure
+      .input(z.object({
+        id: z.number(),
+        status: z.enum(["draft", "analyzing", "ready", "in_progress", "counter_offered", "accepted", "rejected", "expired"]).optional(),
+        priority: z.enum(["low", "medium", "high", "urgent"]).optional(),
+        targetUnitPrice: z.string().optional(),
+        targetPaymentTerms: z.number().optional(),
+        targetLeadTimeDays: z.number().optional(),
+        targetMinOrderAmount: z.string().optional(),
+        targetAnnualVolume: z.string().optional(),
+        assignedTo: z.number().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { id, ...data } = input;
+        await db.updateVendorNegotiation(id, data as any);
+        await createAuditLog(ctx.user.id, 'update', 'vendorNegotiation', id);
+        return { success: true };
+      }),
+    analyze: opsProcedure
+      .input(z.object({
+        vendorId: z.number(),
+        productIds: z.array(z.number()).optional(),
+        negotiationType: z.string(),
+      }))
+      .mutation(({ input }) => analyzeNegotiationOpportunity(input)),
+    addRound: opsProcedure
+      .input(z.object({
+        negotiationId: z.number(),
+        direction: z.enum(["outbound", "inbound"]),
+        messageType: z.enum(["initial_offer", "counter_offer", "acceptance", "rejection", "info_request", "final_offer"]),
+        proposedUnitPrice: z.number().optional(),
+        proposedPaymentTerms: z.number().optional(),
+        proposedLeadTimeDays: z.number().optional(),
+        proposedMinOrderAmount: z.number().optional(),
+        proposedVolume: z.number().optional(),
+        messageContent: z.string().optional(),
+        generateAiDraft: z.boolean().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await addNegotiationRound({ ...input, sentBy: ctx.user.id });
+        await createAuditLog(ctx.user.id, 'create', 'negotiationRound', result.id);
+        return result;
+      }),
+    generateDraft: opsProcedure
+      .input(z.object({
+        negotiationId: z.number(),
+        roundNumber: z.number(),
+        messageType: z.enum(["initial_offer", "counter_offer", "final_offer", "acceptance", "rejection"]),
+      }))
+      .mutation(({ input }) => generateNegotiationDraft(input)),
+    rounds: opsProcedure
+      .input(z.object({ negotiationId: z.number() }))
+      .query(({ input }) => db.getNegotiationRounds(input.negotiationId)),
+    stats: opsProcedure
+      .input(z.object({ companyId: z.number().optional() }).optional())
+      .query(({ input }) => db.getVendorNegotiationStats(input?.companyId)),
   }),
 });
 

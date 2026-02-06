@@ -67,6 +67,8 @@ import {
   Target,
   MessageSquare,
   Heart,
+  Calculator,
+  Handshake,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -121,6 +123,8 @@ const menuGroups = [
       { icon: Truck, label: "Logistics", path: "/operations/logistics-hub" },
       { icon: Mail, label: "Email Inbox", path: "/operations/email-inbox" },
       { icon: FileSpreadsheet, label: "Document Import", path: "/operations/document-import" },
+      { icon: Calculator, label: "Inventory Costing", path: "/operations/inventory-costing" },
+      { icon: Handshake, label: "Vendor Negotiations", path: "/operations/vendor-negotiations" },
     ],
   },
   {
