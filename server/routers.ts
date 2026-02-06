@@ -7292,6 +7292,69 @@ Ask if they received the original request and if they can provide a quote.`;
         }),
     }),
     
+    // AI Agent for Vendor Quotes
+    agent: router({
+      // Request quotes from vendors autonomously
+      requestQuotes: opsProcedure
+        .input(z.object({
+          materialName: z.string().min(1),
+          quantity: z.string().min(1),
+          unit: z.string().min(1),
+          vendorIds: z.array(z.number()).min(1),
+          specifications: z.string().optional(),
+          requiredDeliveryDate: z.date().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { runVendorQuoteWorkflow } = await import("./vendorQuoteAgent");
+          const result = await runVendorQuoteWorkflow(
+            input.materialName,
+            input.quantity,
+            input.unit,
+            input.vendorIds,
+            ctx.user.id,
+            input.specifications,
+            input.requiredDeliveryDate
+          );
+          
+          if (!result.success) {
+            throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error || 'Failed to request quotes' });
+          }
+          
+          await createAuditLog(ctx.user.id, 'create', 'vendor_rfq', result.rfqId!, 'AI agent requested vendor quotes');
+          return result;
+        }),
+      
+      // Compare quotes and get best recommendation
+      compareQuotes: opsProcedure
+        .input(z.object({ rfqId: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const { gatherAndCompareQuotes } = await import("./vendorQuoteAgent");
+          const comparison = await gatherAndCompareQuotes(input.rfqId);
+          
+          if (!comparison) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'No quotes available for comparison' });
+          }
+          
+          await createAuditLog(ctx.user.id, 'view', 'vendor_rfq', input.rfqId, 'AI agent compared vendor quotes');
+          return comparison;
+        }),
+      
+      // Send reminder to vendor
+      sendReminder: opsProcedure
+        .input(z.object({ rfqId: z.number(), vendorId: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const { sendQuoteReminder } = await import("./vendorQuoteAgent");
+          const result = await sendQuoteReminder(input.rfqId, input.vendorId, ctx.user.id);
+          
+          if (!result.success) {
+            throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error || 'Failed to send reminder' });
+          }
+          
+          await createAuditLog(ctx.user.id, 'update', 'vendor_rfq', input.rfqId, `Reminder sent to vendor ${input.vendorId}`);
+          return { success: true };
+        }),
+    }),
+    
     // Emails
     emails: router({
       list: protectedProcedure

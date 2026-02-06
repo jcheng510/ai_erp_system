@@ -398,6 +398,45 @@ const AI_TOOLS: Tool[] = [
       },
     },
   },
+  // Vendor Quote Request Tool
+  {
+    type: "function",
+    function: {
+      name: "request_vendor_quotes",
+      description: "Autonomously request quotes from vendors, gather responses, compare them, and highlight the best option for approval",
+      parameters: {
+        type: "object",
+        properties: {
+          materialName: { type: "string", description: "Name of the material/product to quote" },
+          quantity: { type: "string", description: "Quantity needed" },
+          unit: { type: "string", description: "Unit of measurement (kg, lbs, pieces, etc.)" },
+          vendorIds: {
+            type: "array",
+            items: { type: "number" },
+            description: "Array of vendor IDs to request quotes from",
+          },
+          specifications: { type: "string", description: "Material specifications or requirements" },
+          requiredDeliveryDate: { type: "string", description: "Required delivery date (ISO format)" },
+        },
+        required: ["materialName", "quantity", "unit", "vendorIds"],
+      },
+    },
+  },
+  // Compare Vendor Quotes Tool
+  {
+    type: "function",
+    function: {
+      name: "compare_vendor_quotes",
+      description: "Compare received vendor quotes and highlight the best option based on price, delivery time, and other factors",
+      parameters: {
+        type: "object",
+        properties: {
+          rfqId: { type: "number", description: "RFQ ID to analyze quotes for" },
+        },
+        required: ["rfqId"],
+      },
+    },
+  },
 ];
 
 // ============================================
@@ -1195,6 +1234,61 @@ async function executeCreateTask(params: any, ctx: AIAgentContext): Promise<any>
   };
 }
 
+async function executeRequestVendorQuotes(params: any, ctx: AIAgentContext): Promise<any> {
+  const { runVendorQuoteWorkflow } = await import("./vendorQuoteAgent");
+  
+  const { materialName, quantity, unit, vendorIds, specifications, requiredDeliveryDate } = params;
+  
+  const result = await runVendorQuoteWorkflow(
+    materialName,
+    quantity,
+    unit,
+    vendorIds,
+    ctx.userId,
+    specifications,
+    requiredDeliveryDate ? new Date(requiredDeliveryDate) : undefined
+  );
+  
+  if (!result.success) {
+    throw new Error(result.error || "Failed to request vendor quotes");
+  }
+  
+  return {
+    success: true,
+    rfqId: result.rfqId,
+    taskId: result.taskId,
+    message: `RFQ created and quote requests sent to ${vendorIds.length} vendors. Awaiting responses for comparison.`,
+  };
+}
+
+async function executeCompareVendorQuotes(params: any, ctx: AIAgentContext): Promise<any> {
+  const { gatherAndCompareQuotes } = await import("./vendorQuoteAgent");
+  
+  const { rfqId } = params;
+  
+  const comparison = await gatherAndCompareQuotes(rfqId);
+  
+  if (!comparison) {
+    return {
+      success: false,
+      message: "No quotes available yet for comparison. Vendors may still be preparing their responses.",
+    };
+  }
+  
+  return {
+    success: true,
+    bestQuote: {
+      vendor: comparison.bestQuote.vendor?.name,
+      totalPrice: comparison.bestQuote.totalPrice,
+      unitPrice: comparison.bestQuote.unitPrice,
+      leadTimeDays: comparison.bestQuote.leadTimeDays,
+    },
+    totalQuotes: comparison.allQuotes.length,
+    reasoning: comparison.reasoning,
+    message: `Analyzed ${comparison.allQuotes.length} quotes. Best option is from ${comparison.bestQuote.vendor?.name} with total price $${comparison.bestQuote.totalPrice}. ${comparison.reasoning}`,
+  };
+}
+
 // ============================================
 // TOOL EXECUTION DISPATCHER
 // ============================================
@@ -1227,6 +1321,10 @@ async function executeTool(toolName: string, params: any, ctx: AIAgentContext): 
       return executeGenerateReport(params, ctx);
     case "create_task":
       return executeCreateTask(params, ctx);
+    case "request_vendor_quotes":
+      return executeRequestVendorQuotes(params, ctx);
+    case "compare_vendor_quotes":
+      return executeCompareVendorQuotes(params, ctx);
     default:
       throw new Error(`Unknown tool: ${toolName}`);
   }
@@ -1263,17 +1361,21 @@ export async function processAIAgentRequest(
 
 4. **Manage Suppliers/Vendors**: Create, update, search vendors, view vendor performance, and create purchase orders.
 
-5. **Manage Co-packers**: List co-packers, create work orders for contract manufacturing, and track production.
+5. **Request Vendor Quotes**: Autonomously request quotes from multiple vendors, gather responses, compare them based on price, delivery time, and other factors, and highlight the best option for approval.
 
-6. **Manage Customers**: Create, update, search customers, and view order history.
+6. **Compare Vendor Quotes**: Analyze received vendor quotes and provide a recommendation on the best option.
 
-7. **Manage Orders**: View and track sales orders.
+7. **Manage Co-packers**: List co-packers, create work orders for contract manufacturing, and track production.
 
-8. **Manage Freight**: Create RFQs, get quotes, book shipments, and track freight.
+8. **Manage Customers**: Create, update, search customers, and view order history.
 
-9. **Generate Reports**: Create various business reports.
+9. **Manage Orders**: View and track sales orders.
 
-10. **Create Tasks**: Create tasks that require approval before execution.
+10. **Manage Freight**: Create RFQs, get quotes, book shipments, and track freight.
+
+11. **Generate Reports**: Create various business reports.
+
+12. **Create Tasks**: Create tasks that require approval before execution.
 
 Current System Status:
 - Vendors: ${vendorCount[0]?.count || 0}
@@ -1288,6 +1390,7 @@ User Context:
 
 Guidelines:
 - For sensitive operations (creating POs, sending emails, updating inventory), create tasks that require approval unless explicitly told to execute immediately.
+- When requesting vendor quotes, use the request_vendor_quotes tool which will automatically send emails to vendors, wait for responses, compare them, and highlight the best option.
 - Provide clear, actionable responses.
 - When analyzing data, provide insights and recommendations.
 - Format currency values with $ symbol and 2 decimal places.
