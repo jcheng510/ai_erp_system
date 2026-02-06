@@ -17,6 +17,9 @@ import {
   freightQuotes,
   freightBookings,
   freightCarriers,
+  freightVendors,
+  freightVendorRoutes,
+  freightVendorSearches,
   shipments,
   workOrders,
   billOfMaterials,
@@ -24,6 +27,7 @@ import {
   aiAgentLogs,
   sentEmails,
 } from "../drizzle/schema";
+import * as dbFns from "./db";
 import { eq, and, like, desc, sql, gte, lte, or, isNull, isNotNull } from "drizzle-orm";
 
 // ============================================
@@ -323,14 +327,14 @@ const AI_TOOLS: Tool[] = [
     type: "function",
     function: {
       name: "manage_freight",
-      description: "Create RFQs, get quotes, book shipments, and track freight",
+      description: "Create RFQs, get quotes, book shipments, track freight, and search the freight vendor database for vendors by route",
       parameters: {
         type: "object",
         properties: {
           action: {
             type: "string",
-            enum: ["create_rfq", "get_quotes", "book_shipment", "track", "list_carriers"],
-            description: "Action to perform",
+            enum: ["create_rfq", "get_quotes", "book_shipment", "track", "list_carriers", "search_vendors", "list_freight_vendors", "get_freight_vendor", "add_freight_vendor"],
+            description: "Action to perform. Use search_vendors to find freight vendors by route (origin/destination). Use list_freight_vendors to browse all vendors. Use add_freight_vendor to register a new vendor found externally.",
           },
           rfqData: {
             type: "object",
@@ -338,6 +342,33 @@ const AI_TOOLS: Tool[] = [
           },
           bookingId: { type: "number" },
           carrierId: { type: "number" },
+          vendorId: { type: "number", description: "Freight vendor ID for get_freight_vendor" },
+          routeSearch: {
+            type: "object",
+            description: "Route search parameters for search_vendors",
+            properties: {
+              originCountry: { type: "string" },
+              originCity: { type: "string" },
+              destinationCountry: { type: "string" },
+              destinationCity: { type: "string" },
+              mode: { type: "string", enum: ["ocean_fcl", "ocean_lcl", "air", "express", "ground", "rail", "multimodal"] },
+              cargoType: { type: "string" },
+            },
+          },
+          vendorData: {
+            type: "object",
+            description: "Vendor details for add_freight_vendor",
+            properties: {
+              name: { type: "string" },
+              type: { type: "string" },
+              email: { type: "string" },
+              phone: { type: "string" },
+              country: { type: "string" },
+              city: { type: "string" },
+              website: { type: "string" },
+              notes: { type: "string" },
+            },
+          },
         },
         required: ["action"],
       },
@@ -1036,7 +1067,7 @@ async function executeManageFreight(params: any, ctx: AIAgentContext): Promise<a
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
-  const { action, rfqData, bookingId, carrierId } = params;
+  const { action, rfqData, bookingId, carrierId, vendorId, routeSearch, vendorData } = params;
 
   switch (action) {
     case "list_carriers": {
@@ -1075,6 +1106,64 @@ async function executeManageFreight(params: any, ctx: AIAgentContext): Promise<a
       }
       const booking = await db.select().from(freightBookings).where(eq(freightBookings.id, bookingId)).limit(1);
       return { booking: booking[0] };
+    }
+
+    // --- Freight Vendor Database actions ---
+
+    case "search_vendors": {
+      if (!routeSearch) {
+        return { error: "routeSearch parameters required (originCountry, destinationCountry, etc.)" };
+      }
+      const results = await dbFns.searchFreightVendorsByRoute({
+        ...routeSearch,
+        userId: ctx.userId,
+      });
+
+      if (results.aiSuggested) {
+        return {
+          ...results,
+          message: `No freight vendors found for the route ${routeSearch.originCountry || '?'} → ${routeSearch.destinationCountry || '?'}. Consider adding new vendors to the database or broadening the search criteria (e.g. remove city filter, try different transport mode).`,
+          suggestion: "You can use the add_freight_vendor action to register a new vendor if you find one externally, or ask the user if they'd like to search with broader criteria.",
+        };
+      }
+
+      return {
+        ...results,
+        message: `Found ${results.resultCount} vendor(s) servicing the route ${routeSearch.originCountry || '?'} → ${routeSearch.destinationCountry || '?'}.`,
+      };
+    }
+
+    case "list_freight_vendors": {
+      const vendors = await dbFns.getFreightVendors({ isActive: true });
+      return { vendors, total: vendors.length };
+    }
+
+    case "get_freight_vendor": {
+      if (!vendorId) return { error: "vendorId is required" };
+      const vendor = await dbFns.getFreightVendorById(vendorId);
+      return vendor || { error: "Freight vendor not found" };
+    }
+
+    case "add_freight_vendor": {
+      if (!vendorData?.name || !vendorData?.type) {
+        return { error: "vendorData with at least name and type is required" };
+      }
+      const task = await db.insert(aiAgentTasks).values({
+        taskType: "send_rfq",
+        status: "pending_approval",
+        priority: "medium",
+        taskData: JSON.stringify({ action: "add_freight_vendor", vendorData }),
+        aiReasoning: `AI agent found new freight vendor: ${vendorData.name}. Pending approval to add to database.`,
+        aiConfidence: "0.70",
+        relatedEntityType: "freight_vendor",
+        requiresApproval: true,
+      }).$returningId();
+
+      return {
+        taskCreated: true,
+        taskId: task[0].id,
+        message: `New freight vendor "${vendorData.name}" submitted for approval before being added to the database.`,
+      };
     }
 
     default:

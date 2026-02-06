@@ -4229,3 +4229,121 @@ export const workflowNotifications = mysqlTable("workflowNotifications", {
 
 export type WorkflowNotification = typeof workflowNotifications.$inferSelect;
 export type InsertWorkflowNotification = typeof workflowNotifications.$inferInsert;
+
+// ============================================
+// FREIGHT VENDOR DATABASE
+// ============================================
+
+// Master list of freight vendors with capabilities and coverage
+export const freightVendors = mysqlTable("freightVendors", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  type: mysqlEnum("type", ["ocean", "air", "ground", "rail", "multimodal", "freight_forwarder", "customs_broker", "3pl"]).notNull(),
+  contactName: varchar("contactName", { length: 255 }),
+  email: varchar("email", { length: 320 }),
+  phone: varchar("phone", { length: 32 }),
+  address: text("address"),
+  city: varchar("city", { length: 128 }),
+  country: varchar("country", { length: 100 }),
+  website: varchar("website", { length: 500 }),
+
+  // Capabilities
+  handlesHazmat: boolean("handlesHazmat").default(false),
+  handlesRefrigerated: boolean("handlesRefrigerated").default(false),
+  handlesOversized: boolean("handlesOversized").default(false),
+  offersDoorToDoor: boolean("offersDoorToDoor").default(false),
+  offersCustomsClearance: boolean("offersCustomsClearance").default(false),
+  offersInsurance: boolean("offersInsurance").default(false),
+  offersWarehouse: boolean("offersWarehouse").default(false),
+
+  // Business terms
+  paymentTermsDays: int("paymentTermsDays").default(30),
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  minimumShipmentValue: decimal("minimumShipmentValue", { precision: 12, scale: 2 }),
+  incotermsSupported: text("incotermsSupported"), // JSON array, e.g. ["FOB","CIF","DDP"]
+
+  // Performance / quality
+  rating: int("rating"), // 1-5
+  onTimeDeliveryPct: decimal("onTimeDeliveryPct", { precision: 5, scale: 2 }),
+  avgTransitDays: int("avgTransitDays"),
+  totalShipments: int("totalShipments").default(0),
+  totalRfqsReceived: int("totalRfqsReceived").default(0),
+  totalQuotesWon: int("totalQuotesWon").default(0),
+
+  // Status
+  isActive: boolean("isActive").default(true).notNull(),
+  isPreferred: boolean("isPreferred").default(false),
+  verifiedAt: timestamp("verifiedAt"),
+  notes: text("notes"),
+
+  // Link to existing carrier record if applicable
+  freightCarrierId: int("freightCarrierId"),
+
+  // Discovery metadata
+  source: mysqlEnum("source", ["manual", "rfq_response", "ai_search", "import", "referral"]).default("manual"),
+  lastContactedAt: timestamp("lastContactedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type FreightVendor = typeof freightVendors.$inferSelect;
+export type InsertFreightVendor = typeof freightVendors.$inferInsert;
+
+// Routes a freight vendor can service (origin → destination lanes)
+export const freightVendorRoutes = mysqlTable("freightVendorRoutes", {
+  id: int("id").autoincrement().primaryKey(),
+  freightVendorId: int("freightVendorId").notNull(),
+
+  // Origin
+  originCountry: varchar("originCountry", { length: 100 }).notNull(),
+  originCity: varchar("originCity", { length: 255 }),
+  originPort: varchar("originPort", { length: 255 }),
+  originRegion: varchar("originRegion", { length: 128 }),
+
+  // Destination
+  destinationCountry: varchar("destinationCountry", { length: 100 }).notNull(),
+  destinationCity: varchar("destinationCity", { length: 255 }),
+  destinationPort: varchar("destinationPort", { length: 255 }),
+  destinationRegion: varchar("destinationRegion", { length: 128 }),
+
+  // Route details
+  mode: mysqlEnum("mode", ["ocean_fcl", "ocean_lcl", "air", "express", "ground", "rail", "multimodal"]).notNull(),
+  transitDaysMin: int("transitDaysMin"),
+  transitDaysMax: int("transitDaysMax"),
+  frequency: varchar("frequency", { length: 100 }), // e.g. "weekly", "daily", "biweekly"
+
+  // Indicative pricing (for quick comparison before RFQ)
+  estimatedCostMin: decimal("estimatedCostMin", { precision: 12, scale: 2 }),
+  estimatedCostMax: decimal("estimatedCostMax", { precision: 12, scale: 2 }),
+  costCurrency: varchar("costCurrency", { length: 3 }).default("USD"),
+  costUnit: varchar("costUnit", { length: 50 }), // "per_container", "per_kg", "per_cbm", "flat_rate"
+  costValidUntil: timestamp("costValidUntil"),
+
+  isActive: boolean("isActive").default(true).notNull(),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type FreightVendorRoute = typeof freightVendorRoutes.$inferSelect;
+export type InsertFreightVendorRoute = typeof freightVendorRoutes.$inferInsert;
+
+// Log of AI agent searches for freight vendors
+export const freightVendorSearches = mysqlTable("freightVendorSearches", {
+  id: int("id").autoincrement().primaryKey(),
+  searchedBy: int("searchedBy"), // userId or null for automated
+  originCountry: varchar("originCountry", { length: 100 }),
+  originCity: varchar("originCity", { length: 255 }),
+  destinationCountry: varchar("destinationCountry", { length: 100 }),
+  destinationCity: varchar("destinationCity", { length: 255 }),
+  mode: varchar("mode", { length: 50 }),
+  cargoType: varchar("cargoType", { length: 50 }),
+  resultCount: int("resultCount").default(0),
+  aiSuggested: boolean("aiSuggested").default(false), // true if AI suggested searching for new vendors
+  aiSuggestions: text("aiSuggestions"), // JSON: AI-generated vendor suggestions when none found
+  linkedRfqId: int("linkedRfqId"), // freight RFQ that triggered search
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type FreightVendorSearch = typeof freightVendorSearches.$inferSelect;
+export type InsertFreightVendorSearch = typeof freightVendorSearches.$inferInsert;

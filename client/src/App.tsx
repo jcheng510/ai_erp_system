@@ -70,6 +70,7 @@ import RFQs from "./pages/freight/RFQs";
 import RFQDetail from "./pages/freight/RFQDetail";
 import CustomsClearance from "./pages/freight/CustomsClearance";
 import CustomsDetail from "./pages/freight/CustomsDetail";
+import FreightVendorDatabase from "./pages/freight/FreightVendorDatabase";
 
 // HR
 import Employees from "./pages/hr/Employees";
@@ -189,6 +190,7 @@ function Router() {
         <Route path="/freight/rfqs/:id" component={RFQDetail} />
         <Route path="/freight/customs" component={CustomsClearance} />
         <Route path="/freight/customs/:id" component={CustomsDetail} />
+        <Route path="/freight/vendor-database" component={FreightVendorDatabase} />
 
         {/* HR */}
         <Route path="/hr/employees" component={Employees} />

@@ -5081,8 +5081,188 @@ Extract and return as JSON:
           return { success: true };
         }),
     }),
+
+    // Freight Vendor Database
+    vendorDatabase: router({
+      stats: protectedProcedure.query(() => db.getFreightVendorStats()),
+
+      vendors: router({
+        list: protectedProcedure
+          .input(z.object({
+            type: z.string().optional(),
+            country: z.string().optional(),
+            isActive: z.boolean().optional(),
+            isPreferred: z.boolean().optional(),
+            search: z.string().optional(),
+          }).optional())
+          .query(({ input }) => db.getFreightVendors(input)),
+        get: protectedProcedure
+          .input(z.object({ id: z.number() }))
+          .query(({ input }) => db.getFreightVendorById(input.id)),
+        create: opsProcedure
+          .input(z.object({
+            name: z.string().min(1),
+            type: z.enum(["ocean", "air", "ground", "rail", "multimodal", "freight_forwarder", "customs_broker", "3pl"]),
+            contactName: z.string().optional(),
+            email: z.string().email().optional(),
+            phone: z.string().optional(),
+            address: z.string().optional(),
+            city: z.string().optional(),
+            country: z.string().optional(),
+            website: z.string().optional(),
+            handlesHazmat: z.boolean().optional(),
+            handlesRefrigerated: z.boolean().optional(),
+            handlesOversized: z.boolean().optional(),
+            offersDoorToDoor: z.boolean().optional(),
+            offersCustomsClearance: z.boolean().optional(),
+            offersInsurance: z.boolean().optional(),
+            offersWarehouse: z.boolean().optional(),
+            paymentTermsDays: z.number().optional(),
+            currency: z.string().optional(),
+            minimumShipmentValue: z.string().optional(),
+            incotermsSupported: z.string().optional(),
+            rating: z.number().min(1).max(5).optional(),
+            isPreferred: z.boolean().optional(),
+            notes: z.string().optional(),
+            freightCarrierId: z.number().optional(),
+            source: z.enum(["manual", "rfq_response", "ai_search", "import", "referral"]).optional(),
+          }))
+          .mutation(async ({ input, ctx }) => {
+            const result = await db.createFreightVendor(input);
+            await createAuditLog(ctx.user.id, 'create', 'freight_vendor', result.id, input.name);
+            return result;
+          }),
+        update: opsProcedure
+          .input(z.object({
+            id: z.number(),
+            name: z.string().optional(),
+            type: z.enum(["ocean", "air", "ground", "rail", "multimodal", "freight_forwarder", "customs_broker", "3pl"]).optional(),
+            contactName: z.string().optional(),
+            email: z.string().email().optional(),
+            phone: z.string().optional(),
+            address: z.string().optional(),
+            city: z.string().optional(),
+            country: z.string().optional(),
+            website: z.string().optional(),
+            handlesHazmat: z.boolean().optional(),
+            handlesRefrigerated: z.boolean().optional(),
+            handlesOversized: z.boolean().optional(),
+            offersDoorToDoor: z.boolean().optional(),
+            offersCustomsClearance: z.boolean().optional(),
+            offersInsurance: z.boolean().optional(),
+            offersWarehouse: z.boolean().optional(),
+            paymentTermsDays: z.number().optional(),
+            currency: z.string().optional(),
+            minimumShipmentValue: z.string().optional(),
+            incotermsSupported: z.string().optional(),
+            rating: z.number().min(1).max(5).optional(),
+            isActive: z.boolean().optional(),
+            isPreferred: z.boolean().optional(),
+            notes: z.string().optional(),
+            freightCarrierId: z.number().optional(),
+          }))
+          .mutation(async ({ input, ctx }) => {
+            const { id, ...data } = input;
+            await db.updateFreightVendor(id, data);
+            await createAuditLog(ctx.user.id, 'update', 'freight_vendor', id);
+            return { success: true };
+          }),
+        delete: opsProcedure
+          .input(z.object({ id: z.number() }))
+          .mutation(async ({ input, ctx }) => {
+            await db.deleteFreightVendor(input.id);
+            await createAuditLog(ctx.user.id, 'delete', 'freight_vendor', input.id);
+            return { success: true };
+          }),
+      }),
+
+      routes: router({
+        list: protectedProcedure
+          .input(z.object({ freightVendorId: z.number() }))
+          .query(({ input }) => db.getFreightVendorRoutes(input.freightVendorId)),
+        create: opsProcedure
+          .input(z.object({
+            freightVendorId: z.number(),
+            originCountry: z.string().min(1),
+            originCity: z.string().optional(),
+            originPort: z.string().optional(),
+            originRegion: z.string().optional(),
+            destinationCountry: z.string().min(1),
+            destinationCity: z.string().optional(),
+            destinationPort: z.string().optional(),
+            destinationRegion: z.string().optional(),
+            mode: z.enum(["ocean_fcl", "ocean_lcl", "air", "express", "ground", "rail", "multimodal"]),
+            transitDaysMin: z.number().optional(),
+            transitDaysMax: z.number().optional(),
+            frequency: z.string().optional(),
+            estimatedCostMin: z.string().optional(),
+            estimatedCostMax: z.string().optional(),
+            costCurrency: z.string().optional(),
+            costUnit: z.string().optional(),
+            costValidUntil: z.date().optional(),
+            notes: z.string().optional(),
+          }))
+          .mutation(async ({ input, ctx }) => {
+            const result = await db.createFreightVendorRoute(input);
+            await createAuditLog(ctx.user.id, 'create', 'freight_vendor_route', result.id);
+            return result;
+          }),
+        update: opsProcedure
+          .input(z.object({
+            id: z.number(),
+            originCountry: z.string().optional(),
+            originCity: z.string().optional(),
+            originPort: z.string().optional(),
+            originRegion: z.string().optional(),
+            destinationCountry: z.string().optional(),
+            destinationCity: z.string().optional(),
+            destinationPort: z.string().optional(),
+            destinationRegion: z.string().optional(),
+            mode: z.enum(["ocean_fcl", "ocean_lcl", "air", "express", "ground", "rail", "multimodal"]).optional(),
+            transitDaysMin: z.number().optional(),
+            transitDaysMax: z.number().optional(),
+            frequency: z.string().optional(),
+            estimatedCostMin: z.string().optional(),
+            estimatedCostMax: z.string().optional(),
+            costCurrency: z.string().optional(),
+            costUnit: z.string().optional(),
+            costValidUntil: z.date().optional(),
+            isActive: z.boolean().optional(),
+            notes: z.string().optional(),
+          }))
+          .mutation(async ({ input, ctx }) => {
+            const { id, ...data } = input;
+            await db.updateFreightVendorRoute(id, data);
+            await createAuditLog(ctx.user.id, 'update', 'freight_vendor_route', id);
+            return { success: true };
+          }),
+        delete: opsProcedure
+          .input(z.object({ id: z.number() }))
+          .mutation(async ({ input, ctx }) => {
+            await db.deleteFreightVendorRoute(input.id);
+            await createAuditLog(ctx.user.id, 'delete', 'freight_vendor_route', input.id);
+            return { success: true };
+          }),
+      }),
+
+      search: protectedProcedure
+        .input(z.object({
+          originCountry: z.string().optional(),
+          originCity: z.string().optional(),
+          destinationCountry: z.string().optional(),
+          destinationCity: z.string().optional(),
+          mode: z.string().optional(),
+          cargoType: z.string().optional(),
+          linkedRfqId: z.number().optional(),
+        }))
+        .query(({ input, ctx }) => db.searchFreightVendorsByRoute({ ...input, userId: ctx.user.id })),
+
+      searchHistory: protectedProcedure
+        .input(z.object({ limit: z.number().optional() }).optional())
+        .query(({ input }) => db.getFreightVendorSearches(input)),
+    }),
   }),
-  
+
   // ============================================
   // CUSTOMS CLEARANCE
   // ============================================

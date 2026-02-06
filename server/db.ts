@@ -87,7 +87,10 @@ import {
   crmContacts, crmTags, crmContactTags, whatsappMessages, crmInteractions,
   crmPipelines, crmDeals, contactCaptures, crmEmailCampaigns, crmCampaignRecipients,
   InsertCrmContact, InsertCrmTag, InsertWhatsappMessage, InsertCrmInteraction,
-  InsertCrmPipeline, InsertCrmDeal, InsertContactCapture, InsertCrmEmailCampaign, InsertCrmCampaignRecipient
+  InsertCrmPipeline, InsertCrmDeal, InsertContactCapture, InsertCrmEmailCampaign, InsertCrmCampaignRecipient,
+  // Freight Vendor Database
+  freightVendors, freightVendorRoutes, freightVendorSearches,
+  InsertFreightVendor, InsertFreightVendorRoute, InsertFreightVendorSearch
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -8005,5 +8008,249 @@ export async function checkAndTriggerLowStockPurchaseOrder(
     triggered: true,
     purchaseOrderId: poResult.id,
     reason: `Auto-generated PO ${poNumber} for ${orderQty} units`
+  };
+}
+
+// ============================================
+// FREIGHT VENDOR DATABASE
+// ============================================
+
+export async function getFreightVendors(filters?: {
+  type?: string;
+  country?: string;
+  isActive?: boolean;
+  isPreferred?: boolean;
+  search?: string;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (filters?.type) {
+    conditions.push(eq(freightVendors.type, filters.type as any));
+  }
+  if (filters?.country) {
+    conditions.push(eq(freightVendors.country, filters.country));
+  }
+  if (filters?.isActive !== undefined) {
+    conditions.push(eq(freightVendors.isActive, filters.isActive));
+  }
+  if (filters?.isPreferred !== undefined) {
+    conditions.push(eq(freightVendors.isPreferred, filters.isPreferred));
+  }
+  if (filters?.search) {
+    conditions.push(
+      or(
+        like(freightVendors.name, `%${filters.search}%`),
+        like(freightVendors.city, `%${filters.search}%`),
+        like(freightVendors.country, `%${filters.search}%`),
+        like(freightVendors.email, `%${filters.search}%`)
+      )
+    );
+  }
+
+  let query = db.select().from(freightVendors);
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as any;
+  }
+  return query.orderBy(desc(freightVendors.isPreferred), desc(freightVendors.rating), freightVendors.name);
+}
+
+export async function getFreightVendorById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const vendor = await db.select().from(freightVendors).where(eq(freightVendors.id, id)).limit(1);
+  if (!vendor[0]) return null;
+
+  const routes = await db.select().from(freightVendorRoutes)
+    .where(eq(freightVendorRoutes.freightVendorId, id))
+    .orderBy(freightVendorRoutes.originCountry, freightVendorRoutes.destinationCountry);
+
+  return { ...vendor[0], routes };
+}
+
+export async function createFreightVendor(data: Omit<InsertFreightVendor, 'id'>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(freightVendors).values(data as InsertFreightVendor);
+  return { id: result[0].insertId };
+}
+
+export async function updateFreightVendor(id: number, data: Partial<InsertFreightVendor>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(freightVendors).set(data).where(eq(freightVendors.id, id));
+  return { success: true };
+}
+
+export async function deleteFreightVendor(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  // Remove routes first, then vendor
+  await db.delete(freightVendorRoutes).where(eq(freightVendorRoutes.freightVendorId, id));
+  await db.delete(freightVendors).where(eq(freightVendors.id, id));
+  return { success: true };
+}
+
+// --- Route management ---
+
+export async function getFreightVendorRoutes(freightVendorId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(freightVendorRoutes)
+    .where(eq(freightVendorRoutes.freightVendorId, freightVendorId))
+    .orderBy(freightVendorRoutes.originCountry, freightVendorRoutes.destinationCountry);
+}
+
+export async function createFreightVendorRoute(data: Omit<InsertFreightVendorRoute, 'id'>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(freightVendorRoutes).values(data as InsertFreightVendorRoute);
+  return { id: result[0].insertId };
+}
+
+export async function updateFreightVendorRoute(id: number, data: Partial<InsertFreightVendorRoute>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(freightVendorRoutes).set(data).where(eq(freightVendorRoutes.id, id));
+  return { success: true };
+}
+
+export async function deleteFreightVendorRoute(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(freightVendorRoutes).where(eq(freightVendorRoutes.id, id));
+  return { success: true };
+}
+
+// --- Route-based search: find vendors that service a given lane ---
+
+export async function searchFreightVendorsByRoute(params: {
+  originCountry?: string;
+  originCity?: string;
+  destinationCountry?: string;
+  destinationCity?: string;
+  mode?: string;
+  cargoType?: string;
+  userId?: number;
+  linkedRfqId?: number;
+}) {
+  const db = await getDb();
+  if (!db) return { vendors: [], searchId: null, aiSuggested: false };
+
+  const conditions = [eq(freightVendorRoutes.isActive, true)];
+  if (params.originCountry) {
+    conditions.push(eq(freightVendorRoutes.originCountry, params.originCountry));
+  }
+  if (params.originCity) {
+    conditions.push(eq(freightVendorRoutes.originCity, params.originCity));
+  }
+  if (params.destinationCountry) {
+    conditions.push(eq(freightVendorRoutes.destinationCountry, params.destinationCountry));
+  }
+  if (params.destinationCity) {
+    conditions.push(eq(freightVendorRoutes.destinationCity, params.destinationCity));
+  }
+  if (params.mode) {
+    conditions.push(eq(freightVendorRoutes.mode, params.mode as any));
+  }
+
+  const routeMatches = await db
+    .select({
+      route: freightVendorRoutes,
+      vendor: freightVendors,
+    })
+    .from(freightVendorRoutes)
+    .innerJoin(freightVendors, eq(freightVendorRoutes.freightVendorId, freightVendors.id))
+    .where(and(...conditions, eq(freightVendors.isActive, true)));
+
+  const resultCount = routeMatches.length;
+  const aiSuggested = resultCount === 0;
+
+  // Log the search
+  const searchResult = await db.insert(freightVendorSearches).values({
+    searchedBy: params.userId ?? null,
+    originCountry: params.originCountry ?? null,
+    originCity: params.originCity ?? null,
+    destinationCountry: params.destinationCountry ?? null,
+    destinationCity: params.destinationCity ?? null,
+    mode: params.mode ?? null,
+    cargoType: params.cargoType ?? null,
+    resultCount,
+    aiSuggested,
+    linkedRfqId: params.linkedRfqId ?? null,
+  } as InsertFreightVendorSearch);
+
+  // Deduplicate by vendor and attach routes
+  const vendorMap = new Map<number, { vendor: any; routes: any[] }>();
+  for (const row of routeMatches) {
+    if (!vendorMap.has(row.vendor.id)) {
+      vendorMap.set(row.vendor.id, { vendor: row.vendor, routes: [] });
+    }
+    vendorMap.get(row.vendor.id)!.routes.push(row.route);
+  }
+
+  const results = Array.from(vendorMap.values())
+    .sort((a, b) => {
+      // Preferred first, then by rating desc
+      if (a.vendor.isPreferred !== b.vendor.isPreferred) return a.vendor.isPreferred ? -1 : 1;
+      return (b.vendor.rating ?? 0) - (a.vendor.rating ?? 0);
+    });
+
+  return {
+    vendors: results,
+    searchId: searchResult[0].insertId,
+    resultCount,
+    aiSuggested,
+    aiMessage: aiSuggested
+      ? `No freight vendors found for this route. Consider searching for new vendors or expanding the search criteria.`
+      : undefined,
+  };
+}
+
+// --- Search log ---
+
+export async function getFreightVendorSearches(filters?: { limit?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(freightVendorSearches)
+    .orderBy(desc(freightVendorSearches.createdAt))
+    .limit(filters?.limit ?? 50);
+}
+
+export async function updateFreightVendorSearch(id: number, data: Partial<InsertFreightVendorSearch>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(freightVendorSearches).set(data).where(eq(freightVendorSearches.id, id));
+  return { success: true };
+}
+
+// --- Stats ---
+
+export async function getFreightVendorStats() {
+  const db = await getDb();
+  if (!db) return { totalVendors: 0, activeVendors: 0, totalRoutes: 0, preferredVendors: 0, recentSearches: 0 };
+
+  const [vendorCounts] = await db
+    .select({
+      total: count(),
+      active: sum(sql`CASE WHEN ${freightVendors.isActive} = true THEN 1 ELSE 0 END`),
+      preferred: sum(sql`CASE WHEN ${freightVendors.isPreferred} = true THEN 1 ELSE 0 END`),
+    })
+    .from(freightVendors);
+
+  const [routeCount] = await db.select({ total: count() }).from(freightVendorRoutes);
+  const [searchCount] = await db
+    .select({ total: count() })
+    .from(freightVendorSearches)
+    .where(gte(freightVendorSearches.createdAt, new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)));
+
+  return {
+    totalVendors: vendorCounts?.total ?? 0,
+    activeVendors: Number(vendorCounts?.active ?? 0),
+    totalRoutes: routeCount?.total ?? 0,
+    preferredVendors: Number(vendorCounts?.preferred ?? 0),
+    recentSearches: searchCount?.total ?? 0,
   };
 }

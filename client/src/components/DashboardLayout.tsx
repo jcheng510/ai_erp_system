@@ -67,6 +67,7 @@ import {
   Target,
   MessageSquare,
   Heart,
+  Database,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -121,6 +122,16 @@ const menuGroups = [
       { icon: Truck, label: "Logistics", path: "/operations/logistics-hub" },
       { icon: Mail, label: "Email Inbox", path: "/operations/email-inbox" },
       { icon: FileSpreadsheet, label: "Document Import", path: "/operations/document-import" },
+    ],
+  },
+  {
+    label: "Freight",
+    items: [
+      { icon: Ship, label: "Freight Dashboard", path: "/freight" },
+      { icon: Database, label: "Vendor Database", path: "/freight/vendor-database" },
+      { icon: FileText, label: "Freight RFQs", path: "/freight/rfqs" },
+      { icon: Truck, label: "Carriers", path: "/freight/carriers" },
+      { icon: PackageCheck, label: "Customs", path: "/freight/customs" },
     ],
   },
   {
