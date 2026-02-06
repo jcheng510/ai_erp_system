@@ -87,7 +87,10 @@ import {
   crmContacts, crmTags, crmContactTags, whatsappMessages, crmInteractions,
   crmPipelines, crmDeals, contactCaptures, crmEmailCampaigns, crmCampaignRecipients,
   InsertCrmContact, InsertCrmTag, InsertWhatsappMessage, InsertCrmInteraction,
-  InsertCrmPipeline, InsertCrmDeal, InsertContactCapture, InsertCrmEmailCampaign, InsertCrmCampaignRecipient
+  InsertCrmPipeline, InsertCrmDeal, InsertContactCapture, InsertCrmEmailCampaign, InsertCrmCampaignRecipient,
+  // LinkedIn sync types
+  linkedinSyncConfigs, linkedinConnections, linkedinMessages,
+  InsertLinkedinSyncConfig, InsertLinkedinConnection, InsertLinkedinMessage
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -7835,6 +7838,530 @@ export async function getUnifiedMessagingHistory(contactId: number, limit: numbe
   });
 
   return combined.slice(0, limit);
+}
+
+// ============================================
+// LINKEDIN SYNC & MESSAGING
+// ============================================
+
+// --- LINKEDIN SYNC CONFIG ---
+
+export async function getLinkedinSyncConfig(userId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(linkedinSyncConfigs)
+    .where(eq(linkedinSyncConfigs.userId, userId))
+    .limit(1);
+  return result[0];
+}
+
+export async function upsertLinkedinSyncConfig(userId: number, data: Partial<InsertLinkedinSyncConfig>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const existing = await getLinkedinSyncConfig(userId);
+  if (existing) {
+    await db.update(linkedinSyncConfigs).set(data).where(eq(linkedinSyncConfigs.id, existing.id));
+    return existing.id;
+  } else {
+    const result = await db.insert(linkedinSyncConfigs).values({ ...data, userId } as InsertLinkedinSyncConfig);
+    return result[0].insertId;
+  }
+}
+
+export async function updateLinkedinSyncStatus(userId: number, status: string, error?: string) {
+  const db = await getDb();
+  if (!db) return;
+  const existing = await getLinkedinSyncConfig(userId);
+  if (existing) {
+    await db.update(linkedinSyncConfigs)
+      .set({ status: status as any, lastError: error || null })
+      .where(eq(linkedinSyncConfigs.id, existing.id));
+  }
+}
+
+// --- LINKEDIN CONNECTIONS ---
+
+export async function getLinkedinConnections(filters?: {
+  userId?: number;
+  search?: string;
+  company?: string;
+  jobTitle?: string;
+  location?: string;
+  industry?: string;
+  tags?: string;
+  connectionDegree?: number;
+  hasContact?: boolean;
+  limit?: number;
+  offset?: number;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (filters?.userId) {
+    conditions.push(eq(linkedinConnections.userId, filters.userId));
+  }
+  if (filters?.search) {
+    conditions.push(
+      or(
+        like(linkedinConnections.fullName, `%${filters.search}%`),
+        like(linkedinConnections.company, `%${filters.search}%`),
+        like(linkedinConnections.headline, `%${filters.search}%`),
+        like(linkedinConnections.email, `%${filters.search}%`),
+        like(linkedinConnections.location, `%${filters.search}%`)
+      )
+    );
+  }
+  if (filters?.company) {
+    conditions.push(like(linkedinConnections.company, `%${filters.company}%`));
+  }
+  if (filters?.jobTitle) {
+    conditions.push(like(linkedinConnections.jobTitle, `%${filters.jobTitle}%`));
+  }
+  if (filters?.location) {
+    conditions.push(like(linkedinConnections.location, `%${filters.location}%`));
+  }
+  if (filters?.industry) {
+    conditions.push(like(linkedinConnections.industry, `%${filters.industry}%`));
+  }
+  if (filters?.tags) {
+    conditions.push(like(linkedinConnections.tags, `%${filters.tags}%`));
+  }
+  if (filters?.connectionDegree) {
+    conditions.push(eq(linkedinConnections.connectionDegree, filters.connectionDegree));
+  }
+  if (filters?.hasContact === true) {
+    conditions.push(sql`${linkedinConnections.contactId} IS NOT NULL`);
+  }
+  if (filters?.hasContact === false) {
+    conditions.push(isNull(linkedinConnections.contactId));
+  }
+
+  let query = db.select().from(linkedinConnections);
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as any;
+  }
+
+  return query
+    .orderBy(desc(linkedinConnections.updatedAt))
+    .limit(filters?.limit || 100)
+    .offset(filters?.offset || 0);
+}
+
+export async function getLinkedinConnectionById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(linkedinConnections).where(eq(linkedinConnections.id, id)).limit(1);
+  return result[0];
+}
+
+export async function getLinkedinConnectionByLinkedinUrl(url: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(linkedinConnections)
+    .where(eq(linkedinConnections.linkedinUrl, url))
+    .limit(1);
+  return result[0];
+}
+
+export async function createLinkedinConnection(data: InsertLinkedinConnection) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(linkedinConnections).values(data);
+  return result[0].insertId;
+}
+
+export async function updateLinkedinConnection(id: number, data: Partial<InsertLinkedinConnection>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(linkedinConnections).set(data).where(eq(linkedinConnections.id, id));
+}
+
+export async function deleteLinkedinConnection(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(linkedinConnections).where(eq(linkedinConnections.id, id));
+}
+
+export async function bulkUpsertLinkedinConnections(userId: number, connections: Omit<InsertLinkedinConnection, "userId">[]) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  let created = 0;
+  let updated = 0;
+
+  for (const conn of connections) {
+    // Check if connection already exists by LinkedIn URL
+    let existing = null;
+    if (conn.linkedinUrl) {
+      const result = await db.select().from(linkedinConnections)
+        .where(and(
+          eq(linkedinConnections.userId, userId),
+          eq(linkedinConnections.linkedinUrl, conn.linkedinUrl)
+        ))
+        .limit(1);
+      existing = result[0];
+    }
+
+    if (existing) {
+      await db.update(linkedinConnections)
+        .set({ ...conn, lastSyncedAt: new Date() })
+        .where(eq(linkedinConnections.id, existing.id));
+      updated++;
+    } else {
+      await db.insert(linkedinConnections).values({
+        ...conn,
+        userId,
+        lastSyncedAt: new Date(),
+      });
+      created++;
+    }
+  }
+
+  // Update sync config
+  const config = await getLinkedinSyncConfig(userId);
+  if (config) {
+    await db.update(linkedinSyncConfigs).set({
+      lastConnectionSyncAt: new Date(),
+      totalConnectionsSynced: sql`${linkedinSyncConfigs.totalConnectionsSynced} + ${created}`,
+    }).where(eq(linkedinSyncConfigs.id, config.id));
+  }
+
+  return { created, updated };
+}
+
+export async function linkConnectionToContact(connectionId: number, contactId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(linkedinConnections)
+    .set({ contactId })
+    .where(eq(linkedinConnections.id, connectionId));
+}
+
+export async function createContactFromConnection(connectionId: number, capturedBy: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const connection = await getLinkedinConnectionById(connectionId);
+  if (!connection) throw new Error("Connection not found");
+
+  // Check for existing contact by LinkedIn URL or email
+  let existingContact = null;
+  if (connection.email) {
+    existingContact = await getCrmContactByEmail(connection.email);
+  }
+  if (!existingContact && connection.linkedinUrl) {
+    const result = await db.select().from(crmContacts)
+      .where(eq(crmContacts.linkedinUrl, connection.linkedinUrl))
+      .limit(1);
+    existingContact = result[0];
+  }
+
+  if (existingContact) {
+    // Link and update existing
+    await linkConnectionToContact(connectionId, existingContact.id);
+    await updateCrmContact(existingContact.id, {
+      linkedinUrl: connection.linkedinUrl || existingContact.linkedinUrl,
+      jobTitle: connection.jobTitle || existingContact.jobTitle,
+      organization: connection.company || existingContact.organization,
+    });
+    return { contactId: existingContact.id, isNew: false };
+  }
+
+  // Create new contact
+  const contactId = await createCrmContact({
+    firstName: connection.firstName,
+    lastName: connection.lastName || "",
+    fullName: connection.fullName,
+    email: connection.email || undefined,
+    phone: connection.phone || undefined,
+    linkedinUrl: connection.linkedinUrl || undefined,
+    organization: connection.company || undefined,
+    jobTitle: connection.jobTitle || undefined,
+    city: connection.location || undefined,
+    source: "linkedin_scan",
+    capturedBy,
+    captureData: JSON.stringify({ linkedinConnectionId: connectionId }),
+  } as InsertCrmContact);
+
+  await linkConnectionToContact(connectionId, contactId);
+  return { contactId, isNew: true };
+}
+
+export async function getLinkedinConnectionStats(userId: number) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const [total] = await db.select({ count: count() }).from(linkedinConnections)
+    .where(eq(linkedinConnections.userId, userId));
+  const [linked] = await db.select({ count: count() }).from(linkedinConnections)
+    .where(and(eq(linkedinConnections.userId, userId), sql`${linkedinConnections.contactId} IS NOT NULL`));
+  const [unlinked] = await db.select({ count: count() }).from(linkedinConnections)
+    .where(and(eq(linkedinConnections.userId, userId), isNull(linkedinConnections.contactId)));
+
+  return {
+    total: total?.count || 0,
+    linked: linked?.count || 0,
+    unlinked: unlinked?.count || 0,
+  };
+}
+
+// --- LINKEDIN MESSAGES ---
+
+export async function getLinkedinMessages(filters?: {
+  userId?: number;
+  contactId?: number;
+  connectionId?: number;
+  conversationId?: string;
+  direction?: string;
+  limit?: number;
+  offset?: number;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (filters?.userId) {
+    conditions.push(eq(linkedinMessages.userId, filters.userId));
+  }
+  if (filters?.contactId) {
+    conditions.push(eq(linkedinMessages.contactId, filters.contactId));
+  }
+  if (filters?.connectionId) {
+    conditions.push(eq(linkedinMessages.connectionId, filters.connectionId));
+  }
+  if (filters?.conversationId) {
+    conditions.push(eq(linkedinMessages.linkedinConversationId, filters.conversationId));
+  }
+  if (filters?.direction) {
+    conditions.push(eq(linkedinMessages.direction, filters.direction as any));
+  }
+
+  let query = db.select().from(linkedinMessages);
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as any;
+  }
+
+  return query
+    .orderBy(desc(linkedinMessages.sentAt))
+    .limit(filters?.limit || 100)
+    .offset(filters?.offset || 0);
+}
+
+export async function getLinkedinConversations(userId: number, limit: number = 50) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const result = await db.select().from(linkedinMessages)
+    .where(eq(linkedinMessages.userId, userId))
+    .orderBy(desc(linkedinMessages.sentAt))
+    .limit(limit * 2);
+
+  // Group by conversation
+  const conversations = new Map<string, typeof result[0]>();
+  for (const msg of result) {
+    const key = msg.linkedinConversationId || `${msg.senderLinkedinId}_${msg.recipientLinkedinId}`;
+    if (!conversations.has(key)) {
+      conversations.set(key, msg);
+    }
+  }
+
+  return Array.from(conversations.values()).slice(0, limit);
+}
+
+export async function createLinkedinMessage(data: InsertLinkedinMessage) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(linkedinMessages).values(data);
+  return result[0].insertId;
+}
+
+export async function bulkCreateLinkedinMessages(messages: InsertLinkedinMessage[]) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  let created = 0;
+  for (const msg of messages) {
+    // Check for duplicate by linkedinMessageId
+    if (msg.linkedinMessageId) {
+      const existing = await db.select({ id: linkedinMessages.id }).from(linkedinMessages)
+        .where(eq(linkedinMessages.linkedinMessageId, msg.linkedinMessageId))
+        .limit(1);
+      if (existing[0]) continue;
+    }
+
+    await db.insert(linkedinMessages).values(msg);
+    created++;
+
+    // Also create CRM interaction if contact is linked
+    if (msg.contactId) {
+      await createCrmInteraction({
+        contactId: msg.contactId,
+        channel: "linkedin",
+        interactionType: msg.direction === "outbound" ? "sent" : "received",
+        content: msg.content || undefined,
+        subject: msg.subject || undefined,
+        performedBy: msg.userId,
+      });
+    }
+  }
+
+  return { created };
+}
+
+export async function getLinkedinMessageStats(userId: number) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const [total] = await db.select({ count: count() }).from(linkedinMessages)
+    .where(eq(linkedinMessages.userId, userId));
+  const [inbound] = await db.select({ count: count() }).from(linkedinMessages)
+    .where(and(eq(linkedinMessages.userId, userId), eq(linkedinMessages.direction, "inbound")));
+  const [outbound] = await db.select({ count: count() }).from(linkedinMessages)
+    .where(and(eq(linkedinMessages.userId, userId), eq(linkedinMessages.direction, "outbound")));
+
+  return {
+    total: total?.count || 0,
+    inbound: inbound?.count || 0,
+    outbound: outbound?.count || 0,
+  };
+}
+
+// --- ADVANCED CONTACT SEARCH (multi-field, tags, location) ---
+
+export async function advancedContactSearch(filters: {
+  search?: string;
+  location?: string;
+  city?: string;
+  state?: string;
+  country?: string;
+  jobTitle?: string;
+  company?: string;
+  industry?: string;
+  tags?: string[];
+  contactType?: string;
+  source?: string;
+  status?: string;
+  pipelineStage?: string;
+  hasLinkedin?: boolean;
+  hasEmail?: boolean;
+  hasPhone?: boolean;
+  assignedTo?: number;
+  minLeadScore?: number;
+  maxLeadScore?: number;
+  createdAfter?: Date;
+  createdBefore?: Date;
+  lastContactedAfter?: Date;
+  lastContactedBefore?: Date;
+  limit?: number;
+  offset?: number;
+}) {
+  const db = await getDb();
+  if (!db) return { contacts: [], total: 0 };
+
+  const conditions = [];
+
+  if (filters.search) {
+    conditions.push(
+      or(
+        like(crmContacts.fullName, `%${filters.search}%`),
+        like(crmContacts.email, `%${filters.search}%`),
+        like(crmContacts.organization, `%${filters.search}%`),
+        like(crmContacts.phone, `%${filters.search}%`),
+        like(crmContacts.jobTitle, `%${filters.search}%`),
+        like(crmContacts.linkedinUrl, `%${filters.search}%`)
+      )
+    );
+  }
+  if (filters.location) {
+    conditions.push(
+      or(
+        like(crmContacts.city, `%${filters.location}%`),
+        like(crmContacts.state, `%${filters.location}%`),
+        like(crmContacts.country, `%${filters.location}%`),
+        like(crmContacts.address, `%${filters.location}%`)
+      )
+    );
+  }
+  if (filters.city) {
+    conditions.push(like(crmContacts.city, `%${filters.city}%`));
+  }
+  if (filters.state) {
+    conditions.push(like(crmContacts.state, `%${filters.state}%`));
+  }
+  if (filters.country) {
+    conditions.push(like(crmContacts.country, `%${filters.country}%`));
+  }
+  if (filters.jobTitle) {
+    conditions.push(like(crmContacts.jobTitle, `%${filters.jobTitle}%`));
+  }
+  if (filters.company) {
+    conditions.push(like(crmContacts.organization, `%${filters.company}%`));
+  }
+  if (filters.contactType) {
+    conditions.push(eq(crmContacts.contactType, filters.contactType as any));
+  }
+  if (filters.source) {
+    conditions.push(eq(crmContacts.source, filters.source as any));
+  }
+  if (filters.status) {
+    conditions.push(eq(crmContacts.status, filters.status as any));
+  }
+  if (filters.pipelineStage) {
+    conditions.push(eq(crmContacts.pipelineStage, filters.pipelineStage as any));
+  }
+  if (filters.hasLinkedin === true) {
+    conditions.push(sql`${crmContacts.linkedinUrl} IS NOT NULL AND ${crmContacts.linkedinUrl} != ''`);
+  }
+  if (filters.hasEmail === true) {
+    conditions.push(sql`${crmContacts.email} IS NOT NULL AND ${crmContacts.email} != ''`);
+  }
+  if (filters.hasPhone === true) {
+    conditions.push(sql`${crmContacts.phone} IS NOT NULL AND ${crmContacts.phone} != ''`);
+  }
+  if (filters.assignedTo) {
+    conditions.push(eq(crmContacts.assignedTo, filters.assignedTo));
+  }
+  if (filters.minLeadScore !== undefined) {
+    conditions.push(gte(crmContacts.leadScore, filters.minLeadScore));
+  }
+  if (filters.maxLeadScore !== undefined) {
+    conditions.push(lte(crmContacts.leadScore, filters.maxLeadScore));
+  }
+  if (filters.createdAfter) {
+    conditions.push(gte(crmContacts.createdAt, filters.createdAfter));
+  }
+  if (filters.createdBefore) {
+    conditions.push(lte(crmContacts.createdAt, filters.createdBefore));
+  }
+  if (filters.lastContactedAfter) {
+    conditions.push(gte(crmContacts.lastContactedAt, filters.lastContactedAfter));
+  }
+  if (filters.lastContactedBefore) {
+    conditions.push(lte(crmContacts.lastContactedAt, filters.lastContactedBefore));
+  }
+  // Tag-based filtering via JSON tags field
+  if (filters.tags && filters.tags.length > 0) {
+    for (const tag of filters.tags) {
+      conditions.push(like(crmContacts.tags, `%${tag}%`));
+    }
+  }
+
+  const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+  const [totalResult] = await db.select({ count: count() }).from(crmContacts).where(whereClause);
+
+  const contacts = await db.select().from(crmContacts)
+    .where(whereClause)
+    .orderBy(desc(crmContacts.createdAt))
+    .limit(filters.limit || 100)
+    .offset(filters.offset || 0);
+
+  return {
+    contacts,
+    total: totalResult?.count || 0,
+  };
 }
 
 // ============================================

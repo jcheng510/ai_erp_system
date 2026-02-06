@@ -911,7 +911,7 @@ export default function CRMHub() {
 
         {/* Messaging Tab */}
         <TabsContent value="messaging" className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className="grid gap-4 md:grid-cols-3">
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -926,6 +926,25 @@ export default function CRMHub() {
                   <p>Connect WhatsApp Business API to track messages.</p>
                   <Button variant="outline" className="mt-4">
                     Configure WhatsApp
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Linkedin className="h-5 w-5 text-blue-600" />
+                  LinkedIn Messages
+                </CardTitle>
+                <CardDescription>Sync and track LinkedIn conversations</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="text-center py-8 text-muted-foreground">
+                  <Linkedin className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  <p>Sync your LinkedIn connections and messages to CRM.</p>
+                  <Button variant="outline" className="mt-4" onClick={() => window.location.href = "/crm/linkedin"}>
+                    Go to LinkedIn Sync
                   </Button>
                 </div>
               </CardContent>

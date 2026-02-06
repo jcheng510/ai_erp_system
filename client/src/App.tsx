@@ -32,6 +32,7 @@ import FundraisingCampaigns from "./pages/sales/FundraisingCampaigns";
 
 // CRM
 import CRMHub from "./pages/crm/CRMHub";
+import LinkedInSync from "./pages/crm/LinkedInSync";
 
 // Operations
 import Products from "./pages/operations/Products";
@@ -152,6 +153,7 @@ function Router() {
         {/* CRM */}
         <Route path="/crm" component={CRMHub} />
         <Route path="/crm/hub" component={CRMHub} />
+        <Route path="/crm/linkedin" component={LinkedInSync} />
 
         {/* Operations */}
         <Route path="/operations" component={OperationsHub} />

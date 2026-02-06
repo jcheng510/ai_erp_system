@@ -3521,6 +3521,130 @@ export type CrmCampaignRecipient = typeof crmCampaignRecipients.$inferSelect;
 export type InsertCrmCampaignRecipient = typeof crmCampaignRecipients.$inferInsert;
 
 // ============================================
+// LINKEDIN SYNC & MESSAGING
+// ============================================
+
+// LinkedIn sync configuration per user
+export const linkedinSyncConfigs = mysqlTable("linkedin_sync_configs", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+
+  // OAuth / session credentials (encrypted)
+  accessToken: text("accessToken"),
+  refreshToken: text("refreshToken"),
+  tokenExpiresAt: timestamp("tokenExpiresAt"),
+  linkedinUserId: varchar("linkedinUserId", { length: 128 }),
+  linkedinProfileUrl: varchar("linkedinProfileUrl", { length: 512 }),
+
+  // Sync settings
+  syncConnections: boolean("syncConnections").default(true),
+  syncMessages: boolean("syncMessages").default(true),
+  autoCreateContacts: boolean("autoCreateContacts").default(true),
+  syncFrequency: mysqlEnum("syncFrequency", ["manual", "hourly", "daily", "weekly"]).default("daily"),
+
+  // Sync state tracking
+  lastConnectionSyncAt: timestamp("lastConnectionSyncAt"),
+  lastMessageSyncAt: timestamp("lastMessageSyncAt"),
+  totalConnectionsSynced: int("totalConnectionsSynced").default(0),
+  totalMessagesSynced: int("totalMessagesSynced").default(0),
+
+  status: mysqlEnum("status", ["active", "paused", "error", "disconnected"]).default("disconnected").notNull(),
+  lastError: text("lastError"),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type LinkedinSyncConfig = typeof linkedinSyncConfigs.$inferSelect;
+export type InsertLinkedinSyncConfig = typeof linkedinSyncConfigs.$inferInsert;
+
+// LinkedIn connections synced from user's network
+export const linkedinConnections = mysqlTable("linkedin_connections", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(), // The user who synced this connection
+  contactId: int("contactId"), // Linked CRM contact if created
+
+  // LinkedIn profile data
+  linkedinId: varchar("linkedinId", { length: 128 }),
+  linkedinUrl: varchar("linkedinUrl", { length: 512 }),
+  firstName: varchar("firstName", { length: 128 }).notNull(),
+  lastName: varchar("lastName", { length: 128 }),
+  fullName: varchar("fullName", { length: 255 }).notNull(),
+  headline: varchar("headline", { length: 500 }),
+  profileImageUrl: text("profileImageUrl"),
+
+  // Professional details
+  company: varchar("company", { length: 255 }),
+  jobTitle: varchar("jobTitle", { length: 255 }),
+  industry: varchar("industry", { length: 128 }),
+  location: varchar("location", { length: 255 }),
+
+  // Connection metadata
+  connectedAt: timestamp("connectedAt"),
+  connectionDegree: int("connectionDegree").default(1), // 1st, 2nd, 3rd
+
+  // Enriched data
+  email: varchar("email", { length: 320 }),
+  phone: varchar("phone", { length: 32 }),
+  summary: text("summary"),
+  skills: text("skills"), // JSON array of skills
+  tags: text("tags"), // JSON array of user-assigned tags
+
+  // Sync tracking
+  lastSyncedAt: timestamp("lastSyncedAt"),
+  rawProfileData: text("rawProfileData"), // JSON - full LinkedIn profile data
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type LinkedinConnection = typeof linkedinConnections.$inferSelect;
+export type InsertLinkedinConnection = typeof linkedinConnections.$inferInsert;
+
+// LinkedIn messages synced from conversations
+export const linkedinMessages = mysqlTable("linkedin_messages", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(), // The user who owns this conversation
+  contactId: int("contactId"), // Linked CRM contact
+  connectionId: int("connectionId"), // Linked linkedin_connections record
+
+  // Message identifiers
+  linkedinMessageId: varchar("linkedinMessageId", { length: 255 }),
+  linkedinConversationId: varchar("linkedinConversationId", { length: 255 }),
+
+  // Participant info
+  senderLinkedinId: varchar("senderLinkedinId", { length: 128 }),
+  senderName: varchar("senderName", { length: 255 }),
+  recipientLinkedinId: varchar("recipientLinkedinId", { length: 128 }),
+  recipientName: varchar("recipientName", { length: 255 }),
+
+  // Message content
+  direction: mysqlEnum("direction", ["inbound", "outbound"]).notNull(),
+  content: text("content"),
+  subject: varchar("subject", { length: 500 }),
+  messageType: mysqlEnum("messageType", ["text", "inmail", "connection_request", "shared_post", "media"]).default("text"),
+
+  // Attachments
+  hasAttachment: boolean("hasAttachment").default(false),
+  attachmentUrl: text("attachmentUrl"),
+  attachmentType: varchar("attachmentType", { length: 64 }),
+
+  // Status
+  isRead: boolean("isRead").default(false),
+  sentAt: timestamp("sentAt"),
+
+  // AI processing
+  sentiment: mysqlEnum("sentiment", ["positive", "neutral", "negative"]),
+  aiSummary: text("aiSummary"),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type LinkedinMessage = typeof linkedinMessages.$inferSelect;
+export type InsertLinkedinMessage = typeof linkedinMessages.$inferInsert;
+
+// ============================================
 // AUTONOMOUS SUPPLY CHAIN WORKFLOW SYSTEM
 // ============================================
 

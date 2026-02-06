@@ -13,6 +13,7 @@ import { parseUploadedDocument, importPurchaseOrder, importFreightInvoice, impor
 import { processAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingActions, type AIAgentContext } from "./aiAgentService";
 import { autonomousWorkflowRouter } from "./autonomousWorkflowRouter";
 import * as db from "./db";
+import type { InsertLinkedinMessage } from "../drizzle/schema";
 import { storagePut } from "./storage";
 import { nanoid } from "nanoid";
 import { sendGmailMessage, createGmailDraft, listGmailMessages, getGmailMessage, replyToGmailMessage, getGmailProfile } from "./_core/gmail";
@@ -12324,6 +12325,273 @@ Ask if they received the original request and if they can provide a quote.`;
           return { success: true };
         }),
     }),
+
+    // --- LINKEDIN SYNC ---
+    linkedin: router({
+      // Sync config
+      getConfig: protectedProcedure
+        .query(({ ctx }) => db.getLinkedinSyncConfig(ctx.user.id)),
+
+      updateConfig: protectedProcedure
+        .input(z.object({
+          syncConnections: z.boolean().optional(),
+          syncMessages: z.boolean().optional(),
+          autoCreateContacts: z.boolean().optional(),
+          syncFrequency: z.enum(["manual", "hourly", "daily", "weekly"]).optional(),
+          accessToken: z.string().optional(),
+          refreshToken: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const id = await db.upsertLinkedinSyncConfig(ctx.user.id, input);
+          return { id };
+        }),
+
+      connect: protectedProcedure
+        .input(z.object({
+          accessToken: z.string(),
+          refreshToken: z.string().optional(),
+          linkedinUserId: z.string().optional(),
+          linkedinProfileUrl: z.string().optional(),
+          tokenExpiresAt: z.date().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const id = await db.upsertLinkedinSyncConfig(ctx.user.id, {
+            ...input,
+            status: "active",
+          });
+          await createAuditLog(ctx.user.id, 'create', 'linkedin_sync', id, 'LinkedIn connected');
+          return { id, status: "active" };
+        }),
+
+      disconnect: protectedProcedure
+        .mutation(async ({ ctx }) => {
+          await db.updateLinkedinSyncStatus(ctx.user.id, "disconnected");
+          await createAuditLog(ctx.user.id, 'update', 'linkedin_sync', 0, 'LinkedIn disconnected');
+          return { success: true };
+        }),
+
+      // Connections
+      connections: router({
+        list: protectedProcedure
+          .input(z.object({
+            search: z.string().optional(),
+            company: z.string().optional(),
+            jobTitle: z.string().optional(),
+            location: z.string().optional(),
+            industry: z.string().optional(),
+            tags: z.string().optional(),
+            connectionDegree: z.number().optional(),
+            hasContact: z.boolean().optional(),
+            limit: z.number().optional(),
+            offset: z.number().optional(),
+          }).optional())
+          .query(({ input, ctx }) => db.getLinkedinConnections({
+            ...input,
+            userId: ctx.user.id,
+          })),
+
+        get: protectedProcedure
+          .input(z.object({ id: z.number() }))
+          .query(({ input }) => db.getLinkedinConnectionById(input.id)),
+
+        stats: protectedProcedure
+          .query(({ ctx }) => db.getLinkedinConnectionStats(ctx.user.id)),
+
+        // Import connections from LinkedIn (batch)
+        syncBatch: protectedProcedure
+          .input(z.object({
+            connections: z.array(z.object({
+              linkedinId: z.string().optional(),
+              linkedinUrl: z.string().optional(),
+              firstName: z.string(),
+              lastName: z.string().optional(),
+              fullName: z.string(),
+              headline: z.string().optional(),
+              profileImageUrl: z.string().optional(),
+              company: z.string().optional(),
+              jobTitle: z.string().optional(),
+              industry: z.string().optional(),
+              location: z.string().optional(),
+              email: z.string().optional(),
+              connectedAt: z.date().optional(),
+              connectionDegree: z.number().optional(),
+            })),
+          }))
+          .mutation(async ({ input, ctx }) => {
+            const result = await db.bulkUpsertLinkedinConnections(ctx.user.id, input.connections);
+            await createAuditLog(ctx.user.id, 'create', 'linkedin_connections', 0,
+              `Synced ${result.created} new, ${result.updated} updated`);
+            return result;
+          }),
+
+        // Create CRM contact from a connection
+        createContact: protectedProcedure
+          .input(z.object({ connectionId: z.number() }))
+          .mutation(async ({ input, ctx }) => {
+            const result = await db.createContactFromConnection(input.connectionId, ctx.user.id);
+            await createAuditLog(ctx.user.id, 'create', 'crm_contact_from_linkedin', result.contactId,
+              result.isNew ? 'New contact from LinkedIn' : 'Linked to existing contact');
+            return result;
+          }),
+
+        // Link a connection to an existing CRM contact
+        linkToContact: protectedProcedure
+          .input(z.object({ connectionId: z.number(), contactId: z.number() }))
+          .mutation(async ({ input }) => {
+            await db.linkConnectionToContact(input.connectionId, input.contactId);
+            return { success: true };
+          }),
+
+        // Bulk create contacts from unlinked connections
+        bulkCreateContacts: protectedProcedure
+          .input(z.object({ connectionIds: z.array(z.number()) }))
+          .mutation(async ({ input, ctx }) => {
+            let created = 0;
+            let linked = 0;
+            for (const connectionId of input.connectionIds) {
+              const result = await db.createContactFromConnection(connectionId, ctx.user.id);
+              if (result.isNew) created++;
+              else linked++;
+            }
+            await createAuditLog(ctx.user.id, 'create', 'crm_contacts_from_linkedin', 0,
+              `Bulk: ${created} new, ${linked} linked`);
+            return { created, linked, total: input.connectionIds.length };
+          }),
+
+        // Update tags on a connection
+        updateTags: protectedProcedure
+          .input(z.object({
+            connectionId: z.number(),
+            tags: z.string(), // JSON array
+          }))
+          .mutation(async ({ input }) => {
+            await db.updateLinkedinConnection(input.connectionId, { tags: input.tags });
+            return { success: true };
+          }),
+      }),
+
+      // Messages
+      messages: router({
+        list: protectedProcedure
+          .input(z.object({
+            contactId: z.number().optional(),
+            connectionId: z.number().optional(),
+            conversationId: z.string().optional(),
+            direction: z.string().optional(),
+            limit: z.number().optional(),
+            offset: z.number().optional(),
+          }).optional())
+          .query(({ input, ctx }) => db.getLinkedinMessages({
+            ...input,
+            userId: ctx.user.id,
+          })),
+
+        conversations: protectedProcedure
+          .input(z.object({ limit: z.number().optional() }).optional())
+          .query(({ input, ctx }) => db.getLinkedinConversations(ctx.user.id, input?.limit)),
+
+        stats: protectedProcedure
+          .query(({ ctx }) => db.getLinkedinMessageStats(ctx.user.id)),
+
+        // Sync messages from LinkedIn (batch)
+        syncBatch: protectedProcedure
+          .input(z.object({
+            messages: z.array(z.object({
+              linkedinMessageId: z.string().optional(),
+              linkedinConversationId: z.string().optional(),
+              senderLinkedinId: z.string().optional(),
+              senderName: z.string().optional(),
+              recipientLinkedinId: z.string().optional(),
+              recipientName: z.string().optional(),
+              direction: z.enum(["inbound", "outbound"]),
+              content: z.string().optional(),
+              subject: z.string().optional(),
+              messageType: z.enum(["text", "inmail", "connection_request", "shared_post", "media"]).optional(),
+              hasAttachment: z.boolean().optional(),
+              attachmentUrl: z.string().optional(),
+              sentAt: z.date().optional(),
+              connectionId: z.number().optional(),
+              contactId: z.number().optional(),
+            })),
+          }))
+          .mutation(async ({ input, ctx }) => {
+            const messagesWithUser = input.messages.map(m => ({
+              ...m,
+              userId: ctx.user.id,
+            }));
+            const result = await db.bulkCreateLinkedinMessages(messagesWithUser as InsertLinkedinMessage[]);
+            return result;
+          }),
+
+        // Send/log an outbound LinkedIn message
+        send: protectedProcedure
+          .input(z.object({
+            connectionId: z.number().optional(),
+            contactId: z.number().optional(),
+            recipientLinkedinId: z.string().optional(),
+            recipientName: z.string().optional(),
+            content: z.string(),
+            subject: z.string().optional(),
+            messageType: z.enum(["text", "inmail", "connection_request"]).optional(),
+            linkedinConversationId: z.string().optional(),
+          }))
+          .mutation(async ({ input, ctx }) => {
+            const config = await db.getLinkedinSyncConfig(ctx.user.id);
+            const id = await db.createLinkedinMessage({
+              ...input,
+              userId: ctx.user.id,
+              direction: "outbound",
+              senderLinkedinId: config?.linkedinUserId || undefined,
+              sentAt: new Date(),
+            } as InsertLinkedinMessage);
+
+            // Create CRM interaction if contact is linked
+            if (input.contactId) {
+              await db.createCrmInteraction({
+                contactId: input.contactId,
+                channel: "linkedin",
+                interactionType: "sent",
+                content: input.content,
+                subject: input.subject,
+                performedBy: ctx.user.id,
+              });
+            }
+
+            return { id };
+          }),
+      }),
+    }),
+
+    // --- ADVANCED SEARCH ---
+    advancedSearch: protectedProcedure
+      .input(z.object({
+        search: z.string().optional(),
+        location: z.string().optional(),
+        city: z.string().optional(),
+        state: z.string().optional(),
+        country: z.string().optional(),
+        jobTitle: z.string().optional(),
+        company: z.string().optional(),
+        industry: z.string().optional(),
+        tags: z.array(z.string()).optional(),
+        contactType: z.string().optional(),
+        source: z.string().optional(),
+        status: z.string().optional(),
+        pipelineStage: z.string().optional(),
+        hasLinkedin: z.boolean().optional(),
+        hasEmail: z.boolean().optional(),
+        hasPhone: z.boolean().optional(),
+        assignedTo: z.number().optional(),
+        minLeadScore: z.number().optional(),
+        maxLeadScore: z.number().optional(),
+        createdAfter: z.date().optional(),
+        createdBefore: z.date().optional(),
+        lastContactedAfter: z.date().optional(),
+        lastContactedBefore: z.date().optional(),
+        limit: z.number().optional(),
+        offset: z.number().optional(),
+      }))
+      .query(({ input }) => db.advancedContactSearch(input)),
   }),
 });
 
