@@ -182,8 +182,8 @@ export function AutonomousAgentBar() {
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <span className="font-medium">Autonomous Agent Control</span>
-                <Badge variant={isRunning ? "default" : "secondary"} className="text-xs">
-                  {isRunning ? "Active" : "Inactive"}
+                <Badge variant={hasError ? "outline" : isRunning ? "default" : "secondary"} className={`text-xs ${hasError ? "border-slate-500 text-slate-400" : ""}`}>
+                  {hasError ? "Disconnected" : isRunning ? "Active" : "Inactive"}
                 </Badge>
               </div>
 
@@ -263,14 +263,21 @@ export function AutonomousAgentBar() {
               {/* Start/Stop Button */}
               <Button
                 onClick={handleToggle}
-                disabled={startMutation.isPending || stopMutation.isPending}
+                disabled={hasError || startMutation.isPending || stopMutation.isPending}
                 className={`w-full ${
-                  isRunning
-                    ? "bg-red-600 hover:bg-red-700"
-                    : "bg-green-600 hover:bg-green-700"
+                  hasError
+                    ? "bg-slate-600 hover:bg-slate-600 cursor-not-allowed"
+                    : isRunning
+                      ? "bg-red-600 hover:bg-red-700"
+                      : "bg-green-600 hover:bg-green-700"
                 }`}
               >
-                {isRunning ? (
+                {hasError ? (
+                  <>
+                    <AlertCircle className="h-4 w-4 mr-2" />
+                    Agent Unreachable
+                  </>
+                ) : isRunning ? (
                   <>
                     <Pause className="h-4 w-4 mr-2" />
                     Stop Autonomous Agent
@@ -293,11 +300,13 @@ export function AutonomousAgentBar() {
               variant="ghost"
               size="sm"
               onClick={handleToggle}
-              disabled={startMutation.isPending || stopMutation.isPending}
+              disabled={hasError || startMutation.isPending || stopMutation.isPending}
               className={`h-6 w-6 p-0 ${
-                isRunning
-                  ? "text-green-400 hover:text-red-400 hover:bg-red-500/20"
-                  : "text-slate-400 hover:text-green-400 hover:bg-green-500/20"
+                hasError
+                  ? "text-slate-500 cursor-not-allowed"
+                  : isRunning
+                    ? "text-green-400 hover:text-red-400 hover:bg-red-500/20"
+                    : "text-slate-400 hover:text-green-400 hover:bg-green-500/20"
               }`}
             >
               {isRunning ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
