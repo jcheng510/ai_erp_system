@@ -129,12 +129,25 @@ export async function scanInbox(
   let client: ImapFlow | null = null;
 
   try {
+    // Build auth configuration - use OAuth2 if available, otherwise use password
+    const authConfig: any = {
+      user: config.auth.user,
+    };
+
+    if (config.oauth2?.accessToken) {
+      // Use XOAUTH2 authentication for Gmail/OAuth
+      authConfig.accessToken = config.oauth2.accessToken;
+    } else {
+      // Use password authentication
+      authConfig.pass = config.auth.pass;
+    }
+
     // Create IMAP client with proper TLS configuration
     client = new ImapFlow({
       host: config.host,
       port: config.port,
       secure: config.secure,
-      auth: config.auth,
+      auth: authConfig,
       logger: false, // Disable verbose logging
       tls: {
         servername: config.host, // Required for SNI (Server Name Indication)
@@ -470,12 +483,25 @@ export async function testImapConnection(config: EmailInboxConfig): Promise<{
   let client: ImapFlow | null = null;
 
   try {
+    // Build auth configuration - use OAuth2 if available, otherwise use password
+    const authConfig: any = {
+      user: config.auth.user,
+    };
+
+    if (config.oauth2?.accessToken) {
+      // Use XOAUTH2 authentication for Gmail/OAuth
+      authConfig.accessToken = config.oauth2.accessToken;
+    } else {
+      // Use password authentication
+      authConfig.pass = config.auth.pass;
+    }
+
     // Create IMAP client with proper TLS configuration for testing
     client = new ImapFlow({
       host: config.host,
       port: config.port,
       secure: config.secure,
-      auth: config.auth,
+      auth: authConfig,
       logger: false,
       tls: {
         servername: config.host, // Required for SNI (Server Name Indication)

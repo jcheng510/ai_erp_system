@@ -8681,6 +8681,315 @@ Ask if they received the original request and if they can provide a quote.`;
           errors,
         };
       }),
+
+    // ============================================
+    // GMAIL OAUTH2
+    // ============================================
+
+    // Check if Gmail OAuth is configured and get current connection status
+    getGmailOAuthStatus: protectedProcedure
+      .query(async ({ ctx }) => {
+        const { isGmailOAuthConfigured } = await import("./_core/gmailOAuth");
+        const credential = await db.getEmailCredentialByUserAndProvider(ctx.user.id, "gmail");
+
+        return {
+          isConfigured: isGmailOAuthConfigured(),
+          isConnected: !!(credential?.accessToken),
+          email: credential?.email || null,
+          expiresAt: credential?.tokenExpiresAt || null,
+        };
+      }),
+
+    // Get Gmail OAuth authorization URL
+    getGmailAuthUrl: protectedProcedure
+      .mutation(async ({ ctx }) => {
+        const { getGmailAuthUrl, isGmailOAuthConfigured } = await import("./_core/gmailOAuth");
+
+        if (!isGmailOAuthConfigured()) {
+          throw new Error("Gmail OAuth is not configured. Please set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REDIRECT_URI environment variables.");
+        }
+
+        // Include user ID in state for the callback
+        const state = Buffer.from(JSON.stringify({ userId: ctx.user.id })).toString("base64");
+        const authUrl = getGmailAuthUrl(state);
+
+        return { authUrl };
+      }),
+
+    // Handle Gmail OAuth callback (exchange code for tokens)
+    handleGmailOAuthCallback: protectedProcedure
+      .input(z.object({
+        code: z.string(),
+        state: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { exchangeCodeForTokens } = await import("./_core/gmailOAuth");
+
+        try {
+          const tokens = await exchangeCodeForTokens(input.code);
+
+          // Check if user already has a Gmail credential
+          const existingCredential = await db.getEmailCredentialByUserAndProvider(ctx.user.id, "gmail");
+
+          if (existingCredential) {
+            // Update existing credential
+            await db.updateEmailCredential(existingCredential.id, {
+              email: tokens.email,
+              accessToken: tokens.accessToken,
+              refreshToken: tokens.refreshToken,
+              tokenExpiresAt: tokens.expiresAt,
+            });
+          } else {
+            // Create new credential
+            await db.createEmailCredential({
+              userId: ctx.user.id,
+              name: "Gmail",
+              provider: "gmail",
+              email: tokens.email,
+              imapHost: "imap.gmail.com",
+              imapPort: 993,
+              imapSecure: true,
+              accessToken: tokens.accessToken,
+              refreshToken: tokens.refreshToken,
+              tokenExpiresAt: tokens.expiresAt,
+            });
+          }
+
+          return {
+            success: true,
+            email: tokens.email,
+          };
+        } catch (error: any) {
+          return {
+            success: false,
+            error: error.message,
+          };
+        }
+      }),
+
+    // Disconnect Gmail OAuth
+    disconnectGmail: protectedProcedure
+      .mutation(async ({ ctx }) => {
+        const credential = await db.getEmailCredentialByUserAndProvider(ctx.user.id, "gmail");
+
+        if (credential) {
+          await db.deleteEmailCredential(credential.id);
+        }
+
+        return { success: true };
+      }),
+
+    // Scan inbox using OAuth (uses stored credentials)
+    scanInboxWithOAuth: protectedProcedure
+      .input(z.object({
+        folder: z.string().default("INBOX"),
+        limit: z.number().default(50),
+        unseenOnly: z.boolean().default(true),
+        markAsSeen: z.boolean().default(false),
+        fullAiParsing: z.boolean().default(false),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { scanAndCategorizeInbox } = await import("./_core/emailInboxScanner");
+        const { refreshAccessToken } = await import("./_core/gmailOAuth");
+
+        // Get stored Gmail credentials
+        const credential = await db.getEmailCredentialByUserAndProvider(ctx.user.id, "gmail");
+
+        if (!credential || !credential.accessToken || !credential.refreshToken) {
+          return {
+            success: false,
+            error: "Gmail not connected. Please connect your Gmail account first.",
+            imported: 0,
+            skipped: 0,
+            errors: [],
+          };
+        }
+
+        // Check if token needs refresh
+        let accessToken = credential.accessToken;
+        if (credential.tokenExpiresAt && new Date(credential.tokenExpiresAt) < new Date()) {
+          try {
+            const refreshed = await refreshAccessToken(credential.refreshToken);
+            accessToken = refreshed.accessToken;
+
+            // Update stored token
+            await db.updateEmailCredential(credential.id, {
+              accessToken: refreshed.accessToken,
+              tokenExpiresAt: refreshed.expiresAt,
+            });
+          } catch (error: any) {
+            return {
+              success: false,
+              error: `Failed to refresh token: ${error.message}. Please reconnect your Gmail account.`,
+              imported: 0,
+              skipped: 0,
+              errors: [],
+            };
+          }
+        }
+
+        // Build config for IMAP with OAuth
+        const config = {
+          host: "imap.gmail.com",
+          port: 993,
+          secure: true,
+          auth: {
+            user: credential.email,
+            pass: "", // Not used with OAuth
+          },
+          oauth2: {
+            accessToken,
+          },
+        };
+
+        // Scan the inbox
+        const { scanResult, parsedResults } = await scanAndCategorizeInbox(config, {
+          folder: input.folder,
+          limit: input.limit,
+          unseenOnly: input.unseenOnly,
+          markAsSeen: input.markAsSeen,
+          fullAiParsing: input.fullAiParsing,
+        });
+
+        if (!scanResult.success) {
+          return {
+            success: false,
+            error: scanResult.errors.join("; "),
+            imported: 0,
+            skipped: 0,
+            errors: scanResult.errors,
+          };
+        }
+
+        // Import emails into the database (same logic as scanInbox)
+        let imported = 0;
+        let skipped = 0;
+        const importErrors: string[] = [];
+
+        for (const { email, parseResult } of parsedResults) {
+          try {
+            const existing = await db.findInboundEmailByMessageId(email.messageId);
+            if (existing) {
+              skipped++;
+              continue;
+            }
+
+            const { id: emailId } = await db.createInboundEmail({
+              messageId: email.messageId,
+              fromEmail: email.from.address,
+              fromName: email.from.name || null,
+              toEmail: email.to.join(", ") || "inbox",
+              subject: email.subject,
+              bodyText: email.bodyText,
+              bodyHtml: email.bodyHtml || null,
+              receivedAt: email.date,
+              parsingStatus: parseResult ? "parsed" : "pending",
+              category: email.categorization?.category || "general",
+              categoryConfidence: email.categorization?.confidence?.toString() || null,
+              categoryKeywords: email.categorization?.keywords || null,
+              suggestedAction: email.categorization?.suggestedAction || null,
+              priority: email.categorization?.priority || "medium",
+              subcategory: email.categorization?.subcategory || null,
+            });
+
+            if (parseResult?.documents) {
+              for (const doc of parseResult.documents) {
+                let vendorId: number | null = null;
+                const existingVendor = await db.findVendorByEmailOrName(doc.vendorEmail, doc.vendorName);
+                if (existingVendor) vendorId = existingVendor.id;
+
+                await db.createParsedDocument({
+                  emailId,
+                  documentType: doc.documentType as any,
+                  confidence: doc.confidence?.toString() || "0",
+                  vendorName: doc.vendorName || null,
+                  vendorEmail: doc.vendorEmail || null,
+                  vendorId,
+                  documentNumber: doc.documentNumber || null,
+                  documentDate: doc.documentDate ? new Date(doc.documentDate) : null,
+                  totalAmount: doc.totalAmount?.toString() || null,
+                  currency: doc.currency || "USD",
+                  trackingNumber: doc.trackingNumber || null,
+                  carrierName: doc.carrierName || null,
+                  lineItems: doc.lineItems || null,
+                  rawExtractedData: doc as any,
+                });
+              }
+            }
+
+            imported++;
+          } catch (error: any) {
+            importErrors.push(`Failed to import email: ${error.message}`);
+          }
+        }
+
+        // Update last scan info
+        await db.updateEmailCredential(credential.id, {
+          lastScanAt: new Date(),
+          lastScanStatus: importErrors.length > 0 ? "partial" : "success",
+          lastScanError: importErrors.length > 0 ? importErrors.join("; ") : null,
+          emailsScanned: (credential.emailsScanned || 0) + imported,
+        });
+
+        return {
+          success: true,
+          totalInInbox: scanResult.totalEmails,
+          scanned: scanResult.newEmails,
+          imported,
+          skipped,
+          errors: [...scanResult.errors, ...importErrors],
+        };
+      }),
+
+    // Test Gmail OAuth connection
+    testGmailOAuthConnection: protectedProcedure
+      .mutation(async ({ ctx }) => {
+        const { testImapConnection } = await import("./_core/emailInboxScanner");
+        const { refreshAccessToken } = await import("./_core/gmailOAuth");
+
+        const credential = await db.getEmailCredentialByUserAndProvider(ctx.user.id, "gmail");
+
+        if (!credential || !credential.accessToken || !credential.refreshToken) {
+          return {
+            success: false,
+            error: "Gmail not connected. Please connect your Gmail account first.",
+          };
+        }
+
+        // Refresh token if needed
+        let accessToken = credential.accessToken;
+        if (credential.tokenExpiresAt && new Date(credential.tokenExpiresAt) < new Date()) {
+          try {
+            const refreshed = await refreshAccessToken(credential.refreshToken);
+            accessToken = refreshed.accessToken;
+
+            await db.updateEmailCredential(credential.id, {
+              accessToken: refreshed.accessToken,
+              tokenExpiresAt: refreshed.expiresAt,
+            });
+          } catch (error: any) {
+            return {
+              success: false,
+              error: `Failed to refresh token: ${error.message}`,
+            };
+          }
+        }
+
+        const result = await testImapConnection({
+          host: "imap.gmail.com",
+          port: 993,
+          secure: true,
+          auth: {
+            user: credential.email,
+            pass: "",
+          },
+          oauth2: {
+            accessToken,
+          },
+        });
+
+        return result;
+      }),
   }),
 
   // ============================================

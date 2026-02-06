@@ -5851,11 +5851,32 @@ export async function updateEmailCredential(id: number, data: Partial<{
 export async function deleteEmailCredential(id: number) {
   const db = await getDb();
   if (!db) return;
-  
+
   // Delete associated scheduled scans first
   await db.delete(scheduledEmailScans).where(eq(scheduledEmailScans.credentialId, id));
   await db.delete(emailScanLogs).where(eq(emailScanLogs.credentialId, id));
   await db.delete(emailCredentials).where(eq(emailCredentials.id, id));
+}
+
+export async function getEmailCredentialByUserAndProvider(userId: number, provider: 'gmail' | 'outlook' | 'yahoo' | 'icloud' | 'custom') {
+  const db = await getDb();
+  if (!db) return null;
+
+  const [result] = await db.select().from(emailCredentials)
+    .where(and(
+      eq(emailCredentials.userId, userId),
+      eq(emailCredentials.provider, provider)
+    ));
+  return result || null;
+}
+
+export async function getEmailCredentialByEmail(email: string) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const [result] = await db.select().from(emailCredentials)
+    .where(eq(emailCredentials.email, email));
+  return result || null;
 }
 
 // Scheduled Scans
