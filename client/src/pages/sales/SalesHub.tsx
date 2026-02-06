@@ -7,10 +7,19 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import SpreadsheetTable, { Column } from "@/components/SpreadsheetTable";
-import { 
+import {
   ShoppingCart, FileText, Users, CreditCard, Package, Search,
-  Send, Download
+  Send, Download, RefreshCw, ShoppingBag, Plug, Loader2, Mail, CloudUpload
 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Link } from "wouter";
 
 const orderStatuses = [
   { value: "pending", label: "Pending", color: "bg-yellow-100 text-yellow-800" },
@@ -203,8 +212,8 @@ function PaymentDetailPanel({ payment }: { payment: any }) {
 }
 
 export default function SalesHub() {
-
   const [activeTab, setActiveTab] = useState("products");
+  const [isSyncing, setIsSyncing] = useState(false);
   const [expandedProductId, setExpandedProductId] = useState<number | string | null>(null);
   const [expandedOrderId, setExpandedOrderId] = useState<number | string | null>(null);
   const [expandedInvoiceId, setExpandedInvoiceId] = useState<number | string | null>(null);
@@ -221,6 +230,57 @@ export default function SalesHub() {
     onSuccess: () => { toast.success("Order updated"); refetchOrders(); },
     onError: (err: any) => toast.error(err.message),
   });
+
+  // Integration status
+  const { data: integrationStatus } = trpc.integrations.getStatus.useQuery();
+
+  // Shopify sync mutations
+  const syncShopifyOrders = trpc.shopify.sync.orders.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Synced ${data.imported} new orders, updated ${data.updated}`);
+      refetchOrders();
+      setIsSyncing(false);
+    },
+    onError: (err: any) => { toast.error(err.message); setIsSyncing(false); },
+  });
+
+  const syncShopifyProducts = trpc.shopify.sync.products.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Synced ${data.imported} new products, updated ${data.updated}`);
+      setIsSyncing(false);
+    },
+    onError: (err: any) => { toast.error(err.message); setIsSyncing(false); },
+  });
+
+  const syncShopifyCustomers = trpc.shopify.sync.customers.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Synced ${data.imported} new customers, updated ${data.updated}`);
+      setIsSyncing(false);
+    },
+    onError: (err: any) => { toast.error(err.message); setIsSyncing(false); },
+  });
+
+  const handleSyncOrders = () => {
+    setIsSyncing(true);
+    syncShopifyOrders.mutate({});
+  };
+
+  const handleSyncProducts = () => {
+    setIsSyncing(true);
+    syncShopifyProducts.mutate({});
+  };
+
+  const handleSyncCustomers = () => {
+    setIsSyncing(true);
+    syncShopifyCustomers.mutate({});
+  };
+
+  const handleSyncAll = () => {
+    setIsSyncing(true);
+    syncShopifyOrders.mutate({});
+    syncShopifyProducts.mutate({});
+    syncShopifyCustomers.mutate({});
+  };
 
   const sendInvoiceEmail = trpc.invoices.sendEmail.useMutation({
     onSuccess: () => toast.success("Invoice emailed"),
@@ -290,6 +350,93 @@ export default function SalesHub() {
             <p className="text-muted-foreground">Products, Orders, Invoices, Customers, and Payments</p>
           </div>
 
+          <div className="flex items-center gap-2">
+            {/* Shopify Integration Button */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" disabled={isSyncing}>
+                  {isSyncing ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <ShoppingBag className="h-4 w-4 mr-2" />
+                  )}
+                  Shopify
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuLabel className="flex items-center gap-2">
+                  <ShoppingBag className="h-4 w-4 text-green-600" />
+                  Shopify Sync
+                  {integrationStatus?.shopify?.configured ? (
+                    <Badge variant="outline" className="ml-auto text-xs bg-green-50 text-green-700">Connected</Badge>
+                  ) : (
+                    <Badge variant="outline" className="ml-auto text-xs">Not Set Up</Badge>
+                  )}
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                {integrationStatus?.shopify?.configured ? (
+                  <>
+                    <DropdownMenuItem onClick={handleSyncOrders}>
+                      <ShoppingCart className="h-4 w-4 mr-2" />
+                      Sync Orders
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={handleSyncProducts}>
+                      <Package className="h-4 w-4 mr-2" />
+                      Sync Products
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={handleSyncCustomers}>
+                      <Users className="h-4 w-4 mr-2" />
+                      Sync Customers
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={handleSyncAll}>
+                      <RefreshCw className="h-4 w-4 mr-2" />
+                      Sync All Data
+                    </DropdownMenuItem>
+                  </>
+                ) : (
+                  <DropdownMenuItem asChild>
+                    <Link href="/settings/integrations">
+                      <Plug className="h-4 w-4 mr-2" />
+                      Configure Shopify
+                    </Link>
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            {/* More Integrations Button */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="icon">
+                  <Plug className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuLabel>More Integrations</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem asChild>
+                  <Link href="/import">
+                    <CloudUpload className="h-4 w-4 mr-2" />
+                    Import from Google Sheets
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link href="/settings/integrations">
+                    <Mail className="h-4 w-4 mr-2" />
+                    Email Settings
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem asChild>
+                  <Link href="/settings/integrations">
+                    <Plug className="h-4 w-4 mr-2" />
+                    All Integrations
+                  </Link>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </div>
 
         <div className="grid grid-cols-5 gap-4">

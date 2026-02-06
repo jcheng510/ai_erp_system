@@ -1,5 +1,6 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { NotificationCenter } from "@/components/NotificationCenter";
+import { AutonomousAgentBar } from "@/components/AutonomousAgentBar";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -63,11 +64,15 @@ import {
   Brain,
   Plug,
   FolderLock,
+  Target,
+  MessageSquare,
+  Heart,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
 import { AICommandBar } from './AICommandBar';
+import { FloatingAIAssistant } from './FloatingAIAssistant';
 import { Button } from "./ui/button";
 import { toast } from "sonner";
 import {
@@ -90,14 +95,29 @@ const menuGroups = [
     label: "Sales & Finance",
     items: [
       { icon: ShoppingCart, label: "Sales Hub", path: "/sales/hub" },
+      { icon: Heart, label: "Fundraising CRM", path: "/crm" },
+      { icon: Users, label: "Investors", path: "/crm/investors" },
+      { icon: Target, label: "Campaigns", path: "/crm/campaigns" },
       { icon: DollarSign, label: "Accounts", path: "/finance/accounts" },
       { icon: TrendingUp, label: "Transactions", path: "/finance/transactions" },
+    ],
+  },
+  {
+    label: "CRM",
+    items: [
+      { icon: Target, label: "CRM Hub", path: "/crm/hub" },
+      { icon: Users, label: "Contacts", path: "/crm/contacts" },
+      { icon: MessageSquare, label: "Messaging", path: "/crm/messaging" },
     ],
   },
   {
     label: "Operations",
     items: [
       { icon: Package, label: "Operations", path: "/operations" },
+      { icon: Package, label: "Inventory", path: "/operations/inventory-hub" },
+      { icon: ClipboardList, label: "Inventory Mgmt", path: "/operations/inventory-management" },
+      { icon: Warehouse, label: "Manufacturing", path: "/operations/manufacturing-hub" },
+      { icon: Building2, label: "Procurement", path: "/operations/procurement-hub" },
       { icon: Truck, label: "Logistics", path: "/operations/logistics-hub" },
       { icon: Mail, label: "Email Inbox", path: "/operations/email-inbox" },
       { icon: FileSpreadsheet, label: "Document Import", path: "/operations/document-import" },
@@ -221,7 +241,7 @@ function DashboardLayoutContent({
   const [isResizing, setIsResizing] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
   const isMobile = useIsMobile();
-  const [openGroups, setOpenGroups] = useState<string[]>(["Overview", "Finance", "Sales", "Operations"]);
+  const [openGroups, setOpenGroups] = useState<string[]>(["Overview", "Finance", "Sales", "CRM", "Operations"]);
   const [aiCommandOpen, setAiCommandOpen] = useState(false);
 
   // Global keyboard shortcuts
@@ -249,6 +269,7 @@ function DashboardLayoutContent({
             case 'd': setLocation('/'); break; // Go to Dashboard
             case 'a': setLocation('/ai'); break; // Go to AI Assistant
             case 's': setLocation('/sales/hub'); break; // Go to Sales
+            case 'c': setLocation('/crm'); break; // Go to CRM
             case 'm': setLocation('/operations/manufacturing-hub'); break; // Go to Manufacturing
             case 'p': setLocation('/operations/procurement-hub'); break; // Go to Procurement
             case 'l': setLocation('/operations/logistics-hub'); break; // Go to Logistics
@@ -268,6 +289,7 @@ function DashboardLayoutContent({
           'g d - Dashboard\n' +
           'g a - AI Assistant\n' +
           'g s - Sales Hub\n' +
+          'g c - CRM Hub\n' +
           'g m - Manufacturing\n' +
           'g p - Procurement\n' +
           'g l - Logistics\n' +
@@ -454,6 +476,9 @@ function DashboardLayoutContent({
       </div>
 
       <SidebarInset className="flex flex-col">
+        {/* Autonomous Agent Status Bar */}
+        <AutonomousAgentBar />
+
         {/* Top header bar */}
         <header className="flex h-14 items-center justify-between border-b border-border/40 bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/60 sticky top-0 z-40">
           <div className="flex items-center gap-3">
@@ -476,6 +501,9 @@ function DashboardLayoutContent({
         <AICommandBar open={aiCommandOpen} onOpenChange={setAiCommandOpen} />
         <main className="flex-1 overflow-auto p-4 md:p-6">{children}</main>
       </SidebarInset>
+
+      {/* Floating AI Assistant - available throughout the app */}
+      <FloatingAIAssistant />
     </>
   );
 }

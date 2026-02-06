@@ -10,6 +10,7 @@ import {
   projects, projectMilestones, projectTasks,
   auditLogs, notifications, integrationConfigs, aiConversations, aiMessages,
   googleOAuthTokens, InsertGoogleOAuthToken,
+  quickbooksOAuthTokens, InsertQuickBooksOAuthToken,
   freightCarriers, freightRfqs, freightQuotes, freightEmails,
   customsClearances, customsDocuments, freightBookings,
   inventoryTransfers, inventoryTransferItems,
@@ -38,8 +39,6 @@ import {
   inboundEmails, emailAttachments, parsedDocuments, parsedDocumentLineItems, autoReplyRules, sentEmails,
   // Data room
   dataRooms, dataRoomFolders, dataRoomDocuments, dataRoomLinks, dataRoomVisitors, documentViews, dataRoomInvitations,
-  // Data room enhanced tracking
-  documentPageViews, dataRoomDriveSyncConfig, dataRoomDriveSyncLogs, dataRoomEmailAccessRules, dataRoomVisitorSessions,
   // NDA e-signatures
   ndaDocuments, ndaSignatures, ndaSignatureAuditLog,
   // IMAP credentials
@@ -77,8 +76,6 @@ import {
   InsertInboundEmail, InsertEmailAttachment, InsertParsedDocument, InsertParsedDocumentLineItem,
   // Data room types
   InsertDataRoom, InsertDataRoomFolder, InsertDataRoomDocument, InsertDataRoomLink, InsertDataRoomVisitor, InsertDocumentView, InsertDataRoomInvitation,
-  // Data room enhanced tracking types
-  InsertDocumentPageView, InsertDataRoomDriveSyncConfig, InsertDataRoomDriveSyncLog, InsertDataRoomEmailAccessRule, InsertDataRoomVisitorSession,
   // NDA types
   InsertNdaDocument, InsertNdaSignature, InsertNdaSignatureAuditLog,
   InsertImapCredential,
@@ -86,11 +83,11 @@ import {
   InsertAiAgentTask, InsertAiAgentRule, InsertAiAgentLog, InsertEmailTemplate,
   // Vendor Quote types
   InsertVendorRfq, InsertVendorQuote, InsertVendorRfqEmail, InsertVendorRfqInvitation,
-  // Due diligence checklist
-  dueDiligenceTemplates, dueDiligenceCategories, dueDiligenceItems, dataRoomChecklists, dataRoomChecklistItems,
-  InsertDueDiligenceTemplate, InsertDueDiligenceCategory, InsertDueDiligenceItem, InsertDataRoomChecklist, InsertDataRoomChecklistItem,
-  STANDARD_DD_CATEGORIES,
-  SERIES_B_DD_CATEGORIES
+  // CRM types
+  crmContacts, crmTags, crmContactTags, whatsappMessages, crmInteractions,
+  crmPipelines, crmDeals, contactCaptures, crmEmailCampaigns, crmCampaignRecipients,
+  InsertCrmContact, InsertCrmTag, InsertWhatsappMessage, InsertCrmInteraction,
+  InsertCrmPipeline, InsertCrmDeal, InsertContactCapture, InsertCrmEmailCampaign, InsertCrmCampaignRecipient
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -258,6 +255,13 @@ export async function getCustomerByHubspotId(hubspotId: string) {
   return result[0];
 }
 
+export async function getCustomerByEmail(email: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(customers).where(eq(customers.email, email)).limit(1);
+  return result[0];
+}
+
 export async function createCustomer(data: InsertCustomer) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -333,6 +337,13 @@ export async function getProductById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
   const result = await db.select().from(products).where(eq(products.id, id)).limit(1);
+  return result[0];
+}
+
+export async function getProductBySku(sku: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(products).where(eq(products.sku, sku)).limit(1);
   return result[0];
 }
 
@@ -648,6 +659,69 @@ export async function updateInventory(id: number, data: Partial<InsertInventory>
   const db = await getDb();
   if (!db) return;
   await db.update(inventory).set(data).where(eq(inventory.id, id));
+}
+
+export async function bulkUpdateInventory(
+  ids: number[],
+  data: {
+    quantityAdjustment?: number;
+    warehouseId?: number;
+    reorderLevel?: string;
+    reorderQuantity?: string;
+  }
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const results: { id: number; success: boolean; error?: string }[] = [];
+
+  for (const id of ids) {
+    try {
+      const updateData: Partial<InsertInventory> = {};
+
+      // Handle quantity adjustment (add/subtract from current quantity)
+      if (data.quantityAdjustment !== undefined) {
+        const [current] = await db.select().from(inventory).where(eq(inventory.id, id)).limit(1);
+        if (current) {
+          const currentQty = parseFloat(current.quantity || '0');
+          const newQty = Math.max(0, currentQty + data.quantityAdjustment);
+          updateData.quantity = newQty.toString();
+        }
+      }
+
+      // Handle warehouse change
+      if (data.warehouseId !== undefined) {
+        updateData.warehouseId = data.warehouseId;
+      }
+
+      // Handle reorder level update
+      if (data.reorderLevel !== undefined) {
+        updateData.reorderLevel = data.reorderLevel;
+      }
+
+      // Handle reorder quantity update
+      if (data.reorderQuantity !== undefined) {
+        updateData.reorderQuantity = data.reorderQuantity;
+      }
+
+      if (Object.keys(updateData).length > 0) {
+        await db.update(inventory).set(updateData).where(eq(inventory.id, id));
+      }
+
+      results.push({ id, success: true });
+    } catch (error) {
+      results.push({ id, success: false, error: (error as Error).message });
+    }
+  }
+
+  return results;
+}
+
+export async function getInventoryByIds(ids: number[]) {
+  const db = await getDb();
+  if (!db) return [];
+  if (ids.length === 0) return [];
+  return db.select().from(inventory).where(inArray(inventory.id, ids));
 }
 
 // ============================================
@@ -1366,6 +1440,47 @@ export async function deleteGoogleOAuthToken(userId: number) {
   await db.delete(googleOAuthTokens).where(eq(googleOAuthTokens.userId, userId));
 }
 
+// QuickBooks OAuth token management
+export async function getQuickBooksOAuthToken(userId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(quickbooksOAuthTokens).where(eq(quickbooksOAuthTokens.userId, userId)).limit(1);
+  return result[0];
+}
+
+export async function upsertQuickBooksOAuthToken(data: InsertQuickBooksOAuthToken) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  // Check if token exists for this user
+  const existing = await getQuickBooksOAuthToken(data.userId);
+  
+  if (existing) {
+    // Update existing token
+    // Note: QuickBooks always returns a new refresh token on token refresh
+    await db.update(quickbooksOAuthTokens)
+      .set({
+        accessToken: data.accessToken,
+        refreshToken: data.refreshToken ?? existing.refreshToken, // Use existing only if new one not provided
+        expiresAt: data.expiresAt,
+        scope: data.scope,
+        realmId: data.realmId,
+      })
+      .where(eq(quickbooksOAuthTokens.userId, data.userId));
+    return { id: existing.id };
+  } else {
+    // Insert new token
+    const result = await db.insert(quickbooksOAuthTokens).values(data);
+    return { id: result[0].insertId };
+  }
+}
+
+export async function deleteQuickBooksOAuthToken(userId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(quickbooksOAuthTokens).where(eq(quickbooksOAuthTokens.userId, userId));
+}
+
 // ============================================
 // FREIGHT CARRIERS
 // ============================================
@@ -1741,8 +1856,15 @@ export async function getConsolidatedInventory() {
 export async function getInventoryByProduct(productId: number) {
   const db = await getDb();
   if (!db) return [];
-  
+
   return db.select().from(inventory).where(eq(inventory.productId, productId));
+}
+
+export async function getInventoryByProductId(productId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(inventory).where(eq(inventory.productId, productId)).limit(1);
+  return result[0];
 }
 
 export async function updateInventoryQuantity(productId: number, warehouseId: number, quantityChange: number) {
@@ -2389,9 +2511,43 @@ export async function getRawMaterials(filters?: { status?: string; category?: st
 export async function getRawMaterialById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
-  
+
   const result = await db.select().from(rawMaterials).where(eq(rawMaterials.id, id)).limit(1);
   return result[0];
+}
+
+export async function getRawMaterialByNameOrSku(name: string, sku: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+
+  const result = await db.select().from(rawMaterials)
+    .where(or(
+      eq(rawMaterials.name, name),
+      eq(rawMaterials.sku, sku)
+    ))
+    .limit(1);
+  return result[0];
+}
+
+export async function createPurchaseOrderRawMaterialLink(data: {
+  purchaseOrderItemId: number;
+  rawMaterialId: number;
+  orderedQuantity: string;
+  unit: string;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const result = await db.insert(purchaseOrderRawMaterials).values({
+    purchaseOrderItemId: data.purchaseOrderItemId,
+    rawMaterialId: data.rawMaterialId,
+    orderedQuantity: data.orderedQuantity,
+    receivedQuantity: '0',
+    unit: data.unit,
+    status: 'ordered',
+  }).$returningId();
+
+  return { id: result[0].id };
 }
 
 export async function createRawMaterial(data: Omit<InsertRawMaterial, 'id' | 'createdAt' | 'updatedAt'>) {
@@ -2789,7 +2945,41 @@ export async function receivePurchaseOrderItems(
     await db.update(purchaseOrders).set({ status: 'partial' })
       .where(eq(purchaseOrders.id, purchaseOrderId));
   }
-  
+
+  // Update linked shipment status
+  let shipmentToUpdate = shipmentId;
+  if (!shipmentToUpdate) {
+    // Find shipment linked to this PO
+    const linkedShipment = await db.select()
+      .from(shipments)
+      .where(eq(shipments.purchaseOrderId, purchaseOrderId))
+      .limit(1);
+    if (linkedShipment[0]) {
+      shipmentToUpdate = linkedShipment[0].id;
+    }
+  }
+
+  if (shipmentToUpdate) {
+    if (allReceived) {
+      // Mark shipment as delivered
+      await db.update(shipments)
+        .set({
+          status: 'delivered',
+          deliveryDate: new Date(),
+        })
+        .where(eq(shipments.id, shipmentToUpdate));
+    } else if (anyReceived) {
+      // Shipment is in progress (partial delivery)
+      const currentShipment = await db.select().from(shipments)
+        .where(eq(shipments.id, shipmentToUpdate)).limit(1);
+      if (currentShipment[0]?.status === 'pending') {
+        await db.update(shipments)
+          .set({ status: 'in_transit' })
+          .where(eq(shipments.id, shipmentToUpdate));
+      }
+    }
+  }
+
   return receiving;
 }
 
@@ -3080,26 +3270,191 @@ export async function getHistoricalSalesData(productId?: number, months?: number
 export async function getPendingOrdersForMaterial(rawMaterialId: number) {
   const db = await getDb();
   if (!db) return [];
-  
-  // Get PO items that reference products linked to this raw material
-  const pendingPOs = await db.select({
+
+  // First check purchaseOrderRawMaterials for explicit links
+  const linkedPOs = await db.select({
     poId: purchaseOrders.id,
     poNumber: purchaseOrders.poNumber,
-    quantity: purchaseOrderItems.quantity,
-    receivedQuantity: purchaseOrderItems.receivedQuantity,
+    quantity: purchaseOrderRawMaterials.orderedQuantity,
+    receivedQuantity: purchaseOrderRawMaterials.receivedQuantity,
     expectedDate: purchaseOrders.expectedDate,
+    shipmentId: shipments.id,
+    shipmentStatus: shipments.status,
+  })
+  .from(purchaseOrderRawMaterials)
+  .innerJoin(purchaseOrderItems, eq(purchaseOrderRawMaterials.purchaseOrderItemId, purchaseOrderItems.id))
+  .innerJoin(purchaseOrders, eq(purchaseOrderItems.purchaseOrderId, purchaseOrders.id))
+  .leftJoin(shipments, eq(shipments.purchaseOrderId, purchaseOrders.id))
+  .where(and(
+    eq(purchaseOrderRawMaterials.rawMaterialId, rawMaterialId),
+    or(
+      eq(purchaseOrders.status, 'sent'),
+      eq(purchaseOrders.status, 'confirmed'),
+      eq(purchaseOrders.status, 'partial')
+    ),
+    or(
+      eq(purchaseOrderRawMaterials.status, 'ordered'),
+      eq(purchaseOrderRawMaterials.status, 'partial')
+    )
+  ));
+
+  // Also check PO items linked to products that match raw material by name
+  const rm = await getRawMaterialById(rawMaterialId);
+  if (rm) {
+    const productMatches = await db.select({
+      poId: purchaseOrders.id,
+      poNumber: purchaseOrders.poNumber,
+      quantity: purchaseOrderItems.quantity,
+      receivedQuantity: purchaseOrderItems.receivedQuantity,
+      expectedDate: purchaseOrders.expectedDate,
+      shipmentId: shipments.id,
+      shipmentStatus: shipments.status,
+    })
+    .from(purchaseOrderItems)
+    .innerJoin(purchaseOrders, eq(purchaseOrderItems.purchaseOrderId, purchaseOrders.id))
+    .innerJoin(products, eq(purchaseOrderItems.productId, products.id))
+    .leftJoin(shipments, eq(shipments.purchaseOrderId, purchaseOrders.id))
+    .where(and(
+      or(
+        eq(products.name, rm.name),
+        eq(products.sku, rm.sku || '')
+      ),
+      or(
+        eq(purchaseOrders.status, 'sent'),
+        eq(purchaseOrders.status, 'confirmed'),
+        eq(purchaseOrders.status, 'partial')
+      )
+    ));
+
+    // Combine results, avoiding duplicates
+    const allPOs = [...linkedPOs];
+    for (const po of productMatches) {
+      if (!allPOs.find(p => p.poId === po.poId && p.quantity === po.quantity)) {
+        allPOs.push(po);
+      }
+    }
+    return allPOs;
+  }
+
+  return linkedPOs;
+}
+
+// Get all pending/inbound inventory from POs (for InventoryHub display)
+export async function getPendingInventoryFromPOs() {
+  const db = await getDb();
+  if (!db) return [];
+
+  // Get all pending PO items with shipment info
+  const pendingItems = await db.select({
+    purchaseOrderId: purchaseOrders.id,
+    poNumber: purchaseOrders.poNumber,
+    poStatus: purchaseOrders.status,
+    vendorId: purchaseOrders.vendorId,
+    expectedDate: purchaseOrders.expectedDate,
+    poItemId: purchaseOrderItems.id,
+    productId: purchaseOrderItems.productId,
+    description: purchaseOrderItems.description,
+    orderedQuantity: purchaseOrderItems.quantity,
+    receivedQuantity: purchaseOrderItems.receivedQuantity,
+    shipmentId: shipments.id,
+    shipmentNumber: shipments.shipmentNumber,
+    shipmentStatus: shipments.status,
+    trackingNumber: shipments.trackingNumber,
+    carrier: shipments.carrier,
+    shipDate: shipments.shipDate,
+    deliveryDate: shipments.deliveryDate,
   })
   .from(purchaseOrderItems)
   .innerJoin(purchaseOrders, eq(purchaseOrderItems.purchaseOrderId, purchaseOrders.id))
-  .where(and(
+  .leftJoin(shipments, eq(shipments.purchaseOrderId, purchaseOrders.id))
+  .where(
     or(
       eq(purchaseOrders.status, 'sent'),
       eq(purchaseOrders.status, 'confirmed'),
       eq(purchaseOrders.status, 'partial')
     )
-  ));
-  
-  return pendingPOs;
+  );
+
+  // Enhance with raw material info if linked
+  const enhancedItems = [];
+  for (const item of pendingItems) {
+    const orderedQty = parseFloat(item.orderedQuantity?.toString() || '0');
+    const receivedQty = parseFloat(item.receivedQuantity?.toString() || '0');
+    const pendingQty = orderedQty - receivedQty;
+
+    if (pendingQty <= 0) continue;
+
+    // Check for raw material link
+    const rmLink = await db.select()
+      .from(purchaseOrderRawMaterials)
+      .where(eq(purchaseOrderRawMaterials.purchaseOrderItemId, item.poItemId))
+      .limit(1);
+
+    let rawMaterialId = rmLink[0]?.rawMaterialId;
+    let rawMaterialName = null;
+
+    // If no explicit link, try matching by product
+    if (!rawMaterialId && item.productId) {
+      const product = await getProductById(item.productId);
+      if (product) {
+        const rm = await db.select().from(rawMaterials)
+          .where(or(
+            eq(rawMaterials.name, product.name),
+            eq(rawMaterials.sku, product.sku || '')
+          ))
+          .limit(1);
+        if (rm[0]) {
+          rawMaterialId = rm[0].id;
+          rawMaterialName = rm[0].name;
+        }
+      }
+    } else if (rawMaterialId) {
+      const rm = await getRawMaterialById(rawMaterialId);
+      rawMaterialName = rm?.name;
+    }
+
+    enhancedItems.push({
+      ...item,
+      rawMaterialId,
+      rawMaterialName,
+      pendingQuantity: pendingQty,
+      status: item.shipmentStatus === 'in_transit' ? 'in_transit' :
+              item.shipmentStatus === 'delivered' ? 'arrived' : 'on_order',
+    });
+  }
+
+  return enhancedItems;
+}
+
+// Get inbound shipments from POs
+export async function getInboundShipmentsFromPOs() {
+  const db = await getDb();
+  if (!db) return [];
+
+  return db.select({
+    shipmentId: shipments.id,
+    shipmentNumber: shipments.shipmentNumber,
+    status: shipments.status,
+    carrier: shipments.carrier,
+    trackingNumber: shipments.trackingNumber,
+    shipDate: shipments.shipDate,
+    deliveryDate: shipments.deliveryDate,
+    purchaseOrderId: purchaseOrders.id,
+    poNumber: purchaseOrders.poNumber,
+    poStatus: purchaseOrders.status,
+    vendorId: purchaseOrders.vendorId,
+    expectedDate: purchaseOrders.expectedDate,
+  })
+  .from(shipments)
+  .innerJoin(purchaseOrders, eq(shipments.purchaseOrderId, purchaseOrders.id))
+  .where(and(
+    eq(shipments.type, 'inbound'),
+    or(
+      eq(shipments.status, 'pending'),
+      eq(shipments.status, 'in_transit')
+    )
+  ))
+  .orderBy(desc(shipments.createdAt));
 }
 
 // Convert suggested PO to actual PO
@@ -6282,6 +6637,8 @@ export async function updateAiAgentTask(id: number, data: Partial<{
   executionResult: string;
   errorMessage: string;
   retryCount: number;
+  taskData: string;
+  aiReasoning: string;
 }>) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -6674,12 +7031,12 @@ export async function createDocumentImportLog(data: DocumentImportLog) {
 export async function getDocumentImportLogs(limit: number = 50) {
   const db = await getDb();
   if (!db) return [];
-
+  
   const result = await db.select().from(auditLogs)
     .where(sql`${auditLogs.entityType} LIKE 'document_import_%'`)
     .orderBy(desc(auditLogs.createdAt))
     .limit(limit);
-
+  
   return result.map(log => {
     const importData = (log.newValues as any) || {};
     return {
@@ -6695,503 +7052,959 @@ export async function getDocumentImportLogs(limit: number = 50) {
   });
 }
 
-
 // ============================================
-// DATA ROOM - PAGE-LEVEL TRACKING FUNCTIONS
+// CRM MODULE - Contacts, Messaging & Tracking
 // ============================================
 
-// Document Page Views
-export async function createDocumentPageView(data: InsertDocumentPageView) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const result = await db.insert(documentPageViews).values(data);
-  return result[0].insertId;
-}
+// --- CRM CONTACTS ---
 
-export async function getDocumentPageViews(documentId: number, visitorId?: number) {
+export async function getCrmContacts(filters?: {
+  contactType?: string;
+  status?: string;
+  source?: string;
+  pipelineStage?: string;
+  assignedTo?: number;
+  search?: string;
+  limit?: number;
+  offset?: number;
+}) {
   const db = await getDb();
   if (!db) return [];
 
-  const conditions = [eq(documentPageViews.documentId, documentId)];
-  if (visitorId) {
-    conditions.push(eq(documentPageViews.visitorId, visitorId));
+  const conditions = [];
+  if (filters?.contactType) {
+    conditions.push(eq(crmContacts.contactType, filters.contactType as any));
+  }
+  if (filters?.status) {
+    conditions.push(eq(crmContacts.status, filters.status as any));
+  }
+  if (filters?.source) {
+    conditions.push(eq(crmContacts.source, filters.source as any));
+  }
+  if (filters?.pipelineStage) {
+    conditions.push(eq(crmContacts.pipelineStage, filters.pipelineStage as any));
+  }
+  if (filters?.assignedTo) {
+    conditions.push(eq(crmContacts.assignedTo, filters.assignedTo));
+  }
+  if (filters?.search) {
+    conditions.push(
+      or(
+        like(crmContacts.fullName, `%${filters.search}%`),
+        like(crmContacts.email, `%${filters.search}%`),
+        like(crmContacts.organization, `%${filters.search}%`),
+        like(crmContacts.phone, `%${filters.search}%`)
+      )
+    );
   }
 
-  return db.select().from(documentPageViews)
-    .where(and(...conditions))
-    .orderBy(desc(documentPageViews.enterTime));
-}
-
-export async function getPageViewsByVisitor(visitorId: number) {
-  const db = await getDb();
-  if (!db) return [];
-
-  return db.select().from(documentPageViews)
-    .where(eq(documentPageViews.visitorId, visitorId))
-    .orderBy(desc(documentPageViews.enterTime));
-}
-
-export async function updateDocumentPageView(id: number, data: Partial<InsertDocumentPageView>) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db.update(documentPageViews).set(data).where(eq(documentPageViews.id, id));
-}
-
-export async function getPageViewAnalytics(dataRoomId: number) {
-  const db = await getDb();
-  if (!db) return { pageViews: [], documentStats: [], visitorStats: [] };
-
-  // Get all documents in the data room
-  const docs = await db.select().from(dataRoomDocuments)
-    .where(eq(dataRoomDocuments.dataRoomId, dataRoomId));
-
-  const docIds = docs.map(d => d.id);
-  if (docIds.length === 0) {
-    return { pageViews: [], documentStats: [], visitorStats: [] };
+  let query = db.select().from(crmContacts);
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as any;
   }
 
-  // Get page views for those documents
-  const pageViews = await db.select().from(documentPageViews)
-    .where(inArray(documentPageViews.documentId, docIds))
-    .orderBy(desc(documentPageViews.enterTime));
-
-  // Aggregate stats by document
-  const documentStats = docs.map(doc => {
-    const docPageViews = pageViews.filter(pv => pv.documentId === doc.id);
-    const totalDuration = docPageViews.reduce((sum, pv) => sum + (pv.durationMs || 0), 0);
-    const uniqueVisitors = new Set(docPageViews.map(pv => pv.visitorId)).size;
-    const pageStats: Record<number, { views: number; avgDuration: number }> = {};
-
-    docPageViews.forEach(pv => {
-      if (!pageStats[pv.pageNumber]) {
-        pageStats[pv.pageNumber] = { views: 0, avgDuration: 0 };
-      }
-      pageStats[pv.pageNumber].views++;
-      pageStats[pv.pageNumber].avgDuration += pv.durationMs || 0;
-    });
-
-    // Calculate averages
-    Object.keys(pageStats).forEach(page => {
-      const p = parseInt(page);
-      if (pageStats[p].views > 0) {
-        pageStats[p].avgDuration = pageStats[p].avgDuration / pageStats[p].views;
-      }
-    });
-
-    return {
-      documentId: doc.id,
-      documentName: doc.name,
-      totalViews: docPageViews.length,
-      uniqueVisitors,
-      totalDurationMs: totalDuration,
-      avgDurationMs: docPageViews.length > 0 ? totalDuration / docPageViews.length : 0,
-      pageStats,
-    };
-  });
-
-  // Aggregate stats by visitor
-  const visitorIds = [...new Set(pageViews.map(pv => pv.visitorId))];
-  const visitors = visitorIds.length > 0
-    ? await db.select().from(dataRoomVisitors).where(inArray(dataRoomVisitors.id, visitorIds))
-    : [];
-
-  const visitorStats = visitors.map(visitor => {
-    const visitorPageViews = pageViews.filter(pv => pv.visitorId === visitor.id);
-    const totalDuration = visitorPageViews.reduce((sum, pv) => sum + (pv.durationMs || 0), 0);
-    const documentsViewed = new Set(visitorPageViews.map(pv => pv.documentId)).size;
-
-    // Group by document
-    const byDocument: Record<number, { pages: number[]; totalDuration: number }> = {};
-    visitorPageViews.forEach(pv => {
-      if (!byDocument[pv.documentId]) {
-        byDocument[pv.documentId] = { pages: [], totalDuration: 0 };
-      }
-      if (!byDocument[pv.documentId].pages.includes(pv.pageNumber)) {
-        byDocument[pv.documentId].pages.push(pv.pageNumber);
-      }
-      byDocument[pv.documentId].totalDuration += pv.durationMs || 0;
-    });
-
-    return {
-      visitorId: visitor.id,
-      email: visitor.email,
-      name: visitor.name,
-      company: visitor.company,
-      totalPageViews: visitorPageViews.length,
-      documentsViewed,
-      totalDurationMs: totalDuration,
-      byDocument,
-    };
-  });
-
-  return { pageViews, documentStats, visitorStats };
+  return query
+    .orderBy(desc(crmContacts.createdAt))
+    .limit(filters?.limit || 100)
+    .offset(filters?.offset || 0);
 }
 
-// ============================================
-// DATA ROOM - GOOGLE DRIVE SYNC FUNCTIONS
-// ============================================
+export async function getCrmContactById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(crmContacts).where(eq(crmContacts.id, id)).limit(1);
+  return result[0];
+}
 
-export async function createDriveSyncConfig(data: InsertDataRoomDriveSyncConfig) {
+export async function getCrmContactByEmail(email: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(crmContacts).where(eq(crmContacts.email, email)).limit(1);
+  return result[0];
+}
+
+export async function createCrmContact(data: InsertCrmContact) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const result = await db.insert(dataRoomDriveSyncConfig).values(data);
+  const result = await db.insert(crmContacts).values(data);
   return result[0].insertId;
 }
 
-export async function getDriveSyncConfig(dataRoomId: number) {
+export async function updateCrmContact(id: number, data: Partial<InsertCrmContact>) {
   const db = await getDb();
-  if (!db) return null;
-  const result = await db.select().from(dataRoomDriveSyncConfig)
-    .where(eq(dataRoomDriveSyncConfig.dataRoomId, dataRoomId));
-  return result[0] || null;
+  if (!db) return;
+  await db.update(crmContacts).set(data).where(eq(crmContacts.id, id));
 }
 
-export async function updateDriveSyncConfig(id: number, data: Partial<InsertDataRoomDriveSyncConfig>) {
+export async function deleteCrmContact(id: number) {
   const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db.update(dataRoomDriveSyncConfig).set(data).where(eq(dataRoomDriveSyncConfig.id, id));
+  if (!db) return;
+  await db.delete(crmContacts).where(eq(crmContacts.id, id));
 }
 
-export async function deleteDriveSyncConfig(dataRoomId: number) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db.delete(dataRoomDriveSyncConfig).where(eq(dataRoomDriveSyncConfig.dataRoomId, dataRoomId));
-}
-
-export async function createDriveSyncLog(data: InsertDataRoomDriveSyncLog) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const result = await db.insert(dataRoomDriveSyncLogs).values(data);
-  return result[0].insertId;
-}
-
-export async function getDriveSyncLogs(dataRoomId: number, limit: number = 50) {
-  const db = await getDb();
-  if (!db) return [];
-  return db.select().from(dataRoomDriveSyncLogs)
-    .where(eq(dataRoomDriveSyncLogs.dataRoomId, dataRoomId))
-    .orderBy(desc(dataRoomDriveSyncLogs.startedAt))
-    .limit(limit);
-}
-
-export async function updateDriveSyncLog(id: number, data: Partial<InsertDataRoomDriveSyncLog>) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db.update(dataRoomDriveSyncLogs).set(data).where(eq(dataRoomDriveSyncLogs.id, id));
-}
-
-// ============================================
-// DATA ROOM - EMAIL ACCESS RULES FUNCTIONS
-// ============================================
-
-export async function createEmailAccessRule(data: InsertDataRoomEmailAccessRule) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const result = await db.insert(dataRoomEmailAccessRules).values(data);
-  return result[0].insertId;
-}
-
-export async function getEmailAccessRules(dataRoomId: number) {
-  const db = await getDb();
-  if (!db) return [];
-  return db.select().from(dataRoomEmailAccessRules)
-    .where(eq(dataRoomEmailAccessRules.dataRoomId, dataRoomId))
-    .orderBy(desc(dataRoomEmailAccessRules.priority));
-}
-
-export async function updateEmailAccessRule(id: number, data: Partial<InsertDataRoomEmailAccessRule>) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db.update(dataRoomEmailAccessRules).set(data).where(eq(dataRoomEmailAccessRules.id, id));
-}
-
-export async function deleteEmailAccessRule(id: number) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db.delete(dataRoomEmailAccessRules).where(eq(dataRoomEmailAccessRules.id, id));
-}
-
-export async function checkEmailAccess(dataRoomId: number, email: string): Promise<{
-  allowed: boolean;
-  rule: any | null;
-  permissions: { allowDownload: boolean; allowPrint: boolean; maxViews: number | null; requireNda: boolean };
-}> {
-  const db = await getDb();
-  if (!db) return { allowed: true, rule: null, permissions: { allowDownload: true, allowPrint: true, maxViews: null, requireNda: true } };
-
-  const rules = await db.select().from(dataRoomEmailAccessRules)
-    .where(and(
-      eq(dataRoomEmailAccessRules.dataRoomId, dataRoomId),
-      eq(dataRoomEmailAccessRules.isActive, true)
-    ))
-    .orderBy(desc(dataRoomEmailAccessRules.priority));
-
-  const emailLower = email.toLowerCase();
-  const domain = emailLower.split('@')[1];
-
-  for (const rule of rules) {
-    const pattern = rule.emailPattern.toLowerCase();
-    let matches = false;
-
-    if (rule.ruleType === 'allow_email' || rule.ruleType === 'block_email') {
-      matches = emailLower === pattern;
-    } else if (rule.ruleType === 'allow_domain' || rule.ruleType === 'block_domain') {
-      matches = domain === pattern || pattern === '*';
-    }
-
-    if (matches) {
-      const isBlock = rule.ruleType === 'block_email' || rule.ruleType === 'block_domain';
-      return {
-        allowed: !isBlock,
-        rule,
-        permissions: {
-          allowDownload: rule.allowDownload ?? true,
-          allowPrint: rule.allowPrint ?? true,
-          maxViews: rule.maxViews,
-          requireNda: rule.requireNdaSignature ?? true,
-        }
-      };
-    }
-  }
-
-  // Default: allow with default permissions
-  return { allowed: true, rule: null, permissions: { allowDownload: true, allowPrint: true, maxViews: null, requireNda: true } };
-}
-
-// ============================================
-// DATA ROOM - VISITOR SESSION FUNCTIONS
-// ============================================
-
-export async function createVisitorSession(data: InsertDataRoomVisitorSession) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const result = await db.insert(dataRoomVisitorSessions).values(data);
-  return result[0].insertId;
-}
-
-export async function getVisitorSessions(visitorId: number) {
-  const db = await getDb();
-  if (!db) return [];
-  return db.select().from(dataRoomVisitorSessions)
-    .where(eq(dataRoomVisitorSessions.visitorId, visitorId))
-    .orderBy(desc(dataRoomVisitorSessions.sessionStartAt));
-}
-
-export async function getDataRoomSessions(dataRoomId: number, limit: number = 100) {
-  const db = await getDb();
-  if (!db) return [];
-  return db.select().from(dataRoomVisitorSessions)
-    .where(eq(dataRoomVisitorSessions.dataRoomId, dataRoomId))
-    .orderBy(desc(dataRoomVisitorSessions.sessionStartAt))
-    .limit(limit);
-}
-
-export async function updateVisitorSession(id: number, data: Partial<InsertDataRoomVisitorSession>) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db.update(dataRoomVisitorSessions).set(data).where(eq(dataRoomVisitorSessions.id, id));
-}
-
-export async function getSessionByToken(sessionToken: string) {
-  const db = await getDb();
-  if (!db) return null;
-  const result = await db.select().from(dataRoomVisitorSessions)
-    .where(eq(dataRoomVisitorSessions.sessionToken, sessionToken));
-  return result[0] || null;
-}
-
-export async function getActiveSession(visitorId: number, dataRoomId: number) {
-  const db = await getDb();
-  if (!db) return null;
-  const result = await db.select().from(dataRoomVisitorSessions)
-    .where(and(
-      eq(dataRoomVisitorSessions.visitorId, visitorId),
-      eq(dataRoomVisitorSessions.dataRoomId, dataRoomId),
-      eq(dataRoomVisitorSessions.isActive, true)
-    ))
-    .orderBy(desc(dataRoomVisitorSessions.sessionStartAt))
-    .limit(1);
-  return result[0] || null;
-}
-
-// ============================================
-// DATA ROOM - DETAILED ANALYTICS FUNCTIONS
-// ============================================
-
-export async function getDetailedVisitorAnalytics(dataRoomId: number, visitorId: number) {
+export async function getCrmContactStats() {
   const db = await getDb();
   if (!db) return null;
 
-  // Get visitor info, scoped to the specified data room
-  const visitor = await db.select().from(dataRoomVisitors)
-    .where(and(
-      eq(dataRoomVisitors.id, visitorId),
-      eq(dataRoomVisitors.dataRoomId, dataRoomId),
-    ));
-  if (!visitor[0]) return null;
-
-  // Get all sessions for this visitor, scoped to the specified data room
-  const allSessions = await getVisitorSessions(visitorId);
-  const sessions = allSessions.filter(s => s.dataRoomId === dataRoomId);
-
-  // Get all page views for this visitor, scoped to the specified data room
-  const allPageViews = await getPageViewsByVisitor(visitorId);
-  const pageViews = allPageViews.filter(pv => pv.dataRoomId === dataRoomId);
-
-  // Get document views for this visitor, scoped to the specified data room
-  const docViews = await db.select().from(documentViews)
-    .where(and(
-      eq(documentViews.visitorId, visitorId),
-      eq(documentViews.dataRoomId, dataRoomId),
-    ));
-
-  // Get documents info
-  const docIds = [...new Set(pageViews.map(pv => pv.documentId))];
-  const documents = docIds.length > 0
-    ? await db.select().from(dataRoomDocuments).where(inArray(dataRoomDocuments.id, docIds))
-    : [];
-
-  // Build detailed analytics
-  const documentEngagement = documents.map(doc => {
-    const docPageViews = pageViews.filter(pv => pv.documentId === doc.id);
-    const uniquePages = [...new Set(docPageViews.map(pv => pv.pageNumber))];
-    const totalDuration = docPageViews.reduce((sum, pv) => sum + (pv.durationMs || 0), 0);
-
-    // Page-by-page breakdown
-    const pageBreakdown: Record<number, { views: number; totalDuration: number; avgDuration: number; scrollDepth: number }> = {};
-    docPageViews.forEach(pv => {
-      if (!pageBreakdown[pv.pageNumber]) {
-        pageBreakdown[pv.pageNumber] = { views: 0, totalDuration: 0, avgDuration: 0, scrollDepth: 0 };
-      }
-      pageBreakdown[pv.pageNumber].views++;
-      pageBreakdown[pv.pageNumber].totalDuration += pv.durationMs || 0;
-      pageBreakdown[pv.pageNumber].scrollDepth = Math.max(pageBreakdown[pv.pageNumber].scrollDepth, pv.scrollDepth || 0);
-    });
-
-    Object.keys(pageBreakdown).forEach(page => {
-      const p = parseInt(page);
-      pageBreakdown[p].avgDuration = pageBreakdown[p].totalDuration / pageBreakdown[p].views;
-    });
-
-    return {
-      documentId: doc.id,
-      documentName: doc.name,
-      pageCount: doc.pageCount || 1,
-      pagesViewed: uniquePages.length,
-      percentViewed: doc.pageCount ? Math.round((uniquePages.length / doc.pageCount) * 100) : 100,
-      totalViews: docPageViews.length,
-      totalDurationMs: totalDuration,
-      avgPageDurationMs: docPageViews.length > 0 ? totalDuration / docPageViews.length : 0,
-      pageBreakdown,
-    };
-  });
+  const [totalContacts] = await db.select({ count: count() }).from(crmContacts);
+  const [leadCount] = await db.select({ count: count() }).from(crmContacts).where(eq(crmContacts.contactType, "lead"));
+  const [prospectCount] = await db.select({ count: count() }).from(crmContacts).where(eq(crmContacts.contactType, "prospect"));
+  const [customerCount] = await db.select({ count: count() }).from(crmContacts).where(eq(crmContacts.contactType, "customer"));
+  const [investorCount] = await db.select({ count: count() }).from(crmContacts).where(eq(crmContacts.contactType, "investor"));
+  const [donorCount] = await db.select({ count: count() }).from(crmContacts).where(eq(crmContacts.contactType, "donor"));
 
   return {
-    visitor: visitor[0],
-    sessions,
-    documentEngagement,
-    summary: {
-      totalSessions: sessions.length,
-      totalDocuments: documents.length,
-      totalPageViews: pageViews.length,
-      totalTimeMs: sessions.reduce((sum, s) => sum + (s.totalDurationMs || 0), 0),
-      downloads: docViews.filter(dv => dv.downloaded).length,
-      prints: docViews.filter(dv => dv.printed).length,
-    },
+    total: totalContacts?.count || 0,
+    leads: leadCount?.count || 0,
+    prospects: prospectCount?.count || 0,
+    customers: customerCount?.count || 0,
+    investors: investorCount?.count || 0,
+    donors: donorCount?.count || 0,
   };
 }
 
-export async function getDataRoomEngagementReport(dataRoomId: number, startDate?: Date, endDate?: Date) {
+// --- CRM TAGS ---
+
+export async function getCrmTags(category?: string) {
+  const db = await getDb();
+  if (!db) return [];
+  let query = db.select().from(crmTags);
+  if (category) {
+    query = query.where(eq(crmTags.category, category as any)) as any;
+  }
+  return query.orderBy(crmTags.name);
+}
+
+export async function createCrmTag(data: InsertCrmTag) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(crmTags).values(data);
+  return result[0].insertId;
+}
+
+export async function deleteCrmTag(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(crmContactTags).where(eq(crmContactTags.tagId, id));
+  await db.delete(crmTags).where(eq(crmTags.id, id));
+}
+
+export async function addTagToContact(contactId: number, tagId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.insert(crmContactTags).values({ contactId, tagId });
+}
+
+export async function removeTagFromContact(contactId: number, tagId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(crmContactTags).where(
+    and(eq(crmContactTags.contactId, contactId), eq(crmContactTags.tagId, tagId))
+  );
+}
+
+export async function getContactTags(contactId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const result = await db
+    .select({ tag: crmTags })
+    .from(crmContactTags)
+    .innerJoin(crmTags, eq(crmContactTags.tagId, crmTags.id))
+    .where(eq(crmContactTags.contactId, contactId));
+  return result.map(r => r.tag);
+}
+
+// --- WHATSAPP MESSAGES ---
+
+export async function getWhatsappMessages(filters?: {
+  contactId?: number;
+  whatsappNumber?: string;
+  direction?: string;
+  conversationId?: string;
+  limit?: number;
+  offset?: number;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (filters?.contactId) {
+    conditions.push(eq(whatsappMessages.contactId, filters.contactId));
+  }
+  if (filters?.whatsappNumber) {
+    conditions.push(eq(whatsappMessages.whatsappNumber, filters.whatsappNumber));
+  }
+  if (filters?.direction) {
+    conditions.push(eq(whatsappMessages.direction, filters.direction as any));
+  }
+  if (filters?.conversationId) {
+    conditions.push(eq(whatsappMessages.conversationId, filters.conversationId));
+  }
+
+  let query = db.select().from(whatsappMessages);
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as any;
+  }
+
+  return query
+    .orderBy(desc(whatsappMessages.createdAt))
+    .limit(filters?.limit || 100)
+    .offset(filters?.offset || 0);
+}
+
+export async function getWhatsappConversations(limit: number = 50) {
+  const db = await getDb();
+  if (!db) return [];
+
+  // Get latest message per conversation
+  const result = await db.select().from(whatsappMessages)
+    .orderBy(desc(whatsappMessages.createdAt))
+    .limit(limit * 2);
+
+  // Group by conversation
+  const conversations = new Map<string, typeof result[0]>();
+  for (const msg of result) {
+    const key = msg.conversationId || msg.whatsappNumber;
+    if (!conversations.has(key)) {
+      conversations.set(key, msg);
+    }
+  }
+
+  return Array.from(conversations.values()).slice(0, limit);
+}
+
+export async function createWhatsappMessage(data: InsertWhatsappMessage) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(whatsappMessages).values(data);
+  return result[0].insertId;
+}
+
+export async function updateWhatsappMessageStatus(
+  id: number,
+  status: string,
+  timestamp?: Date
+) {
+  const db = await getDb();
+  if (!db) return;
+
+  const updates: Record<string, any> = { status };
+  if (status === "sent" && timestamp) updates.sentAt = timestamp;
+  if (status === "delivered" && timestamp) updates.deliveredAt = timestamp;
+  if (status === "read" && timestamp) updates.readAt = timestamp;
+
+  await db.update(whatsappMessages).set(updates).where(eq(whatsappMessages.id, id));
+}
+
+// --- CRM INTERACTIONS ---
+
+export async function getCrmInteractions(filters?: {
+  contactId?: number;
+  channel?: string;
+  limit?: number;
+  offset?: number;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (filters?.contactId) {
+    conditions.push(eq(crmInteractions.contactId, filters.contactId));
+  }
+  if (filters?.channel) {
+    conditions.push(eq(crmInteractions.channel, filters.channel as any));
+  }
+
+  let query = db.select().from(crmInteractions);
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as any;
+  }
+
+  return query
+    .orderBy(desc(crmInteractions.createdAt))
+    .limit(filters?.limit || 100)
+    .offset(filters?.offset || 0);
+}
+
+export async function createCrmInteraction(data: InsertCrmInteraction) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const result = await db.insert(crmInteractions).values(data);
+
+  // Update contact's interaction count and last contacted timestamp
+  await db.update(crmContacts)
+    .set({
+      totalInteractions: sql`${crmContacts.totalInteractions} + 1`,
+      lastContactedAt: new Date(),
+    })
+    .where(eq(crmContacts.id, data.contactId));
+
+  return result[0].insertId;
+}
+
+export async function getContactTimeline(contactId: number, limit: number = 50) {
+  const db = await getDb();
+  if (!db) return [];
+
+  // Get all interactions for timeline
+  const interactions = await db.select().from(crmInteractions)
+    .where(eq(crmInteractions.contactId, contactId))
+    .orderBy(desc(crmInteractions.createdAt))
+    .limit(limit);
+
+  return interactions;
+}
+
+// --- CRM PIPELINES ---
+
+export async function getCrmPipelines(type?: string) {
+  const db = await getDb();
+  if (!db) return [];
+
+  let query = db.select().from(crmPipelines).where(eq(crmPipelines.isActive, true));
+  if (type) {
+    query = query.where(eq(crmPipelines.type, type as any)) as any;
+  }
+
+  return query.orderBy(crmPipelines.name);
+}
+
+export async function getCrmPipelineById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(crmPipelines).where(eq(crmPipelines.id, id)).limit(1);
+  return result[0];
+}
+
+export async function createCrmPipeline(data: InsertCrmPipeline) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(crmPipelines).values(data);
+  return result[0].insertId;
+}
+
+export async function updateCrmPipeline(id: number, data: Partial<InsertCrmPipeline>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(crmPipelines).set(data).where(eq(crmPipelines.id, id));
+}
+
+// --- CRM DEALS ---
+
+export async function getCrmDeals(filters?: {
+  pipelineId?: number;
+  contactId?: number;
+  stage?: string;
+  status?: string;
+  assignedTo?: number;
+  limit?: number;
+  offset?: number;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (filters?.pipelineId) {
+    conditions.push(eq(crmDeals.pipelineId, filters.pipelineId));
+  }
+  if (filters?.contactId) {
+    conditions.push(eq(crmDeals.contactId, filters.contactId));
+  }
+  if (filters?.stage) {
+    conditions.push(eq(crmDeals.stage, filters.stage));
+  }
+  if (filters?.status) {
+    conditions.push(eq(crmDeals.status, filters.status as any));
+  }
+  if (filters?.assignedTo) {
+    conditions.push(eq(crmDeals.assignedTo, filters.assignedTo));
+  }
+
+  let query = db.select().from(crmDeals);
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as any;
+  }
+
+  return query
+    .orderBy(desc(crmDeals.createdAt))
+    .limit(filters?.limit || 100)
+    .offset(filters?.offset || 0);
+}
+
+export async function getCrmDealById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(crmDeals).where(eq(crmDeals.id, id)).limit(1);
+  return result[0];
+}
+
+export async function createCrmDeal(data: InsertCrmDeal) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(crmDeals).values(data);
+  return result[0].insertId;
+}
+
+export async function updateCrmDeal(id: number, data: Partial<InsertCrmDeal>) {
+  const db = await getDb();
+  if (!db) return;
+
+  // Handle won/lost status changes
+  if (data.status === "won" && !data.wonAt) {
+    data.wonAt = new Date();
+  }
+  if (data.status === "lost" && !data.lostAt) {
+    data.lostAt = new Date();
+  }
+
+  await db.update(crmDeals).set(data).where(eq(crmDeals.id, id));
+}
+
+export async function deleteCrmDeal(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(crmDeals).where(eq(crmDeals.id, id));
+}
+
+export async function getCrmDealStats(pipelineId?: number) {
   const db = await getDb();
   if (!db) return null;
 
-  const room = await db.select().from(dataRooms).where(eq(dataRooms.id, dataRoomId));
-  if (!room[0]) return null;
+  const baseCondition = pipelineId ? eq(crmDeals.pipelineId, pipelineId) : undefined;
 
-  // Get all visitors
-  const visitors = await db.select().from(dataRoomVisitors)
-    .where(eq(dataRoomVisitors.dataRoomId, dataRoomId));
+  const [totalDeals] = await db.select({ count: count() }).from(crmDeals).where(baseCondition);
+  const [openDeals] = await db.select({ count: count(), totalValue: sum(crmDeals.amount) })
+    .from(crmDeals)
+    .where(baseCondition ? and(baseCondition, eq(crmDeals.status, "open")) : eq(crmDeals.status, "open"));
+  const [wonDeals] = await db.select({ count: count(), totalValue: sum(crmDeals.amount) })
+    .from(crmDeals)
+    .where(baseCondition ? and(baseCondition, eq(crmDeals.status, "won")) : eq(crmDeals.status, "won"));
+  const [lostDeals] = await db.select({ count: count() })
+    .from(crmDeals)
+    .where(baseCondition ? and(baseCondition, eq(crmDeals.status, "lost")) : eq(crmDeals.status, "lost"));
 
-  // Get all documents
-  const documents = await db.select().from(dataRoomDocuments)
-    .where(eq(dataRoomDocuments.dataRoomId, dataRoomId));
+  return {
+    total: totalDeals?.count || 0,
+    open: openDeals?.count || 0,
+    openValue: openDeals?.totalValue || 0,
+    won: wonDeals?.count || 0,
+    wonValue: wonDeals?.totalValue || 0,
+    lost: lostDeals?.count || 0,
+  };
+}
 
-  // Get all sessions with date filter
-  let sessionsQuery = db.select().from(dataRoomVisitorSessions)
-    .where(eq(dataRoomVisitorSessions.dataRoomId, dataRoomId));
+// --- CONTACT CAPTURES ---
 
-  const sessions = await sessionsQuery;
-  const filteredSessions = sessions.filter(s => {
-    if (startDate && s.sessionStartAt < startDate) return false;
-    if (endDate && s.sessionStartAt > endDate) return false;
-    return true;
+export async function getContactCaptures(filters?: {
+  status?: string;
+  captureMethod?: string;
+  capturedBy?: number;
+  limit?: number;
+  offset?: number;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (filters?.status) {
+    conditions.push(eq(contactCaptures.status, filters.status as any));
+  }
+  if (filters?.captureMethod) {
+    conditions.push(eq(contactCaptures.captureMethod, filters.captureMethod as any));
+  }
+  if (filters?.capturedBy) {
+    conditions.push(eq(contactCaptures.capturedBy, filters.capturedBy));
+  }
+
+  let query = db.select().from(contactCaptures);
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as any;
+  }
+
+  return query
+    .orderBy(desc(contactCaptures.capturedAt))
+    .limit(filters?.limit || 100)
+    .offset(filters?.offset || 0);
+}
+
+export async function getContactCaptureById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(contactCaptures).where(eq(contactCaptures.id, id)).limit(1);
+  return result[0];
+}
+
+export async function createContactCapture(data: InsertContactCapture) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(contactCaptures).values(data);
+  return result[0].insertId;
+}
+
+export async function updateContactCapture(id: number, data: Partial<InsertContactCapture>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(contactCaptures).set(data).where(eq(contactCaptures.id, id));
+}
+
+// Parse vCard data and create/update contact
+export async function processVCardCapture(captureId: number, vcardData: string, capturedBy: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Parse vCard data
+  const parsedData = parseVCard(vcardData);
+
+  // Check for existing contact by email or phone
+  let existingContact = null;
+  if (parsedData.email) {
+    existingContact = await getCrmContactByEmail(parsedData.email);
+  }
+
+  let contactId: number;
+
+  if (existingContact) {
+    // Update existing contact
+    await updateCrmContact(existingContact.id, {
+      ...parsedData,
+      updatedAt: new Date(),
+    });
+    contactId = existingContact.id;
+
+    // Mark capture as merged
+    await updateContactCapture(captureId, {
+      contactId,
+      status: "merged",
+      parsedData: JSON.stringify(parsedData),
+    });
+  } else {
+    // Create new contact
+    contactId = await createCrmContact({
+      ...parsedData,
+      source: "iphone_bump",
+      capturedBy,
+      captureData: JSON.stringify({ vcardData, captureId }),
+    });
+
+    // Mark capture as contact_created
+    await updateContactCapture(captureId, {
+      contactId,
+      status: "contact_created",
+      parsedData: JSON.stringify(parsedData),
+    });
+  }
+
+  return contactId;
+}
+
+// Parse LinkedIn profile data and create/update contact
+export async function processLinkedInCapture(
+  captureId: number,
+  linkedinData: {
+    profileUrl: string;
+    name?: string;
+    firstName?: string;
+    lastName?: string;
+    headline?: string;
+    company?: string;
+    email?: string;
+  },
+  capturedBy: number
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const parsedData: Partial<InsertCrmContact> = {
+    firstName: linkedinData.firstName || linkedinData.name?.split(" ")[0] || "Unknown",
+    lastName: linkedinData.lastName || linkedinData.name?.split(" ").slice(1).join(" ") || "",
+    fullName: linkedinData.name || `${linkedinData.firstName || ""} ${linkedinData.lastName || ""}`.trim() || "Unknown",
+    linkedinUrl: linkedinData.profileUrl,
+    jobTitle: linkedinData.headline,
+    organization: linkedinData.company,
+    email: linkedinData.email,
+  };
+
+  // Check for existing contact by LinkedIn URL or email
+  let existingContact = null;
+  if (linkedinData.email) {
+    existingContact = await getCrmContactByEmail(linkedinData.email);
+  }
+  if (!existingContact && linkedinData.profileUrl) {
+    const result = await db.select().from(crmContacts)
+      .where(eq(crmContacts.linkedinUrl, linkedinData.profileUrl))
+      .limit(1);
+    existingContact = result[0];
+  }
+
+  let contactId: number;
+
+  if (existingContact) {
+    await updateCrmContact(existingContact.id, parsedData);
+    contactId = existingContact.id;
+
+    await updateContactCapture(captureId, {
+      contactId,
+      status: "merged",
+      parsedData: JSON.stringify(parsedData),
+    });
+  } else {
+    contactId = await createCrmContact({
+      ...parsedData,
+      source: "linkedin_scan",
+      capturedBy,
+      captureData: JSON.stringify({ linkedinData, captureId }),
+    } as InsertCrmContact);
+
+    await updateContactCapture(captureId, {
+      contactId,
+      status: "contact_created",
+      parsedData: JSON.stringify(parsedData),
+    });
+  }
+
+  return contactId;
+}
+
+// --- EMAIL CAMPAIGNS ---
+
+export async function getCrmEmailCampaigns(filters?: {
+  status?: string;
+  type?: string;
+  limit?: number;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (filters?.status) {
+    conditions.push(eq(crmEmailCampaigns.status, filters.status as any));
+  }
+  if (filters?.type) {
+    conditions.push(eq(crmEmailCampaigns.type, filters.type as any));
+  }
+
+  let query = db.select().from(crmEmailCampaigns);
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as any;
+  }
+
+  return query
+    .orderBy(desc(crmEmailCampaigns.createdAt))
+    .limit(filters?.limit || 50);
+}
+
+export async function createCrmEmailCampaign(data: InsertCrmEmailCampaign) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(crmEmailCampaigns).values(data);
+  return result[0].insertId;
+}
+
+export async function updateCrmEmailCampaign(id: number, data: Partial<InsertCrmEmailCampaign>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(crmEmailCampaigns).set(data).where(eq(crmEmailCampaigns.id, id));
+}
+
+// --- HELPER FUNCTIONS ---
+
+function parseVCard(vcardData: string): Partial<InsertCrmContact> {
+  const lines = vcardData.split(/\r?\n/);
+  const result: Partial<InsertCrmContact> = {};
+
+  for (const line of lines) {
+    const [key, ...valueParts] = line.split(":");
+    const value = valueParts.join(":").trim();
+
+    if (!key || !value) continue;
+
+    const keyLower = key.toLowerCase().split(";")[0];
+
+    switch (keyLower) {
+      case "fn":
+        result.fullName = value;
+        break;
+      case "n":
+        const nameParts = value.split(";");
+        result.lastName = nameParts[0] || "";
+        result.firstName = nameParts[1] || "";
+        if (!result.fullName) {
+          result.fullName = `${result.firstName} ${result.lastName}`.trim();
+        }
+        break;
+      case "email":
+        result.email = value;
+        break;
+      case "tel":
+        if (key.toLowerCase().includes("cell") || key.toLowerCase().includes("mobile")) {
+          result.phone = value;
+          result.whatsappNumber = value.replace(/[^+\d]/g, "");
+        } else if (!result.phone) {
+          result.phone = value;
+        }
+        break;
+      case "org":
+        result.organization = value;
+        break;
+      case "title":
+        result.jobTitle = value;
+        break;
+      case "adr":
+        const addrParts = value.split(";");
+        result.address = addrParts[2] || "";
+        result.city = addrParts[3] || "";
+        result.state = addrParts[4] || "";
+        result.postalCode = addrParts[5] || "";
+        result.country = addrParts[6] || "";
+        break;
+      case "url":
+        if (value.includes("linkedin.com")) {
+          result.linkedinUrl = value;
+        }
+        break;
+      case "note":
+        result.notes = value;
+        break;
+    }
+  }
+
+  // Ensure required fields
+  if (!result.firstName) {
+    result.firstName = result.fullName?.split(" ")[0] || "Unknown";
+  }
+  if (!result.fullName) {
+    result.fullName = `${result.firstName || ""} ${result.lastName || ""}`.trim() || "Unknown";
+  }
+
+  return result;
+}
+
+// Get unified messaging history (emails + WhatsApp) for a contact
+export async function getUnifiedMessagingHistory(contactId: number, limit: number = 50) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const contact = await getCrmContactById(contactId);
+  if (!contact) return [];
+
+  // Get WhatsApp messages
+  const whatsappMsgs = await getWhatsappMessages({
+    contactId,
+    limit,
   });
 
-  // Get page views for documents
-  const docIds = documents.map(d => d.id);
-  const pageViews = docIds.length > 0
-    ? await db.select().from(documentPageViews).where(inArray(documentPageViews.documentId, docIds))
-    : [];
+  // Get sent emails to this contact
+  const emailConditions = [];
+  if (contact.email) {
+    emailConditions.push(eq(sentEmails.toEmail, contact.email));
+  }
 
-  const filteredPageViews = pageViews.filter(pv => {
-    if (startDate && pv.enterTime < startDate) return false;
-    if (endDate && pv.enterTime > endDate) return false;
-    return true;
+  let emails: typeof sentEmails.$inferSelect[] = [];
+  if (emailConditions.length > 0) {
+    emails = await db.select().from(sentEmails)
+      .where(or(...emailConditions))
+      .orderBy(desc(sentEmails.createdAt))
+      .limit(limit);
+  }
+
+  // Combine and sort by date
+  const combined = [
+    ...whatsappMsgs.map(m => ({
+      type: "whatsapp" as const,
+      id: m.id,
+      direction: m.direction,
+      content: m.content,
+      status: m.status,
+      timestamp: m.createdAt,
+      data: m,
+    })),
+    ...emails.map(e => ({
+      type: "email" as const,
+      id: e.id,
+      direction: "outbound" as const,
+      content: e.bodyText || e.subject,
+      status: e.status,
+      timestamp: e.createdAt,
+      data: e,
+    })),
+  ].sort((a, b) => {
+    const dateA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+    const dateB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+    return dateB - dateA;
   });
 
-  // Build report
-  const visitorEngagement = visitors.map(v => {
-    const vSessions = filteredSessions.filter(s => s.visitorId === v.id);
-    const vPageViews = filteredPageViews.filter(pv => pv.visitorId === v.id);
+  return combined.slice(0, limit);
+}
+
+// ============================================
+// COPACKER INVENTORY AUTO-PURCHASE
+// ============================================
+
+// Get inventory by ID with product and vendor details
+export async function getInventoryByIdWithDetails(inventoryId: number) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const result = await db.select({
+    inventory: inventory,
+    product: products,
+    vendor: vendors,
+  })
+    .from(inventory)
+    .leftJoin(products, eq(inventory.productId, products.id))
+    .leftJoin(vendors, eq(products.preferredVendorId, vendors.id))
+    .where(eq(inventory.id, inventoryId))
+    .limit(1);
+
+  return result[0] || null;
+}
+
+// Check if inventory is below reorder level and trigger auto-purchase order
+export async function checkAndTriggerLowStockPurchaseOrder(
+  inventoryId: number,
+  userId: number
+): Promise<{ triggered: boolean; purchaseOrderId?: number; alertId?: number; reason?: string }> {
+  const db = await getDb();
+  if (!db) return { triggered: false, reason: "Database not available" };
+
+  // Get inventory with product and vendor details
+  const inventoryData = await getInventoryByIdWithDetails(inventoryId);
+  if (!inventoryData || !inventoryData.inventory) {
+    return { triggered: false, reason: "Inventory record not found" };
+  }
+
+  const inv = inventoryData.inventory;
+  const product = inventoryData.product;
+  const vendor = inventoryData.vendor;
+
+  // Check if reorderLevel is set
+  if (!inv.reorderLevel) {
+    return { triggered: false, reason: "No reorder level set for this inventory" };
+  }
+
+  const currentQty = parseFloat(inv.quantity as string) || 0;
+  const reorderLevel = parseFloat(inv.reorderLevel as string) || 0;
+  const reorderQty = parseFloat(inv.reorderQuantity as string) || 0;
+
+  // Check if quantity is at or below reorder level
+  if (currentQty > reorderLevel) {
+    return { triggered: false, reason: "Stock level is above reorder threshold" };
+  }
+
+  // Check if there's already an open/pending PO for this product
+  const existingPO = await db.select().from(purchaseOrders)
+    .innerJoin(purchaseOrderItems, eq(purchaseOrders.id, purchaseOrderItems.purchaseOrderId))
+    .where(and(
+      eq(purchaseOrderItems.productId, inv.productId),
+      or(
+        eq(purchaseOrders.status, 'draft'),
+        eq(purchaseOrders.status, 'sent'),
+        eq(purchaseOrders.status, 'confirmed'),
+        eq(purchaseOrders.status, 'partial')
+      )
+    ))
+    .limit(1);
+
+  if (existingPO.length > 0) {
+    return { triggered: false, reason: "An open purchase order already exists for this product" };
+  }
+
+  const productName = product?.name || `Product ID: ${inv.productId}`;
+  const productCost = product?.costPrice ? parseFloat(product.costPrice as string) : 0;
+
+  // If no preferred vendor, create an alert instead
+  if (!product?.preferredVendorId || !vendor) {
+    const { id: alertId } = await createAlert({
+      type: 'low_stock',
+      severity: currentQty === 0 ? 'critical' : 'warning',
+      title: `Low stock: ${productName} - No vendor assigned`,
+      description: `Current quantity (${currentQty}) is at or below reorder level (${reorderLevel}). Cannot auto-generate purchase order because no preferred vendor is assigned to this product. Please assign a vendor and create a purchase order manually.`,
+      entityType: 'inventory',
+      entityId: inventoryId,
+      thresholdValue: inv.reorderLevel,
+      actualValue: inv.quantity,
+      autoGenerated: true
+    });
 
     return {
-      visitorId: v.id,
-      email: v.email,
-      name: v.name,
-      company: v.company,
-      accessStatus: v.accessStatus,
-      ndaAcceptedAt: v.ndaAcceptedAt,
-      sessionsCount: vSessions.length,
-      totalTimeMs: vSessions.reduce((sum, s) => sum + (s.totalDurationMs || 0), 0),
-      documentsViewed: [...new Set(vPageViews.map(pv => pv.documentId))].length,
-      pagesViewed: vPageViews.length,
-      lastActivity: vSessions.length > 0
-        ? vSessions.reduce((latest, s) => s.sessionStartAt > latest ? s.sessionStartAt : latest, vSessions[0].sessionStartAt)
-        : v.lastViewedAt,
+      triggered: false,
+      alertId,
+      reason: "No preferred vendor assigned - alert created for manual action"
     };
+  }
+
+  // Calculate order quantity
+  const orderQty = reorderQty > 0 ? reorderQty : Math.max(reorderLevel - currentQty, 1);
+  const unitPrice = productCost > 0 ? productCost : (product?.unitPrice ? parseFloat(product.unitPrice as string) : 0);
+  const totalAmount = orderQty * unitPrice;
+
+  // Generate PO number
+  const date = new Date();
+  const year = date.getFullYear().toString().slice(-2);
+  const month = (date.getMonth() + 1).toString().padStart(2, '0');
+  const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+  const poNumber = `PO-${year}${month}-${random}`;
+
+  // Create the purchase order
+  const poResult = await createPurchaseOrder({
+    vendorId: product.preferredVendorId,
+    poNumber,
+    status: 'draft',
+    orderDate: new Date(),
+    subtotal: totalAmount.toFixed(2),
+    totalAmount: totalAmount.toFixed(2),
+    currency: 'USD',
+    notes: `Auto-generated purchase order due to low stock. Inventory ID: ${inventoryId}. Current stock: ${currentQty}, Reorder level: ${reorderLevel}.`,
+    createdBy: userId,
   });
 
-  const documentEngagement = documents.map(d => {
-    const dPageViews = filteredPageViews.filter(pv => pv.documentId === d.id);
-    const uniqueVisitors = [...new Set(dPageViews.map(pv => pv.visitorId))];
+  // Create PO line item
+  await createPurchaseOrderItem({
+    purchaseOrderId: poResult.id,
+    productId: inv.productId,
+    description: productName,
+    quantity: orderQty.toString(),
+    unitPrice: unitPrice.toFixed(2),
+    totalAmount: totalAmount.toFixed(2),
+  });
 
-    return {
-      documentId: d.id,
-      documentName: d.name,
-      pageCount: d.pageCount || 1,
-      views: dPageViews.length,
-      uniqueVisitors: uniqueVisitors.length,
-      totalTimeMs: dPageViews.reduce((sum, pv) => sum + (pv.durationMs || 0), 0),
-      avgTimePerPageMs: dPageViews.length > 0
-        ? dPageViews.reduce((sum, pv) => sum + (pv.durationMs || 0), 0) / dPageViews.length
-        : 0,
-    };
+  // Create audit log for the auto-PO
+  await createAuditLog({
+    entityType: 'purchaseOrder',
+    entityId: poResult.id,
+    action: 'create',
+    userId,
+    newValues: {
+      poNumber,
+      vendorId: product.preferredVendorId,
+      autoGenerated: true,
+      triggerReason: 'low_stock',
+      inventoryId,
+      currentQuantity: currentQty,
+      reorderLevel,
+      orderQuantity: orderQty,
+    },
+  });
+
+  // Create alert for visibility
+  await createAlert({
+    type: 'low_stock',
+    severity: currentQty === 0 ? 'critical' : 'warning',
+    title: `Low stock: ${productName} - Auto PO created`,
+    description: `Current quantity (${currentQty}) is at or below reorder level (${reorderLevel}). Purchase order ${poNumber} has been automatically created for ${orderQty} units from ${vendor.name}.`,
+    entityType: 'purchaseOrder',
+    entityId: poResult.id,
+    thresholdValue: inv.reorderLevel,
+    actualValue: inv.quantity,
+    autoGenerated: true,
+    status: 'acknowledged', // Mark as acknowledged since action was taken
   });
 
   return {
-    dataRoom: room[0],
-    period: { startDate, endDate },
-    summary: {
-      totalVisitors: visitors.length,
-      activeVisitors: visitors.filter(v => v.accessStatus === 'active').length,
-      totalSessions: filteredSessions.length,
-      totalDocuments: documents.length,
-      totalPageViews: filteredPageViews.length,
-      totalEngagementTimeMs: filteredSessions.reduce((sum, s) => sum + (s.totalDurationMs || 0), 0),
-      ndaSignedCount: visitors.filter(v => v.ndaAcceptedAt).length,
-    },
-    visitorEngagement: visitorEngagement.sort((a, b) => b.totalTimeMs - a.totalTimeMs),
-    documentEngagement: documentEngagement.sort((a, b) => b.views - a.views),
+    triggered: true,
+    purchaseOrderId: poResult.id,
+    reason: `Auto-generated PO ${poNumber} for ${orderQty} units`
   };
 }
 

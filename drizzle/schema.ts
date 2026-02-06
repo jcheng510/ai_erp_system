@@ -78,6 +78,22 @@ export const googleOAuthTokens = mysqlTable("googleOAuthTokens", {
 export type GoogleOAuthToken = typeof googleOAuthTokens.$inferSelect;
 export type InsertGoogleOAuthToken = typeof googleOAuthTokens.$inferInsert;
 
+export const quickbooksOAuthTokens = mysqlTable("quickbooksOAuthTokens", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  accessToken: text("accessToken").notNull(),
+  refreshToken: text("refreshToken"),
+  tokenType: varchar("tokenType", { length: 32 }).default("Bearer"),
+  expiresAt: timestamp("expiresAt"),
+  realmId: varchar("realmId", { length: 64 }), // QuickBooks company ID
+  scope: text("scope"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type QuickBooksOAuthToken = typeof quickbooksOAuthTokens.$inferSelect;
+export type InsertQuickBooksOAuthToken = typeof quickbooksOAuthTokens.$inferInsert;
+
 // ============================================
 // CORE ENTITIES
 // ============================================
@@ -173,6 +189,7 @@ export const products = mysqlTable("products", {
   status: mysqlEnum("status", ["active", "inactive", "discontinued"]).default("active").notNull(),
   shopifyProductId: varchar("shopifyProductId", { length: 64 }),
   quickbooksItemId: varchar("quickbooksItemId", { length: 64 }),
+  preferredVendorId: int("preferredVendorId"), // Preferred vendor for auto-purchase orders
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -3150,566 +3167,1065 @@ export type InsertVendorRfqEmail = typeof vendorRfqEmails.$inferInsert;
 export type VendorRfqInvitation = typeof vendorRfqInvitations.$inferSelect;
 export type InsertVendorRfqInvitation = typeof vendorRfqInvitations.$inferInsert;
 
-
 // ============================================
-// DATA ROOM - PAGE-LEVEL TRACKING
+// CRM MODULE - Contacts, Messaging & Tracking
 // ============================================
 
-// Granular page-level view tracking for documents
-export const documentPageViews = mysqlTable("document_page_views", {
+// CRM Contacts - Individual contact persons (separate from customer accounts)
+export const crmContacts = mysqlTable("crm_contacts", {
   id: int("id").autoincrement().primaryKey(),
-  documentId: int("documentId").notNull(),
-  visitorId: int("visitorId").notNull(),
-  viewSessionId: int("viewSessionId"), // Links to documentViews for session grouping
-  linkId: int("linkId"),
+  companyId: int("companyId"),
 
-  // Page details
-  pageNumber: int("pageNumber").notNull(),
-  pageLabel: varchar("pageLabel", { length: 100 }), // For named pages (e.g., "Executive Summary")
+  // Basic info
+  firstName: varchar("firstName", { length: 128 }).notNull(),
+  lastName: varchar("lastName", { length: 128 }),
+  fullName: varchar("fullName", { length: 255 }).notNull(),
+  email: varchar("email", { length: 320 }),
+  phone: varchar("phone", { length: 32 }),
+  whatsappNumber: varchar("whatsappNumber", { length: 32 }),
+  linkedinUrl: varchar("linkedinUrl", { length: 512 }),
 
-  // Time tracking (in milliseconds for precision)
-  enterTime: timestamp("enterTime").defaultNow().notNull(),
-  exitTime: timestamp("exitTime"),
-  durationMs: int("durationMs").default(0), // Time spent on this page in milliseconds
+  // Organization info
+  organization: varchar("organization", { length: 255 }),
+  jobTitle: varchar("jobTitle", { length: 255 }),
+  department: varchar("department", { length: 128 }),
 
-  // Engagement signals
-  scrollDepth: int("scrollDepth"), // 0-100 percentage of page scrolled
-  mouseMovements: int("mouseMovements").default(0), // Number of mouse movements (engagement indicator)
-  clicks: int("clicks").default(0), // Number of clicks on the page
-  zoomLevel: int("zoomLevel").default(100), // Document zoom percentage
+  // Address
+  address: text("address"),
+  city: varchar("city", { length: 128 }),
+  state: varchar("state", { length: 64 }),
+  country: varchar("country", { length: 64 }),
+  postalCode: varchar("postalCode", { length: 20 }),
 
-  // Context
-  deviceType: varchar("deviceType", { length: 32 }), // desktop, mobile, tablet
-  screenWidth: int("screenWidth"),
-  screenHeight: int("screenHeight"),
-  viewportWidth: int("viewportWidth"),
-  viewportHeight: int("viewportHeight"),
+  // CRM classification
+  contactType: mysqlEnum("contactType", ["lead", "prospect", "customer", "partner", "investor", "donor", "vendor", "other"]).default("lead").notNull(),
+  source: mysqlEnum("source", ["iphone_bump", "whatsapp", "linkedin_scan", "business_card", "website", "referral", "event", "cold_outreach", "import", "manual"]).default("manual").notNull(),
+  status: mysqlEnum("status", ["active", "inactive", "unsubscribed", "bounced"]).default("active").notNull(),
 
+  // Sales/Fundraising context
+  pipelineStage: mysqlEnum("pipelineStage", ["new", "contacted", "qualified", "proposal", "negotiation", "won", "lost"]).default("new"),
+  dealValue: decimal("dealValue", { precision: 15, scale: 2 }),
+  dealCurrency: varchar("dealCurrency", { length: 3 }).default("USD"),
+
+  // Engagement tracking
+  leadScore: int("leadScore").default(0),
+  lastContactedAt: timestamp("lastContactedAt"),
+  lastRepliedAt: timestamp("lastRepliedAt"),
+  nextFollowUpAt: timestamp("nextFollowUpAt"),
+  totalInteractions: int("totalInteractions").default(0),
+
+  // Communication preferences
+  preferredChannel: mysqlEnum("preferredChannel", ["email", "whatsapp", "phone", "sms", "linkedin"]).default("email"),
+  optedOutEmail: boolean("optedOutEmail").default(false),
+  optedOutSms: boolean("optedOutSms").default(false),
+  optedOutWhatsapp: boolean("optedOutWhatsapp").default(false),
+
+  // External integrations
+  customerId: int("customerId"), // Link to customer if converted
+  hubspotContactId: varchar("hubspotContactId", { length: 64 }),
+  salesforceContactId: varchar("salesforceContactId", { length: 64 }),
+
+  // Capture metadata
+  captureDeviceId: varchar("captureDeviceId", { length: 128 }),
+  captureSessionId: varchar("captureSessionId", { length: 128 }),
+  capturedBy: int("capturedBy"),
+  captureData: text("captureData"), // JSON - raw data from capture source
+
+  // Additional info
+  notes: text("notes"),
+  tags: text("tags"), // JSON array of tag names
+  customFields: text("customFields"), // JSON object for custom fields
+  avatarUrl: text("avatarUrl"),
+
+  assignedTo: int("assignedTo"), // User responsible for this contact
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type CrmContact = typeof crmContacts.$inferSelect;
+export type InsertCrmContact = typeof crmContacts.$inferInsert;
+
+// CRM Contact Tags for categorization
+export const crmTags = mysqlTable("crm_tags", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 64 }).notNull(),
+  color: varchar("color", { length: 7 }).default("#3B82F6"), // Hex color
+  category: mysqlEnum("category", ["contact", "deal", "general"]).default("general"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
-export type DocumentPageView = typeof documentPageViews.$inferSelect;
-export type InsertDocumentPageView = typeof documentPageViews.$inferInsert;
+export type CrmTag = typeof crmTags.$inferSelect;
+export type InsertCrmTag = typeof crmTags.$inferInsert;
 
-// Data Room Google Drive Sync Configuration
-export const dataRoomDriveSyncConfig = mysqlTable("data_room_drive_sync_config", {
+// Contact-Tag associations
+export const crmContactTags = mysqlTable("crm_contact_tags", {
   id: int("id").autoincrement().primaryKey(),
-  dataRoomId: int("dataRoomId").notNull().unique(),
+  contactId: int("contactId").notNull(),
+  tagId: int("tagId").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
 
-  // Google Drive folder configuration
-  googleDriveFolderId: varchar("googleDriveFolderId", { length: 255 }).notNull(),
-  googleDriveFolderName: varchar("googleDriveFolderName", { length: 255 }),
-  googleDriveFolderUrl: varchar("googleDriveFolderUrl", { length: 512 }),
+// WhatsApp Messages - Track WhatsApp conversations
+export const whatsappMessages = mysqlTable("whatsapp_messages", {
+  id: int("id").autoincrement().primaryKey(),
+  contactId: int("contactId"),
 
-  // Sync settings
-  syncEnabled: boolean("syncEnabled").default(true).notNull(),
-  syncFrequencyMinutes: int("syncFrequencyMinutes").default(60), // Auto-sync interval
-  syncMode: mysqlEnum("syncMode", ["one_way_import", "one_way_export", "bidirectional"]).default("one_way_import").notNull(),
-  syncSubfolders: boolean("syncSubfolders").default(true).notNull(), // Include subfolders
+  // Message identifiers
+  messageId: varchar("messageId", { length: 128 }), // WhatsApp message ID
+  conversationId: varchar("conversationId", { length: 128 }), // Conversation thread
 
-  // File filters
-  includeFileTypes: text("includeFileTypes"), // JSON array of extensions to include (null = all)
-  excludeFileTypes: text("excludeFileTypes"), // JSON array of extensions to exclude
-  maxFileSizeMb: int("maxFileSizeMb").default(100), // Max file size to sync
+  // Contact info
+  whatsappNumber: varchar("whatsappNumber", { length: 32 }).notNull(),
+  contactName: varchar("contactName", { length: 255 }),
 
-  // Mapping
-  folderMapping: text("folderMapping"), // JSON mapping of Drive folder IDs to data room folder IDs
+  // Message details
+  direction: mysqlEnum("direction", ["inbound", "outbound"]).notNull(),
+  messageType: mysqlEnum("messageType", ["text", "image", "video", "audio", "document", "location", "contact", "template"]).default("text"),
+  content: text("content"),
+  mediaUrl: text("mediaUrl"),
+  mediaType: varchar("mediaType", { length: 128 }),
 
-  // Sync status
-  lastSyncAt: timestamp("lastSyncAt"),
-  lastSyncStatus: mysqlEnum("lastSyncStatus", ["success", "partial", "failed", "in_progress"]),
-  lastSyncError: text("lastSyncError"),
-  lastSyncFilesAdded: int("lastSyncFilesAdded").default(0),
-  lastSyncFilesUpdated: int("lastSyncFilesUpdated").default(0),
-  lastSyncFilesRemoved: int("lastSyncFilesRemoved").default(0),
+  // Status tracking
+  status: mysqlEnum("status", ["pending", "sent", "delivered", "read", "failed"]).default("pending"),
+  sentAt: timestamp("sentAt"),
+  deliveredAt: timestamp("deliveredAt"),
+  readAt: timestamp("readAt"),
+  failedReason: text("failedReason"),
 
-  // OAuth user for sync (which user's credentials to use)
-  syncUserId: int("syncUserId"),
+  // Template tracking (for business API)
+  templateName: varchar("templateName", { length: 128 }),
+  templateParams: text("templateParams"), // JSON
+
+  // AI processing
+  aiProcessed: boolean("aiProcessed").default(false),
+  sentiment: mysqlEnum("sentiment", ["positive", "neutral", "negative"]),
+  aiSummary: text("aiSummary"),
+  aiSuggestedReply: text("aiSuggestedReply"),
+
+  // Context
+  relatedEntityType: varchar("relatedEntityType", { length: 50 }),
+  relatedEntityId: int("relatedEntityId"),
+
+  sentBy: int("sentBy"),
+  metadata: text("metadata"), // JSON
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type WhatsappMessage = typeof whatsappMessages.$inferSelect;
+export type InsertWhatsappMessage = typeof whatsappMessages.$inferInsert;
+
+// CRM Interactions - Unified activity log across all channels
+export const crmInteractions = mysqlTable("crm_interactions", {
+  id: int("id").autoincrement().primaryKey(),
+  contactId: int("contactId").notNull(),
+
+  // Interaction type
+  channel: mysqlEnum("channel", ["email", "whatsapp", "sms", "phone", "meeting", "linkedin", "note", "task"]).notNull(),
+  interactionType: mysqlEnum("interactionType", ["sent", "received", "call_made", "call_received", "meeting_scheduled", "meeting_completed", "note_added", "task_completed"]).notNull(),
+
+  // Content
+  subject: varchar("subject", { length: 500 }),
+  content: text("content"),
+  summary: text("summary"),
+
+  // Linked records
+  emailId: int("emailId"), // Link to sentEmails or inboundEmails
+  whatsappMessageId: int("whatsappMessageId"),
+
+  // Call details (if phone)
+  callDuration: int("callDuration"), // seconds
+  callOutcome: mysqlEnum("callOutcome", ["answered", "voicemail", "no_answer", "busy", "wrong_number"]),
+
+  // Meeting details
+  meetingStartTime: timestamp("meetingStartTime"),
+  meetingEndTime: timestamp("meetingEndTime"),
+  meetingLocation: varchar("meetingLocation", { length: 255 }),
+  meetingLink: varchar("meetingLink", { length: 512 }),
+
+  // Engagement metrics
+  opened: boolean("opened").default(false),
+  clicked: boolean("clicked").default(false),
+  replied: boolean("replied").default(false),
+
+  // AI analysis
+  sentiment: mysqlEnum("sentiment", ["positive", "neutral", "negative"]),
+  aiNotes: text("aiNotes"),
+
+  // Context
+  relatedDealId: int("relatedDealId"),
+  performedBy: int("performedBy"),
 
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
-export type DataRoomDriveSyncConfig = typeof dataRoomDriveSyncConfig.$inferSelect;
-export type InsertDataRoomDriveSyncConfig = typeof dataRoomDriveSyncConfig.$inferInsert;
+export type CrmInteraction = typeof crmInteractions.$inferSelect;
+export type InsertCrmInteraction = typeof crmInteractions.$inferInsert;
 
-// Data Room Drive Sync Logs - history of sync operations
-export const dataRoomDriveSyncLogs = mysqlTable("data_room_drive_sync_logs", {
+// CRM Pipelines - For sales and fundraising
+export const crmPipelines = mysqlTable("crm_pipelines", {
   id: int("id").autoincrement().primaryKey(),
-  dataRoomId: int("dataRoomId").notNull(),
-  syncConfigId: int("syncConfigId").notNull(),
+  name: varchar("name", { length: 128 }).notNull(),
+  type: mysqlEnum("type", ["sales", "fundraising", "partnerships", "other"]).default("sales").notNull(),
+  stages: text("stages").notNull(), // JSON array of stage names and order
+  isDefault: boolean("isDefault").default(false),
+  isActive: boolean("isActive").default(true),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
 
-  // Sync details
-  syncType: mysqlEnum("syncType", ["manual", "scheduled", "webhook"]).notNull(),
-  status: mysqlEnum("status", ["started", "in_progress", "completed", "failed", "cancelled"]).default("started").notNull(),
+export type CrmPipeline = typeof crmPipelines.$inferSelect;
+export type InsertCrmPipeline = typeof crmPipelines.$inferInsert;
 
-  // Results
-  filesScanned: int("filesScanned").default(0),
-  filesAdded: int("filesAdded").default(0),
-  filesUpdated: int("filesUpdated").default(0),
-  filesRemoved: int("filesRemoved").default(0),
-  filesSkipped: int("filesSkipped").default(0),
-  foldersCreated: int("foldersCreated").default(0),
+// CRM Deals - Track opportunities/deals
+export const crmDeals = mysqlTable("crm_deals", {
+  id: int("id").autoincrement().primaryKey(),
+  pipelineId: int("pipelineId").notNull(),
+  contactId: int("contactId").notNull(),
 
-  // Errors
-  errors: text("errors"), // JSON array of error messages
-  warnings: text("warnings"), // JSON array of warnings
+  // Deal info
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  stage: varchar("stage", { length: 64 }).notNull(),
 
-  // Timing
-  startedAt: timestamp("startedAt").defaultNow().notNull(),
+  // Value
+  amount: decimal("amount", { precision: 15, scale: 2 }),
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  probability: int("probability").default(0), // 0-100%
+  expectedCloseDate: timestamp("expectedCloseDate"),
+
+  // Status
+  status: mysqlEnum("status", ["open", "won", "lost", "stalled"]).default("open").notNull(),
+  lostReason: varchar("lostReason", { length: 255 }),
+  wonAt: timestamp("wonAt"),
+  lostAt: timestamp("lostAt"),
+
+  // Assignment
+  assignedTo: int("assignedTo"),
+
+  // Source tracking
+  source: varchar("source", { length: 128 }),
+  campaign: varchar("campaign", { length: 128 }),
+
+  notes: text("notes"),
+  customFields: text("customFields"), // JSON
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type CrmDeal = typeof crmDeals.$inferSelect;
+export type InsertCrmDeal = typeof crmDeals.$inferInsert;
+
+// Contact Captures - Track how contacts were captured
+export const contactCaptures = mysqlTable("contact_captures", {
+  id: int("id").autoincrement().primaryKey(),
+  contactId: int("contactId"),
+
+  // Capture method
+  captureMethod: mysqlEnum("captureMethod", ["iphone_bump", "airdrop", "nfc", "qr_code", "whatsapp_scan", "linkedin_scan", "business_card_scan", "manual"]).notNull(),
+
+  // Raw captured data
+  rawData: text("rawData").notNull(), // JSON - vCard, LinkedIn profile data, etc.
+  parsedData: text("parsedData"), // JSON - Parsed/normalized data
+
+  // vCard specific fields
+  vcardData: text("vcardData"),
+
+  // LinkedIn specific fields
+  linkedinProfileUrl: varchar("linkedinProfileUrl", { length: 512 }),
+  linkedinProfileData: text("linkedinProfileData"), // JSON
+
+  // Business card scan
+  imageUrl: text("imageUrl"),
+  ocrText: text("ocrText"),
+
+  // Processing status
+  status: mysqlEnum("status", ["pending", "parsed", "contact_created", "merged", "failed"]).default("pending").notNull(),
+  errorMessage: text("errorMessage"),
+
+  // Context
+  capturedAt: timestamp("capturedAt").defaultNow().notNull(),
+  capturedBy: int("capturedBy"),
+  eventName: varchar("eventName", { length: 255 }), // Name of event where captured
+  eventLocation: varchar("eventLocation", { length: 255 }),
+
+  // Device info
+  deviceType: varchar("deviceType", { length: 64 }),
+  deviceId: varchar("deviceId", { length: 128 }),
+
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ContactCapture = typeof contactCaptures.$inferSelect;
+export type InsertContactCapture = typeof contactCaptures.$inferInsert;
+
+// Email Campaigns for CRM
+export const crmEmailCampaigns = mysqlTable("crm_email_campaigns", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  subject: varchar("subject", { length: 500 }).notNull(),
+  bodyHtml: text("bodyHtml").notNull(),
+  bodyText: text("bodyText"),
+
+  // Campaign type
+  type: mysqlEnum("type", ["newsletter", "drip", "announcement", "follow_up", "custom"]).default("custom"),
+
+  // Status
+  status: mysqlEnum("status", ["draft", "scheduled", "sending", "sent", "paused", "cancelled"]).default("draft"),
+  scheduledAt: timestamp("scheduledAt"),
+  sentAt: timestamp("sentAt"),
+
+  // Targeting
+  targetTags: text("targetTags"), // JSON array of tag IDs
+  targetContactTypes: text("targetContactTypes"), // JSON array
+  targetPipelineStages: text("targetPipelineStages"), // JSON array
+
+  // Stats
+  totalRecipients: int("totalRecipients").default(0),
+  sentCount: int("sentCount").default(0),
+  deliveredCount: int("deliveredCount").default(0),
+  openedCount: int("openedCount").default(0),
+  clickedCount: int("clickedCount").default(0),
+  bouncedCount: int("bouncedCount").default(0),
+  unsubscribedCount: int("unsubscribedCount").default(0),
+
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type CrmEmailCampaign = typeof crmEmailCampaigns.$inferSelect;
+export type InsertCrmEmailCampaign = typeof crmEmailCampaigns.$inferInsert;
+
+// Campaign recipients tracking
+export const crmCampaignRecipients = mysqlTable("crm_campaign_recipients", {
+  id: int("id").autoincrement().primaryKey(),
+  campaignId: int("campaignId").notNull(),
+  contactId: int("contactId").notNull(),
+  email: varchar("email", { length: 320 }).notNull(),
+
+  status: mysqlEnum("status", ["pending", "sent", "delivered", "opened", "clicked", "bounced", "unsubscribed"]).default("pending"),
+  sentAt: timestamp("sentAt"),
+  deliveredAt: timestamp("deliveredAt"),
+  openedAt: timestamp("openedAt"),
+  clickedAt: timestamp("clickedAt"),
+
+  messageId: varchar("messageId", { length: 255 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type CrmCampaignRecipient = typeof crmCampaignRecipients.$inferSelect;
+export type InsertCrmCampaignRecipient = typeof crmCampaignRecipients.$inferInsert;
+
+// ============================================
+// AUTONOMOUS SUPPLY CHAIN WORKFLOW SYSTEM
+// ============================================
+
+// Supply chain workflow definitions - configurable workflow templates
+export const supplyChainWorkflows = mysqlTable("supplyChainWorkflows", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  workflowType: mysqlEnum("workflowType", [
+    "demand_forecasting",
+    "production_planning",
+    "material_requirements",
+    "procurement",
+    "inventory_reorder",
+    "inventory_transfer",
+    "inventory_optimization",
+    "work_order_generation",
+    "production_scheduling",
+    "freight_procurement",
+    "shipment_tracking",
+    "order_fulfillment",
+    "supplier_management",
+    "quality_inspection",
+    "invoice_matching",
+    "payment_processing",
+    "exception_handling",
+    "custom"
+  ]).notNull(),
+
+  // Workflow configuration
+  triggerType: mysqlEnum("triggerType", [
+    "scheduled",      // Run on schedule (cron)
+    "event",          // Triggered by specific events
+    "threshold",      // Triggered when metrics cross thresholds
+    "manual",         // Only run when manually triggered
+    "continuous"      // Always running, processing as items arrive
+  ]).default("scheduled").notNull(),
+
+  cronSchedule: varchar("cronSchedule", { length: 64 }), // e.g., "0 6 * * *" for 6am daily
+  triggerEvents: text("triggerEvents"), // JSON array of event types that trigger this
+  thresholdConfig: text("thresholdConfig"), // JSON with threshold conditions
+
+  // Execution configuration
+  executionConfig: text("executionConfig"), // JSON with execution parameters
+  maxConcurrentRuns: int("maxConcurrentRuns").default(1),
+  timeoutMinutes: int("timeoutMinutes").default(60),
+  retryAttempts: int("retryAttempts").default(3),
+  retryDelayMinutes: int("retryDelayMinutes").default(5),
+
+  // Approval configuration
+  requiresApproval: boolean("requiresApproval").default(false),
+  autoApproveThreshold: decimal("autoApproveThreshold", { precision: 14, scale: 2 }), // Auto-approve under this amount
+  approvalRoles: text("approvalRoles"), // JSON array of roles that can approve
+  escalationMinutes: int("escalationMinutes").default(60), // Escalate after X minutes without approval
+  escalationRoles: text("escalationRoles"), // JSON array of escalation targets
+
+  // Dependencies
+  dependsOnWorkflows: text("dependsOnWorkflows"), // JSON array of workflow IDs that must complete first
+
+  // State
+  isActive: boolean("isActive").default(true).notNull(),
+  lastRunAt: timestamp("lastRunAt"),
+  nextScheduledRun: timestamp("nextScheduledRun"),
+  successCount: int("successCount").default(0),
+  failureCount: int("failureCount").default(0),
+
+  // Audit
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type SupplyChainWorkflow = typeof supplyChainWorkflows.$inferSelect;
+export type InsertSupplyChainWorkflow = typeof supplyChainWorkflows.$inferInsert;
+
+// Workflow execution runs - tracks each execution of a workflow
+export const workflowRuns = mysqlTable("workflowRuns", {
+  id: int("id").autoincrement().primaryKey(),
+  workflowId: int("workflowId").notNull(),
+  runNumber: varchar("runNumber", { length: 64 }).notNull(), // e.g., "WF-RUN-20240115-001"
+
+  status: mysqlEnum("status", [
+    "queued",
+    "running",
+    "awaiting_approval",
+    "approved",
+    "rejected",
+    "completed",
+    "failed",
+    "cancelled",
+    "timed_out"
+  ]).default("queued").notNull(),
+
+  // Trigger info
+  triggeredBy: mysqlEnum("triggeredBy", ["schedule", "event", "threshold", "manual", "dependency"]).notNull(),
+  triggerData: text("triggerData"), // JSON with trigger context
+  triggeredByUserId: int("triggeredByUserId"),
+
+  // Execution details
+  startedAt: timestamp("startedAt"),
   completedAt: timestamp("completedAt"),
   durationMs: int("durationMs"),
 
-  // Triggered by
-  triggeredBy: int("triggeredBy"), // User ID if manual
+  // Progress tracking
+  totalSteps: int("totalSteps").default(0),
+  completedSteps: int("completedSteps").default(0),
+  currentStepName: varchar("currentStepName", { length: 255 }),
+  progressPercent: int("progressPercent").default(0),
+
+  // Results
+  inputData: text("inputData"), // JSON with input parameters
+  outputData: text("outputData"), // JSON with results
+  errorMessage: text("errorMessage"),
+  errorDetails: text("errorDetails"), // JSON with full error info
+
+  // Metrics produced
+  itemsProcessed: int("itemsProcessed").default(0),
+  itemsSucceeded: int("itemsSucceeded").default(0),
+  itemsFailed: int("itemsFailed").default(0),
+  totalValue: decimal("totalValue", { precision: 14, scale: 2 }), // Total monetary value affected
+
+  // Retry info
+  attemptNumber: int("attemptNumber").default(1),
+  parentRunId: int("parentRunId"), // If this is a retry, link to original
+
+  // Approval tracking
+  approvalRequestedAt: timestamp("approvalRequestedAt"),
+  approvedBy: int("approvedBy"),
+  approvedAt: timestamp("approvedAt"),
+  rejectedBy: int("rejectedBy"),
+  rejectedAt: timestamp("rejectedAt"),
+  rejectionReason: text("rejectionReason"),
+  escalatedAt: timestamp("escalatedAt"),
+  escalatedTo: text("escalatedTo"), // JSON array of user IDs
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type WorkflowRun = typeof workflowRuns.$inferSelect;
+export type InsertWorkflowRun = typeof workflowRuns.$inferInsert;
+
+// Workflow steps - individual steps within a workflow run
+export const workflowSteps = mysqlTable("workflowSteps", {
+  id: int("id").autoincrement().primaryKey(),
+  runId: int("runId").notNull(),
+  stepNumber: int("stepNumber").notNull(),
+  stepName: varchar("stepName", { length: 255 }).notNull(),
+  stepType: mysqlEnum("stepType", [
+    "data_fetch",
+    "ai_analysis",
+    "ai_decision",
+    "calculation",
+    "validation",
+    "create_record",
+    "update_record",
+    "send_email",
+    "send_notification",
+    "api_call",
+    "wait_approval",
+    "condition_check",
+    "loop_start",
+    "loop_end",
+    "parallel_start",
+    "parallel_end",
+    "subprocess"
+  ]).notNull(),
+
+  status: mysqlEnum("status", [
+    "pending",
+    "running",
+    "completed",
+    "failed",
+    "skipped",
+    "awaiting_input"
+  ]).default("pending").notNull(),
+
+  // Execution details
+  startedAt: timestamp("startedAt"),
+  completedAt: timestamp("completedAt"),
+  durationMs: int("durationMs"),
+
+  // Data
+  inputData: text("inputData"), // JSON
+  outputData: text("outputData"), // JSON
+  errorMessage: text("errorMessage"),
+
+  // AI-specific fields
+  aiPrompt: text("aiPrompt"),
+  aiResponse: text("aiResponse"),
+  aiConfidence: decimal("aiConfidence", { precision: 5, scale: 2 }),
+  aiTokensUsed: int("aiTokensUsed"),
+
+  // Related entities created/modified
+  createdEntityType: varchar("createdEntityType", { length: 64 }),
+  createdEntityId: int("createdEntityId"),
+  modifiedEntityType: varchar("modifiedEntityType", { length: 64 }),
+  modifiedEntityId: int("modifiedEntityId"),
 
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
-export type DataRoomDriveSyncLog = typeof dataRoomDriveSyncLogs.$inferSelect;
-export type InsertDataRoomDriveSyncLog = typeof dataRoomDriveSyncLogs.$inferInsert;
+export type WorkflowStep = typeof workflowSteps.$inferSelect;
+export type InsertWorkflowStep = typeof workflowSteps.$inferInsert;
 
-// Data Room Email Access Settings - manage who can access by email
-export const dataRoomEmailAccessRules = mysqlTable("data_room_email_access_rules", {
+// Workflow approval queue - items pending approval
+export const workflowApprovalQueue = mysqlTable("workflowApprovalQueue", {
   id: int("id").autoincrement().primaryKey(),
-  dataRoomId: int("dataRoomId").notNull(),
+  runId: int("runId").notNull(),
 
-  // Rule type
-  ruleType: mysqlEnum("ruleType", ["allow_email", "allow_domain", "block_email", "block_domain"]).notNull(),
+  approvalType: mysqlEnum("approvalType", [
+    "purchase_order",
+    "work_order",
+    "inventory_transfer",
+    "freight_booking",
+    "payment",
+    "price_change",
+    "vendor_selection",
+    "exception_override",
+    "forecast_adjustment",
+    "workflow_result"
+  ]).notNull(),
 
-  // Pattern to match
-  emailPattern: varchar("emailPattern", { length: 320 }).notNull(), // Email or domain pattern
+  title: varchar("title", { length: 500 }).notNull(),
+  description: text("description"),
 
-  // Permissions when matched
-  allowDownload: boolean("allowDownload").default(true),
-  allowPrint: boolean("allowPrint").default(true),
-  maxViews: int("maxViews"), // null = unlimited
-  expiresAt: timestamp("expiresAt"),
+  // Financial info
+  monetaryValue: decimal("monetaryValue", { precision: 14, scale: 2 }),
+  currency: varchar("currency", { length: 3 }).default("USD"),
 
-  // Auto-actions
-  requireNdaSignature: boolean("requireNdaSignature").default(true),
-  autoApprove: boolean("autoApprove").default(false), // Auto-approve matching visitors
+  // Context
+  contextData: text("contextData"), // JSON with all relevant context
+  aiRecommendation: text("aiRecommendation"), // AI's explanation and recommendation
+  aiConfidence: decimal("aiConfidence", { precision: 5, scale: 2 }),
+  riskAssessment: mysqlEnum("riskAssessment", ["low", "medium", "high", "critical"]).default("low"),
 
-  // Notifications
-  notifyOnAccess: boolean("notifyOnAccess").default(true),
-  notifyEmail: varchar("notifyEmail", { length: 320 }), // Where to send notifications
+  // Related entities
+  relatedEntityType: varchar("relatedEntityType", { length: 64 }),
+  relatedEntityId: int("relatedEntityId"),
+
+  // Approval status
+  status: mysqlEnum("status", [
+    "pending",
+    "approved",
+    "rejected",
+    "auto_approved",
+    "escalated",
+    "expired"
+  ]).default("pending").notNull(),
+
+  // Routing
+  assignedToRoles: text("assignedToRoles"), // JSON array of roles
+  assignedToUsers: text("assignedToUsers"), // JSON array of specific user IDs
+  currentAssignee: int("currentAssignee"),
+
+  // Timeline
+  requestedAt: timestamp("requestedAt").defaultNow().notNull(),
+  dueAt: timestamp("dueAt"),
+  escalateAt: timestamp("escalateAt"),
+  escalatedAt: timestamp("escalatedAt"),
+  escalationLevel: int("escalationLevel").default(0),
+
+  // Resolution
+  resolvedBy: int("resolvedBy"),
+  resolvedAt: timestamp("resolvedAt"),
+  resolutionNotes: text("resolutionNotes"),
+
+  // Auto-approval tracking
+  wasAutoApproved: boolean("wasAutoApproved").default(false),
+  autoApprovalReason: varchar("autoApprovalReason", { length: 255 }),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type WorkflowApprovalQueue = typeof workflowApprovalQueue.$inferSelect;
+export type InsertWorkflowApprovalQueue = typeof workflowApprovalQueue.$inferInsert;
+
+// Autonomous decisions log - every AI decision for auditability
+export const autonomousDecisions = mysqlTable("autonomousDecisions", {
+  id: int("id").autoincrement().primaryKey(),
+  runId: int("runId"),
+  stepId: int("stepId"),
+
+  decisionType: mysqlEnum("decisionType", [
+    "vendor_selection",
+    "quantity_calculation",
+    "timing_decision",
+    "routing_decision",
+    "pricing_acceptance",
+    "exception_handling",
+    "priority_assignment",
+    "allocation_decision",
+    "forecast_adjustment",
+    "reorder_trigger",
+    "approval_routing"
+  ]).notNull(),
+
+  decisionContext: text("decisionContext"), // JSON with all input data
+  optionsConsidered: text("optionsConsidered"), // JSON array of options evaluated
+  chosenOption: text("chosenOption"), // JSON of selected option
+  aiReasoning: text("aiReasoning"), // Full explanation from AI
+  confidence: decimal("confidence", { precision: 5, scale: 2 }),
+
+  // Impact tracking
+  entityType: varchar("entityType", { length: 64 }),
+  entityId: int("entityId"),
+  estimatedImpact: text("estimatedImpact"), // JSON with impact metrics
+  actualImpact: text("actualImpact"), // JSON filled in later
+
+  // Learning
+  wasOverridden: boolean("wasOverridden").default(false),
+  overriddenBy: int("overriddenBy"),
+  overrideReason: text("overrideReason"),
+  feedbackScore: int("feedbackScore"), // -2 to +2 rating
+  feedbackNotes: text("feedbackNotes"),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type AutonomousDecision = typeof autonomousDecisions.$inferSelect;
+export type InsertAutonomousDecision = typeof autonomousDecisions.$inferInsert;
+
+// Supply chain events - real-time event stream for triggering workflows
+export const supplyChainEvents = mysqlTable("supplyChainEvents", {
+  id: int("id").autoincrement().primaryKey(),
+
+  eventType: mysqlEnum("eventType", [
+    // Inventory events
+    "inventory_low",
+    "inventory_critical",
+    "inventory_excess",
+    "inventory_expiring",
+    "inventory_received",
+    "inventory_adjustment",
+    // Order events
+    "order_created",
+    "order_confirmed",
+    "order_shipped",
+    "order_delivered",
+    "order_cancelled",
+    // Purchase events
+    "po_created",
+    "po_sent",
+    "po_confirmed",
+    "po_shipped",
+    "po_received",
+    "po_discrepancy",
+    // Production events
+    "work_order_created",
+    "production_started",
+    "production_completed",
+    "production_issue",
+    "yield_variance",
+    // Supplier events
+    "quote_received",
+    "price_change",
+    "lead_time_change",
+    "supplier_issue",
+    // Freight events
+    "shipment_booked",
+    "shipment_picked_up",
+    "shipment_delayed",
+    "shipment_delivered",
+    "customs_hold",
+    // Quality events
+    "quality_issue",
+    "inspection_failed",
+    "inspection_passed",
+    // Financial events
+    "invoice_received",
+    "payment_due",
+    "payment_overdue",
+    // Forecast events
+    "forecast_generated",
+    "demand_spike",
+    "demand_drop",
+    // System events
+    "workflow_completed",
+    "workflow_failed",
+    "approval_needed",
+    "escalation_triggered"
+  ]).notNull(),
+
+  severity: mysqlEnum("severity", ["info", "warning", "error", "critical"]).default("info").notNull(),
+
+  // Event source
+  sourceSystem: varchar("sourceSystem", { length: 64 }), // e.g., "inventory", "orders", "production"
+  sourceEntityType: varchar("sourceEntityType", { length: 64 }),
+  sourceEntityId: int("sourceEntityId"),
+
+  // Event data
+  eventData: text("eventData"), // JSON with full event details
+  summary: varchar("summary", { length: 500 }),
+
+  // Processing status
+  isProcessed: boolean("isProcessed").default(false),
+  processedAt: timestamp("processedAt"),
+  processedByWorkflowId: int("processedByWorkflowId"),
+  processedByRunId: int("processedByRunId"),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type SupplyChainEvent = typeof supplyChainEvents.$inferSelect;
+export type InsertSupplyChainEvent = typeof supplyChainEvents.$inferInsert;
+
+// Workflow metrics - aggregated performance metrics
+export const workflowMetrics = mysqlTable("workflowMetrics", {
+  id: int("id").autoincrement().primaryKey(),
+  workflowId: int("workflowId").notNull(),
+  metricDate: timestamp("metricDate").notNull(), // Date for this metric row
+
+  // Execution metrics
+  totalRuns: int("totalRuns").default(0),
+  successfulRuns: int("successfulRuns").default(0),
+  failedRuns: int("failedRuns").default(0),
+  averageDurationMs: int("averageDurationMs"),
+  maxDurationMs: int("maxDurationMs"),
+
+  // Approval metrics
+  autoApprovedCount: int("autoApprovedCount").default(0),
+  manualApprovedCount: int("manualApprovedCount").default(0),
+  rejectedCount: int("rejectedCount").default(0),
+  averageApprovalTimeMs: int("averageApprovalTimeMs"),
+  escalationCount: int("escalationCount").default(0),
+
+  // Volume metrics
+  itemsProcessed: int("itemsProcessed").default(0),
+  totalValueProcessed: decimal("totalValueProcessed", { precision: 18, scale: 2 }),
+  exceptionsHandled: int("exceptionsHandled").default(0),
+
+  // AI metrics
+  aiDecisionCount: int("aiDecisionCount").default(0),
+  aiOverrideCount: int("aiOverrideCount").default(0),
+  averageAiConfidence: decimal("averageAiConfidence", { precision: 5, scale: 2 }),
+  totalTokensUsed: int("totalTokensUsed").default(0),
+
+  // Cost savings estimate
+  estimatedTimeSavedMinutes: int("estimatedTimeSavedMinutes"),
+  estimatedCostSavings: decimal("estimatedCostSavings", { precision: 14, scale: 2 }),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type WorkflowMetric = typeof workflowMetrics.$inferSelect;
+export type InsertWorkflowMetric = typeof workflowMetrics.$inferInsert;
+
+// Approval thresholds - configurable approval rules
+export const approvalThresholds = mysqlTable("approvalThresholds", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 255 }).notNull(),
+
+  entityType: mysqlEnum("entityType", [
+    "purchase_order",
+    "work_order",
+    "inventory_transfer",
+    "freight_booking",
+    "payment",
+    "vendor_rfq",
+    "price_override",
+    "exception"
+  ]).notNull(),
+
+  // Threshold levels
+  autoApproveMaxAmount: decimal("autoApproveMaxAmount", { precision: 14, scale: 2 }),
+  level1MaxAmount: decimal("level1MaxAmount", { precision: 14, scale: 2 }), // Ops manager
+  level2MaxAmount: decimal("level2MaxAmount", { precision: 14, scale: 2 }), // Director
+  level3MaxAmount: decimal("level3MaxAmount", { precision: 14, scale: 2 }), // VP
+  // Above level3 requires exec approval
+
+  // Role mappings
+  level1Roles: text("level1Roles"), // JSON array
+  level2Roles: text("level2Roles"), // JSON array
+  level3Roles: text("level3Roles"), // JSON array
+  execRoles: text("execRoles"), // JSON array
+
+  // Timing
+  level1EscalationMinutes: int("level1EscalationMinutes").default(60),
+  level2EscalationMinutes: int("level2EscalationMinutes").default(120),
+  level3EscalationMinutes: int("level3EscalationMinutes").default(240),
+
+  // Conditions
+  conditions: text("conditions"), // JSON with additional conditions (vendor, category, etc.)
 
   isActive: boolean("isActive").default(true).notNull(),
-  priority: int("priority").default(0), // Higher priority rules evaluated first
-
-  createdBy: int("createdBy").notNull(),
+  createdBy: int("createdBy"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
-export type DataRoomEmailAccessRule = typeof dataRoomEmailAccessRules.$inferSelect;
-export type InsertDataRoomEmailAccessRule = typeof dataRoomEmailAccessRules.$inferInsert;
+export type ApprovalThreshold = typeof approvalThresholds.$inferSelect;
+export type InsertApprovalThreshold = typeof approvalThresholds.$inferInsert;
 
-// Data Room Visitor Sessions - detailed session tracking
-export const dataRoomVisitorSessions = mysqlTable("data_room_visitor_sessions", {
+// Exception handling rules - how to handle common exceptions
+export const exceptionRules = mysqlTable("exceptionRules", {
   id: int("id").autoincrement().primaryKey(),
-  dataRoomId: int("dataRoomId").notNull(),
-  visitorId: int("visitorId").notNull(),
-  linkId: int("linkId"),
-
-  // Session timing
-  sessionStartAt: timestamp("sessionStartAt").defaultNow().notNull(),
-  sessionEndAt: timestamp("sessionEndAt"),
-  totalDurationMs: int("totalDurationMs").default(0),
-  activeDurationMs: int("activeDurationMs").default(0), // Time with active engagement
-  idleDurationMs: int("idleDurationMs").default(0), // Time idle
-
-  // Session activity
-  documentsViewed: int("documentsViewed").default(0),
-  pagesViewed: int("pagesViewed").default(0),
-  totalScrollDistance: int("totalScrollDistance").default(0), // Pixels scrolled
-  totalClicks: int("totalClicks").default(0),
-
-  // Downloads/prints during session
-  downloadsCount: int("downloadsCount").default(0),
-  printsCount: int("printsCount").default(0),
-
-  // Device/browser info
-  deviceType: varchar("deviceType", { length: 32 }),
-  browser: varchar("browser", { length: 64 }),
-  browserVersion: varchar("browserVersion", { length: 32 }),
-  os: varchar("os", { length: 64 }),
-  osVersion: varchar("osVersion", { length: 32 }),
-  screenResolution: varchar("screenResolution", { length: 20 }),
-
-  // Location (from IP)
-  ipAddress: varchar("ipAddress", { length: 45 }),
-  country: varchar("country", { length: 64 }),
-  region: varchar("region", { length: 64 }),
-  city: varchar("city", { length: 64 }),
-  timezone: varchar("timezone", { length: 64 }),
-
-  // Referrer
-  referrer: varchar("referrer", { length: 512 }),
-  utmSource: varchar("utmSource", { length: 128 }),
-  utmMedium: varchar("utmMedium", { length: 128 }),
-  utmCampaign: varchar("utmCampaign", { length: 128 }),
-
-  // Session metadata
-  sessionToken: varchar("sessionToken", { length: 128 }).unique(), // For tracking across page loads
-  isActive: boolean("isActive").default(true).notNull(),
-
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
-
-export type DataRoomVisitorSession = typeof dataRoomVisitorSessions.$inferSelect;
-export type InsertDataRoomVisitorSession = typeof dataRoomVisitorSessions.$inferInsert;
-
-
-// ============================================
-// DATA ROOM - DUE DILIGENCE CHECKLISTS
-// ============================================
-
-// Due Diligence Checklist Templates (reusable across data rooms)
-export const dueDiligenceTemplates = mysqlTable("due_diligence_templates", {
-  id: int("id").autoincrement().primaryKey(),
-  name: varchar("name", { length: 255 }).notNull(), // e.g., "Series A Due Diligence", "M&A Standard Checklist"
-  description: text("description"),
-  category: mysqlEnum("category", ["fundraising", "ma", "audit", "compliance", "custom"]).default("custom").notNull(),
-
-  // Template can be public (shared) or private (company-specific)
-  isPublic: boolean("isPublic").default(false).notNull(),
-  createdBy: int("createdBy").notNull(),
-
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
-
-export type DueDiligenceTemplate = typeof dueDiligenceTemplates.$inferSelect;
-export type InsertDueDiligenceTemplate = typeof dueDiligenceTemplates.$inferInsert;
-
-// Due Diligence Checklist Categories (groups within a template)
-export const dueDiligenceCategories = mysqlTable("due_diligence_categories", {
-  id: int("id").autoincrement().primaryKey(),
-  templateId: int("templateId").notNull(),
-  name: varchar("name", { length: 255 }).notNull(), // e.g., "Corporate Documents", "Financial", "IP"
-  description: text("description"),
-  sortOrder: int("sortOrder").default(0).notNull(),
-  icon: varchar("icon", { length: 50 }), // Icon name for UI
-
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-});
-
-export type DueDiligenceCategory = typeof dueDiligenceCategories.$inferSelect;
-export type InsertDueDiligenceCategory = typeof dueDiligenceCategories.$inferInsert;
-
-// Due Diligence Checklist Items (individual line items)
-export const dueDiligenceItems = mysqlTable("due_diligence_items", {
-  id: int("id").autoincrement().primaryKey(),
-  templateId: int("templateId").notNull(),
-  categoryId: int("categoryId").notNull(),
-
-  name: varchar("name", { length: 255 }).notNull(), // e.g., "Certificate of Incorporation"
-  description: text("description"), // Detailed description of what's needed
-  requirement: mysqlEnum("requirement", ["required", "recommended", "optional"]).default("required").notNull(),
-
-  // Keywords for auto-matching documents
-  matchKeywords: text("matchKeywords"), // JSON array of keywords to match against document names
-  matchFileTypes: text("matchFileTypes"), // JSON array of expected file types (pdf, xlsx, etc.)
-
-  sortOrder: int("sortOrder").default(0).notNull(),
-
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-});
-
-export type DueDiligenceItem = typeof dueDiligenceItems.$inferSelect;
-export type InsertDueDiligenceItem = typeof dueDiligenceItems.$inferInsert;
-
-// Data Room Checklist Instance (a checklist applied to a specific data room)
-export const dataRoomChecklists = mysqlTable("data_room_checklists", {
-  id: int("id").autoincrement().primaryKey(),
-  dataRoomId: int("dataRoomId").notNull(),
-  templateId: int("templateId"), // Optional - can be based on a template or custom
-
+  companyId: int("companyId"),
   name: varchar("name", { length: 255 }).notNull(),
   description: text("description"),
 
-  // Progress tracking
-  totalItems: int("totalItems").default(0).notNull(),
-  completedItems: int("completedItems").default(0).notNull(),
-  partialItems: int("partialItems").default(0).notNull(),
-  missingItems: int("missingItems").default(0).notNull(),
+  exceptionType: mysqlEnum("exceptionType", [
+    "quantity_mismatch",
+    "price_variance",
+    "quality_issue",
+    "delivery_delay",
+    "stockout",
+    "overstock",
+    "supplier_unavailable",
+    "capacity_constraint",
+    "forecast_deviation",
+    "payment_issue",
+    "documentation_missing",
+    "customs_issue",
+    "other"
+  ]).notNull(),
+
+  // Matching conditions
+  matchConditions: text("matchConditions"), // JSON with conditions to match
+  varianceThresholdPercent: decimal("varianceThresholdPercent", { precision: 5, scale: 2 }), // For price/qty variance
+
+  // Resolution strategy
+  resolutionStrategy: mysqlEnum("resolutionStrategy", [
+    "auto_resolve",        // System resolves automatically
+    "ai_decide",           // Let AI decide best resolution
+    "route_to_human",      // Always require human decision
+    "escalate",            // Immediately escalate
+    "apply_default",       // Apply default action
+    "notify_and_continue", // Notify but continue workflow
+    "halt_workflow"        // Stop workflow execution
+  ]).notNull(),
+
+  // Auto-resolution config
+  autoResolutionAction: text("autoResolutionAction"), // JSON with action details
+  defaultAction: text("defaultAction"), // JSON with fallback action
+
+  // Routing
+  notifyRoles: text("notifyRoles"), // JSON array of roles to notify
+  assignToRole: varchar("assignToRole", { length: 64 }),
+
+  // Timing
+  resolveWithinMinutes: int("resolveWithinMinutes").default(60),
+  escalateAfterMinutes: int("escalateAfterMinutes").default(120),
+
+  priority: int("priority").default(100), // Lower = higher priority for rule matching
+  isActive: boolean("isActive").default(true).notNull(),
+
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ExceptionRule = typeof exceptionRules.$inferSelect;
+export type InsertExceptionRule = typeof exceptionRules.$inferInsert;
+
+// Exception log - tracked exceptions and their resolutions
+export const exceptionLog = mysqlTable("exceptionLog", {
+  id: int("id").autoincrement().primaryKey(),
+  runId: int("runId"),
+  stepId: int("stepId"),
+  ruleId: int("ruleId"), // Which exception rule matched
+
+  exceptionType: varchar("exceptionType", { length: 64 }).notNull(),
+  severity: mysqlEnum("severity", ["low", "medium", "high", "critical"]).default("medium").notNull(),
+
+  // Exception details
+  title: varchar("title", { length: 500 }).notNull(),
+  description: text("description"),
+  exceptionData: text("exceptionData"), // JSON with full context
+
+  // Related entities
+  entityType: varchar("entityType", { length: 64 }),
+  entityId: int("entityId"),
+
+  // Resolution
+  status: mysqlEnum("status", [
+    "open",
+    "in_progress",
+    "resolved",
+    "escalated",
+    "ignored"
+  ]).default("open").notNull(),
+
+  resolutionType: mysqlEnum("resolutionType", [
+    "auto_resolved",
+    "ai_resolved",
+    "human_resolved",
+    "escalated_resolved",
+    "ignored"
+  ]),
+
+  resolutionAction: text("resolutionAction"), // JSON with what was done
+  resolutionNotes: text("resolutionNotes"),
+  resolvedBy: int("resolvedBy"),
+  resolvedAt: timestamp("resolvedAt"),
+
+  // Impact
+  financialImpact: decimal("financialImpact", { precision: 14, scale: 2 }),
+  operationalImpact: varchar("operationalImpact", { length: 255 }),
+
+  // Timing
+  detectedAt: timestamp("detectedAt").defaultNow().notNull(),
+  dueAt: timestamp("dueAt"),
+  escalatedAt: timestamp("escalatedAt"),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ExceptionLogEntry = typeof exceptionLog.$inferSelect;
+export type InsertExceptionLogEntry = typeof exceptionLog.$inferInsert;
+
+// Supplier performance scores - for autonomous vendor selection
+export const supplierPerformance = mysqlTable("supplierPerformance", {
+  id: int("id").autoincrement().primaryKey(),
+  vendorId: int("vendorId").notNull(),
+  metricMonth: varchar("metricMonth", { length: 7 }).notNull(), // YYYY-MM
+
+  // Delivery metrics
+  totalOrders: int("totalOrders").default(0),
+  onTimeDeliveries: int("onTimeDeliveries").default(0),
+  lateDeliveries: int("lateDeliveries").default(0),
+  averageLeadTimeDays: decimal("averageLeadTimeDays", { precision: 8, scale: 2 }),
+  leadTimeVarianceDays: decimal("leadTimeVarianceDays", { precision: 8, scale: 2 }),
+
+  // Quality metrics
+  totalItemsReceived: int("totalItemsReceived").default(0),
+  qualityPassCount: int("qualityPassCount").default(0),
+  qualityFailCount: int("qualityFailCount").default(0),
+  qualityPassRate: decimal("qualityPassRate", { precision: 5, scale: 2 }),
+
+  // Quantity accuracy
+  quantityMatchCount: int("quantityMatchCount").default(0),
+  quantityVarianceCount: int("quantityVarianceCount").default(0),
+
+  // Pricing
+  totalSpend: decimal("totalSpend", { precision: 18, scale: 2 }),
+  averagePriceVariancePercent: decimal("averagePriceVariancePercent", { precision: 6, scale: 2 }),
+
+  // Communication
+  averageResponseTimeHours: decimal("averageResponseTimeHours", { precision: 8, scale: 2 }),
+  issuesReported: int("issuesReported").default(0),
+  issuesResolved: int("issuesResolved").default(0),
+
+  // Composite scores (0-100)
+  deliveryScore: decimal("deliveryScore", { precision: 5, scale: 2 }),
+  qualityScore: decimal("qualityScore", { precision: 5, scale: 2 }),
+  priceScore: decimal("priceScore", { precision: 5, scale: 2 }),
+  responsiveScore: decimal("responsiveScore", { precision: 5, scale: 2 }),
+  overallScore: decimal("overallScore", { precision: 5, scale: 2 }),
+
+  // AI recommendations
+  aiAssessment: text("aiAssessment"),
+  recommendedActions: text("recommendedActions"), // JSON array
+  riskLevel: mysqlEnum("riskLevel", ["low", "medium", "high"]).default("low"),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type SupplierPerformanceEntry = typeof supplierPerformance.$inferSelect;
+export type InsertSupplierPerformanceEntry = typeof supplierPerformance.$inferInsert;
+
+// Workflow notifications - notifications generated by workflows
+export const workflowNotifications = mysqlTable("workflowNotifications", {
+  id: int("id").autoincrement().primaryKey(),
+  runId: int("runId"),
+
+  notificationType: mysqlEnum("notificationType", [
+    "info",
+    "warning",
+    "error",
+    "approval_needed",
+    "approval_completed",
+    "exception",
+    "milestone",
+    "completion"
+  ]).notNull(),
+
+  title: varchar("title", { length: 500 }).notNull(),
+  message: text("message"),
+
+  // Routing
+  targetRoles: text("targetRoles"), // JSON array
+  targetUserIds: text("targetUserIds"), // JSON array
+
+  // Channels
+  sendEmail: boolean("sendEmail").default(false),
+  sendInApp: boolean("sendInApp").default(true),
+  sendSlack: boolean("sendSlack").default(false),
 
   // Status
-  status: mysqlEnum("status", ["draft", "active", "completed", "archived"]).default("active").notNull(),
-  completedAt: timestamp("completedAt"),
+  isRead: boolean("isRead").default(false),
+  readBy: int("readBy"),
+  readAt: timestamp("readAt"),
 
-  createdBy: int("createdBy").notNull(),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
-
-export type DataRoomChecklist = typeof dataRoomChecklists.$inferSelect;
-export type InsertDataRoomChecklist = typeof dataRoomChecklists.$inferInsert;
-
-// Data Room Checklist Item Status (tracks status of each item in a data room)
-export const dataRoomChecklistItems = mysqlTable("data_room_checklist_items", {
-  id: int("id").autoincrement().primaryKey(),
-  checklistId: int("checklistId").notNull(),
-  dataRoomId: int("dataRoomId").notNull(),
-
-  // Item details (copied from template or custom)
-  categoryName: varchar("categoryName", { length: 255 }).notNull(),
-  itemName: varchar("itemName", { length: 255 }).notNull(),
-  itemDescription: text("itemDescription"),
-  requirement: mysqlEnum("requirement", ["required", "recommended", "optional"]).default("required").notNull(),
-
-  // Keywords for matching
-  matchKeywords: text("matchKeywords"),
-  matchFileTypes: text("matchFileTypes"),
-
-  // Status tracking
-  status: mysqlEnum("status", ["missing", "partial", "complete", "not_applicable", "waived"]).default("missing").notNull(),
-
-  // Linked documents (when status is complete or partial)
-  linkedDocumentIds: text("linkedDocumentIds"), // JSON array of document IDs
-  linkedDocumentCount: int("linkedDocumentCount").default(0).notNull(),
-
-  // Notes and comments
-  notes: text("notes"),
-  internalNotes: text("internalNotes"), // Internal notes not visible to visitors
-
-  // Review tracking
-  reviewedBy: int("reviewedBy"),
-  reviewedAt: timestamp("reviewedAt"),
-  reviewStatus: mysqlEnum("reviewStatus", ["pending", "approved", "needs_attention", "rejected"]),
-  reviewNotes: text("reviewNotes"),
-
-  // Waiver info (if status is waived)
-  waivedBy: int("waivedBy"),
-  waivedAt: timestamp("waivedAt"),
-  waiverReason: text("waiverReason"),
-
-  sortOrder: int("sortOrder").default(0).notNull(),
+  // Link to action
+  actionUrl: varchar("actionUrl", { length: 500 }),
+  actionLabel: varchar("actionLabel", { length: 100 }),
 
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
-export type DataRoomChecklistItem = typeof dataRoomChecklistItems.$inferSelect;
-export type InsertDataRoomChecklistItem = typeof dataRoomChecklistItems.$inferInsert;
-
-// Standard Due Diligence Categories (for seeding templates)
-export const STANDARD_DD_CATEGORIES = {
-  CORPORATE: {
-    name: "Corporate Documents",
-    items: [
-      { name: "Certificate of Incorporation", keywords: ["certificate", "incorporation", "articles"] },
-      { name: "Bylaws", keywords: ["bylaws", "by-laws"] },
-      { name: "Board Resolutions", keywords: ["board", "resolution", "minutes"] },
-      { name: "Stockholder Agreements", keywords: ["stockholder", "shareholder", "agreement"] },
-      { name: "Cap Table", keywords: ["cap table", "capitalization", "equity"] },
-      { name: "Option Pool Summary", keywords: ["option", "pool", "esop", "stock options"] },
-      { name: "Voting Agreements", keywords: ["voting", "agreement"] },
-    ]
-  },
-  FINANCIAL: {
-    name: "Financial Documents",
-    items: [
-      { name: "Audited Financial Statements", keywords: ["audited", "financial", "statements", "audit"] },
-      { name: "Monthly/Quarterly Financials", keywords: ["monthly", "quarterly", "financials", "p&l", "income statement"] },
-      { name: "Balance Sheet", keywords: ["balance sheet", "assets", "liabilities"] },
-      { name: "Cash Flow Statement", keywords: ["cash flow", "statement"] },
-      { name: "Budget/Forecast", keywords: ["budget", "forecast", "projections"] },
-      { name: "Tax Returns", keywords: ["tax", "return", "irs", "filing"] },
-      { name: "Bank Statements", keywords: ["bank", "statement", "account"] },
-    ]
-  },
-  LEGAL: {
-    name: "Legal & Compliance",
-    items: [
-      { name: "Material Contracts", keywords: ["contract", "agreement", "material"] },
-      { name: "Customer Agreements", keywords: ["customer", "agreement", "contract", "msa"] },
-      { name: "Vendor Agreements", keywords: ["vendor", "supplier", "agreement"] },
-      { name: "Litigation Summary", keywords: ["litigation", "lawsuit", "legal", "dispute"] },
-      { name: "Regulatory Filings", keywords: ["regulatory", "filing", "compliance", "license"] },
-      { name: "Insurance Policies", keywords: ["insurance", "policy", "coverage"] },
-    ]
-  },
-  IP: {
-    name: "Intellectual Property",
-    items: [
-      { name: "Patent Portfolio", keywords: ["patent", "portfolio", "invention"] },
-      { name: "Trademark Registrations", keywords: ["trademark", "registration", "brand"] },
-      { name: "Copyright Registrations", keywords: ["copyright", "registration"] },
-      { name: "IP Assignment Agreements", keywords: ["ip", "assignment", "intellectual property"] },
-      { name: "Open Source Licenses", keywords: ["open source", "license", "oss"] },
-    ]
-  },
-  HR: {
-    name: "Human Resources",
-    items: [
-      { name: "Org Chart", keywords: ["org chart", "organization", "structure"] },
-      { name: "Employee Roster", keywords: ["employee", "roster", "headcount", "team"] },
-      { name: "Employment Agreements", keywords: ["employment", "agreement", "offer letter"] },
-      { name: "Benefit Plans", keywords: ["benefit", "plan", "401k", "health"] },
-      { name: "Contractor Agreements", keywords: ["contractor", "consultant", "agreement"] },
-    ]
-  },
-  PRODUCT: {
-    name: "Product & Technology",
-    items: [
-      { name: "Product Roadmap", keywords: ["product", "roadmap", "plan"] },
-      { name: "Technical Architecture", keywords: ["technical", "architecture", "system", "diagram"] },
-      { name: "Security Documentation", keywords: ["security", "soc2", "compliance", "pentest"] },
-      { name: "Data Privacy Policies", keywords: ["privacy", "policy", "gdpr", "ccpa", "data"] },
-    ]
-  },
-  COMMERCIAL: {
-    name: "Commercial",
-    items: [
-      { name: "Customer List", keywords: ["customer", "list", "clients"] },
-      { name: "Revenue by Customer", keywords: ["revenue", "customer", "arr", "mrr"] },
-      { name: "Sales Pipeline", keywords: ["sales", "pipeline", "forecast"] },
-      { name: "Pricing Information", keywords: ["pricing", "price", "rate card"] },
-      { name: "Marketing Materials", keywords: ["marketing", "materials", "deck", "brochure"] },
-    ]
-  },
-} as const;
-
-// Series B Due Diligence Categories - focused on growth-stage requirements
-export const SERIES_B_DD_CATEGORIES = {
-  CORPORATE_LEGAL: {
-    name: "Corporate & Legal Foundation",
-    items: [
-      { name: "Certificate of Incorporation (current)", keywords: ["certificate", "incorporation", "articles", "delaware"] },
-      { name: "Amended & Restated Bylaws", keywords: ["bylaws", "by-laws", "amended", "restated"] },
-      { name: "Board Meeting Minutes (last 2 years)", keywords: ["board", "minutes", "meeting"] },
-      { name: "Stockholder/Investor Consents", keywords: ["stockholder", "consent", "investor", "written consent"] },
-      { name: "Investor Rights Agreement", keywords: ["investor rights", "ira", "registration rights"] },
-      { name: "Right of First Refusal Agreement", keywords: ["rofr", "first refusal", "co-sale"] },
-      { name: "Voting Agreement", keywords: ["voting", "agreement", "drag along"] },
-      { name: "Good Standing Certificates", keywords: ["good standing", "certificate", "status"] },
-      { name: "Qualified Small Business Stock (QSBS) Documentation", keywords: ["qsbs", "qualified small business", "1202"] },
-    ]
-  },
-  CAP_TABLE_EQUITY: {
-    name: "Cap Table & Equity",
-    items: [
-      { name: "Fully Diluted Cap Table", keywords: ["cap table", "capitalization", "fully diluted"] },
-      { name: "Pro Forma Cap Table (post-financing)", keywords: ["pro forma", "post money", "post-financing"] },
-      { name: "409A Valuation (current)", keywords: ["409a", "valuation", "fair market value"] },
-      { name: "Stock Option Plan & Grants", keywords: ["option", "plan", "esop", "stock option", "grant"] },
-      { name: "Option Pool Analysis", keywords: ["option pool", "pool", "available options"] },
-      { name: "Previous Financing Documents", keywords: ["series a", "seed", "safe", "convertible", "financing"] },
-      { name: "Warrant Register", keywords: ["warrant", "register", "outstanding"] },
-      { name: "Convertible Note/SAFE Summary", keywords: ["convertible", "note", "safe", "outstanding"] },
-    ]
-  },
-  FINANCIAL_METRICS: {
-    name: "Financial Performance & Metrics",
-    items: [
-      { name: "Audited Financial Statements", keywords: ["audited", "financial", "statements", "audit"] },
-      { name: "Monthly Financial Statements (24 months)", keywords: ["monthly", "financials", "p&l", "income statement"] },
-      { name: "Balance Sheet (current)", keywords: ["balance sheet", "assets", "liabilities"] },
-      { name: "Cash Flow Statement", keywords: ["cash flow", "statement"] },
-      { name: "Financial Model & Projections (3-5 year)", keywords: ["model", "projections", "forecast", "financial model"] },
-      { name: "Use of Funds / Budget", keywords: ["use of funds", "budget", "allocation"] },
-      { name: "Burn Rate Analysis", keywords: ["burn", "rate", "runway", "cash burn"] },
-      { name: "Bank Statements (12 months)", keywords: ["bank", "statement", "account"] },
-      { name: "Accounts Receivable Aging", keywords: ["receivable", "aging", "ar", "collections"] },
-      { name: "Accounts Payable Summary", keywords: ["payable", "ap", "outstanding"] },
-      { name: "Tax Returns (last 3 years)", keywords: ["tax", "return", "irs", "filing"] },
-    ]
-  },
-  REVENUE_GROWTH: {
-    name: "Revenue & Growth Metrics",
-    items: [
-      { name: "ARR/MRR Summary & Trends", keywords: ["arr", "mrr", "recurring revenue", "monthly recurring"] },
-      { name: "Revenue by Customer Cohort", keywords: ["cohort", "revenue", "customer", "analysis"] },
-      { name: "Net Revenue Retention (NRR)", keywords: ["nrr", "net revenue retention", "retention"] },
-      { name: "Gross Revenue Retention", keywords: ["grr", "gross retention", "churn"] },
-      { name: "Customer Acquisition Cost (CAC)", keywords: ["cac", "acquisition cost", "customer acquisition"] },
-      { name: "Lifetime Value (LTV) Analysis", keywords: ["ltv", "lifetime value", "customer value"] },
-      { name: "LTV/CAC Ratio", keywords: ["ltv cac", "ratio", "unit economics"] },
-      { name: "Churn Analysis", keywords: ["churn", "attrition", "cancellation"] },
-      { name: "Sales Efficiency Metrics", keywords: ["sales efficiency", "magic number", "payback"] },
-      { name: "Growth Rate (YoY, MoM)", keywords: ["growth rate", "yoy", "mom", "year over year"] },
-    ]
-  },
-  PRODUCT_TECHNOLOGY: {
-    name: "Product & Technology",
-    items: [
-      { name: "Product Roadmap", keywords: ["product", "roadmap", "plan", "feature"] },
-      { name: "Technical Architecture Overview", keywords: ["technical", "architecture", "system", "diagram", "infrastructure"] },
-      { name: "Technology Stack Documentation", keywords: ["tech stack", "technology", "stack", "tools"] },
-      { name: "Product Demo / Walkthrough", keywords: ["demo", "walkthrough", "product tour"] },
-      { name: "Key Product Metrics (DAU/MAU, engagement)", keywords: ["dau", "mau", "engagement", "product metrics", "usage"] },
-      { name: "Engineering Team & Processes", keywords: ["engineering", "development", "process", "agile", "sprint"] },
-      { name: "Technical Debt Assessment", keywords: ["technical debt", "code quality", "refactoring"] },
-      { name: "Scalability Analysis", keywords: ["scalability", "scale", "performance", "load"] },
-    ]
-  },
-  SECURITY_COMPLIANCE: {
-    name: "Security & Compliance",
-    items: [
-      { name: "SOC 2 Report (Type I or II)", keywords: ["soc2", "soc 2", "type ii", "type 2"] },
-      { name: "Security Policies & Procedures", keywords: ["security", "policy", "procedures", "infosec"] },
-      { name: "Penetration Test Results", keywords: ["pentest", "penetration", "security assessment"] },
-      { name: "GDPR Compliance Documentation", keywords: ["gdpr", "data protection", "privacy"] },
-      { name: "CCPA Compliance Documentation", keywords: ["ccpa", "california", "privacy"] },
-      { name: "HIPAA Compliance (if applicable)", keywords: ["hipaa", "health", "phi", "baa"] },
-      { name: "Data Processing Agreements", keywords: ["dpa", "data processing", "subprocessor"] },
-      { name: "Incident Response Plan", keywords: ["incident", "response", "breach", "security incident"] },
-      { name: "Business Continuity Plan", keywords: ["business continuity", "disaster recovery", "bcp"] },
-    ]
-  },
-  TEAM_HR: {
-    name: "Team & Organization",
-    items: [
-      { name: "Org Chart (current)", keywords: ["org chart", "organization", "structure"] },
-      { name: "Executive Team Bios", keywords: ["executive", "team", "bio", "leadership", "management"] },
-      { name: "Employee Census / Headcount", keywords: ["employee", "census", "headcount", "roster"] },
-      { name: "Key Employee Agreements", keywords: ["employment", "agreement", "offer letter", "executive"] },
-      { name: "CIIA/Invention Assignment Agreements", keywords: ["ciia", "invention", "assignment", "confidentiality"] },
-      { name: "Compensation Summary / Salary Bands", keywords: ["compensation", "salary", "bands", "pay"] },
-      { name: "Equity Vesting Schedules", keywords: ["vesting", "schedule", "equity", "cliff"] },
-      { name: "Benefits Summary", keywords: ["benefits", "401k", "health", "insurance"] },
-      { name: "Contractor Agreements", keywords: ["contractor", "consultant", "1099"] },
-      { name: "Hiring Plan", keywords: ["hiring", "plan", "headcount", "recruitment"] },
-    ]
-  },
-  CUSTOMERS_COMMERCIAL: {
-    name: "Customers & Commercial",
-    items: [
-      { name: "Top 20 Customer List with Revenue", keywords: ["customer", "list", "top", "revenue"] },
-      { name: "Customer Concentration Analysis", keywords: ["concentration", "customer", "top customers"] },
-      { name: "Master Service Agreement (template)", keywords: ["msa", "master service", "agreement", "template"] },
-      { name: "Customer Contract Summary", keywords: ["customer", "contract", "summary", "terms"] },
-      { name: "Sales Pipeline & Forecast", keywords: ["pipeline", "forecast", "sales", "opportunity"] },
-      { name: "Win/Loss Analysis", keywords: ["win", "loss", "analysis", "competitive"] },
-      { name: "Customer References", keywords: ["reference", "customer", "testimonial"] },
-      { name: "Case Studies", keywords: ["case study", "success story", "customer story"] },
-      { name: "Pricing Model & Rate Card", keywords: ["pricing", "rate card", "price", "model"] },
-      { name: "Partner/Channel Agreements", keywords: ["partner", "channel", "reseller", "distribution"] },
-    ]
-  },
-  IP_ASSETS: {
-    name: "Intellectual Property",
-    items: [
-      { name: "Patent Portfolio Summary", keywords: ["patent", "portfolio", "invention", "ip"] },
-      { name: "Trademark Registrations", keywords: ["trademark", "registration", "brand", "tm"] },
-      { name: "Domain Name Portfolio", keywords: ["domain", "dns", "url", "website"] },
-      { name: "IP Assignment Agreements", keywords: ["ip assignment", "intellectual property", "assignment"] },
-      { name: "Open Source License Audit", keywords: ["open source", "license", "oss", "audit"] },
-      { name: "Third-Party IP Licenses", keywords: ["license", "third party", "software license"] },
-    ]
-  },
-  LEGAL_RISK: {
-    name: "Legal & Risk",
-    items: [
-      { name: "Material Contracts Summary", keywords: ["material", "contract", "significant"] },
-      { name: "Vendor/Supplier Agreements", keywords: ["vendor", "supplier", "agreement"] },
-      { name: "Litigation Summary / Pending Claims", keywords: ["litigation", "lawsuit", "claim", "dispute"] },
-      { name: "Insurance Policies (D&O, E&O, Cyber)", keywords: ["insurance", "d&o", "e&o", "cyber", "policy"] },
-      { name: "Regulatory Filings & Licenses", keywords: ["regulatory", "license", "permit", "filing"] },
-      { name: "Related Party Transactions", keywords: ["related party", "transaction", "conflict"] },
-    ]
-  },
-} as const;
+export type WorkflowNotification = typeof workflowNotifications.$inferSelect;
+export type InsertWorkflowNotification = typeof workflowNotifications.$inferInsert;

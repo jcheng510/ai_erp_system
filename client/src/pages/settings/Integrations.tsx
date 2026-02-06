@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import * as React from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,6 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Switch } from "@/components/ui/switch";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
+import { useSearch } from "wouter";
 import { 
   Mail, 
   ShoppingBag, 
@@ -29,16 +31,41 @@ import {
 } from "lucide-react";
 
 export default function IntegrationsPage() {
+  const searchParams = useSearch();
   const [testEmail, setTestEmail] = useState("");
   const [showAddShopify, setShowAddShopify] = useState(false);
-  const [newShopifyStore, setNewShopifyStore] = useState({
-    storeName: "",
-    storeDomain: "",
-    accessToken: "",
-  });
+  const [shopifyShopDomain, setShopifyShopDomain] = useState("");
+  const [shopifyConnecting, setShopifyConnecting] = useState(false);
+  const [activeTab, setActiveTab] = useState("connections");
 
   const { data: status, isLoading, refetch } = trpc.integrations.getStatus.useQuery();
   const { data: syncHistory } = trpc.integrations.getSyncHistory.useQuery({ limit: 20 });
+
+  // Get OAuth URLs for Gmail and Google Workspace
+  const { data: gmailAuthUrl } = trpc.gmail.getAuthUrl.useQuery();
+  const { data: workspaceAuthUrl } = trpc.googleWorkspace.getAuthUrl.useQuery();
+  const { data: sheetsAuthUrl } = trpc.sheetsImport.getAuthUrl.useQuery();
+  
+  // Get QuickBooks OAuth URL
+  const { data: quickbooksAuthUrl } = trpc.quickbooks.getAuthUrl.useQuery();
+
+  // Handle OAuth callback
+  useEffect(() => {
+    if (searchParams) {
+      const params = new URLSearchParams(searchParams);
+      if (params.get("success") === "connected") {
+        toast.success("Google account connected successfully!");
+        refetch();
+        // Clear query parameters from URL
+        window.history.replaceState({}, '', '/settings/integrations');
+      } else if (params.get("error")) {
+        const error = params.get("error");
+        toast.error(`Connection failed: ${error}`);
+        // Clear query parameters from URL
+        window.history.replaceState({}, '', '/settings/integrations');
+      }
+    }
+  }, [searchParams, refetch]);
 
   const testSendgridMutation = trpc.integrations.testSendgrid.useMutation({
     onSuccess: (data) => {
@@ -50,12 +77,120 @@ export default function IntegrationsPage() {
     },
   });
 
+  const shopifyInitiateOAuthMutation = trpc.integrations.shopify.initiateOAuth.useMutation({
+    onSuccess: (data) => {
+      // Redirect to Shopify OAuth page
+      window.location.href = data.authUrl;
+    },
+    onError: (error) => {
+      toast.error(error.message);
+      setShopifyConnecting(false);
+    },
+  });
+
+  const shopifyDisconnectMutation = trpc.integrations.shopify.disconnect.useMutation({
+    onSuccess: () => {
+      toast.success("Store disconnected successfully");
+      refetch();
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const shopifyTestConnectionMutation = trpc.integrations.shopify.testConnection.useMutation({
+    onSuccess: (data) => {
+      toast.success(data.message);
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
   const clearHistoryMutation = trpc.integrations.clearSyncHistory.useMutation({
     onSuccess: () => {
       toast.success("Sync history cleared");
       refetch();
     },
+    onError: (error) => {
+      toast.error(error.message);
+    },
   });
+
+  const quickbooksDisconnectMutation = trpc.quickbooks.disconnect.useMutation({
+    onSuccess: () => {
+      toast.success("QuickBooks disconnected successfully");
+      refetch();
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  // Check for OAuth callback success/error in URL
+  React.useEffect(() => {
+    if (!searchParams) return;
+    
+    const params = new URLSearchParams(searchParams);
+    const shopifySuccess = params.get('shopify_success');
+    const shopifyError = params.get('shopify_error');
+    const shopName = params.get('shop');
+    const quickbooksSuccess = params.get('quickbooks_success');
+    const quickbooksError = params.get('quickbooks_error');
+
+    if (shopifySuccess === 'connected') {
+      toast.success(`Successfully connected to ${shopName || 'Shopify store'}!`);
+      refetch();
+      // Clean up URL
+      window.history.replaceState({}, '', '/settings/integrations');
+    } else if (shopifyError) {
+      const errorMessages: Record<string, string> = {
+        'missing_params': 'Missing required parameters from Shopify',
+        'not_configured': 'Shopify integration is not configured. Please contact your administrator.',
+        'not_authenticated': 'You must be logged in to connect a Shopify store',
+        'user_mismatch': 'User session mismatch during OAuth flow',
+        'company_mismatch': 'Company mismatch during OAuth flow',
+        'invalid_domain': 'Invalid Shopify domain',
+        'invalid_state': 'Invalid OAuth state parameter',
+        'shop_mismatch': 'Shop domain mismatch in OAuth flow',
+        'state_expired': 'OAuth session expired. Please try connecting again.',
+        'token_exchange_failed': 'Failed to exchange authorization code for access token',
+        'failed_to_fetch_shop_info': 'Failed to fetch shop information',
+        'oauth_failed': 'OAuth authentication failed',
+      };
+      toast.error(errorMessages[shopifyError] || 'Failed to connect Shopify store');
+      // Clean up URL
+      window.history.replaceState({}, '', '/settings/integrations');
+    }
+
+    if (quickbooksSuccess === 'connected') {
+      toast.success('Successfully connected to QuickBooks!');
+      refetch();
+      // Clean up URL
+      window.history.replaceState({}, '', '/settings/integrations');
+    } else if (quickbooksError) {
+      const errorMessages: Record<string, string> = {
+        'missing_params': 'Missing required parameters from QuickBooks',
+        'not_configured': 'QuickBooks integration is not configured. Please contact your administrator.',
+        'not_authenticated': 'You must be logged in to connect QuickBooks',
+        'invalid_state': 'Invalid OAuth state parameter',
+        'token_exchange_failed': 'Failed to exchange authorization code for access token',
+        'oauth_failed': 'OAuth authentication failed',
+      };
+      toast.error(errorMessages[quickbooksError] || 'Failed to connect QuickBooks');
+      // Clean up URL
+      window.history.replaceState({}, '', '/settings/integrations');
+    }
+  }, [searchParams, refetch]);
+
+  const handleConnectShopify = () => {
+    if (!shopifyShopDomain.trim()) {
+      toast.error("Please enter your Shopify store domain");
+      return;
+    }
+    setShopifyConnecting(true);
+    shopifyInitiateOAuthMutation.mutate({ shop: shopifyShopDomain });
+  };
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -108,13 +243,14 @@ export default function IntegrationsPage() {
           </Button>
         </div>
 
-        <Tabs defaultValue="connections" className="space-y-4">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
           <TabsList>
             <TabsTrigger value="connections">Connections</TabsTrigger>
             <TabsTrigger value="shopify">Shopify</TabsTrigger>
             <TabsTrigger value="email">Email (SendGrid)</TabsTrigger>
             <TabsTrigger value="gmail">Gmail</TabsTrigger>
             <TabsTrigger value="workspace">Google Workspace</TabsTrigger>
+            <TabsTrigger value="quickbooks">QuickBooks</TabsTrigger>
             <TabsTrigger value="history">Sync History</TabsTrigger>
           </TabsList>
 
@@ -145,10 +281,7 @@ export default function IntegrationsPage() {
                     variant="outline" 
                     size="sm"
                     disabled={!status?.sendgrid?.configured}
-                    onClick={() => {
-                      const tab = document.querySelector('[data-value="email"]');
-                      if (tab) (tab as HTMLElement).click();
-                    }}
+                    onClick={() => setActiveTab("email")}
                   >
                     <Settings className="w-4 h-4 mr-2" />
                     Configure
@@ -179,10 +312,7 @@ export default function IntegrationsPage() {
                   <Button 
                     variant="outline" 
                     size="sm"
-                    onClick={() => {
-                      const tab = document.querySelector('[data-value="shopify"]');
-                      if (tab) (tab as HTMLElement).click();
-                    }}
+                    onClick={() => setActiveTab("shopify")}
                   >
                     <Settings className="w-4 h-4 mr-2" />
                     Configure
@@ -214,7 +344,13 @@ export default function IntegrationsPage() {
                     variant="outline" 
                     size="sm"
                     onClick={() => {
-                      window.location.href = '/import';
+                      if (status?.google?.configured) {
+                        window.location.href = '/import';
+                      } else if (sheetsAuthUrl?.url) {
+                        window.location.href = sheetsAuthUrl.url;
+                      } else {
+                        toast.error(sheetsAuthUrl?.error || "Google OAuth not configured");
+                      }
                     }}
                   >
                     <Settings className="w-4 h-4 mr-2" />
@@ -247,8 +383,14 @@ export default function IntegrationsPage() {
                     variant="outline" 
                     size="sm"
                     onClick={() => {
-                      const tab = document.querySelector('[data-value="gmail"]');
-                      if (tab) (tab as HTMLElement).click();
+                      if (status?.gmail?.configured) {
+                        const tab = document.querySelector('[data-value="gmail"]');
+                        if (tab) (tab as HTMLElement).click();
+                      } else if (gmailAuthUrl?.url) {
+                        window.location.href = gmailAuthUrl.url;
+                      } else {
+                        toast.error(gmailAuthUrl?.error || "Google OAuth not configured");
+                      }
                     }}
                   >
                     <Settings className="w-4 h-4 mr-2" />
@@ -281,8 +423,14 @@ export default function IntegrationsPage() {
                     variant="outline" 
                     size="sm"
                     onClick={() => {
-                      const tab = document.querySelector('[data-value="workspace"]');
-                      if (tab) (tab as HTMLElement).click();
+                      if (status?.googleWorkspace?.configured) {
+                        const tab = document.querySelector('[data-value="workspace"]');
+                        if (tab) (tab as HTMLElement).click();
+                      } else if (workspaceAuthUrl?.url) {
+                        window.location.href = workspaceAuthUrl.url;
+                      } else {
+                        toast.error(workspaceAuthUrl?.error || "Google OAuth not configured");
+                      }
                     }}
                   >
                     <Settings className="w-4 h-4 mr-2" />
@@ -307,11 +455,20 @@ export default function IntegrationsPage() {
                 </CardHeader>
                 <CardContent>
                   <p className="text-sm text-muted-foreground mb-4">
-                    Connect QuickBooks for automatic financial sync.
+                    {status?.quickbooks?.configured 
+                      ? `Connected to QuickBooks company ${status.quickbooks.realmId}. Sync financial data automatically.`
+                      : "Connect QuickBooks for automatic financial sync. Add QUICKBOOKS_CLIENT_ID and QUICKBOOKS_CLIENT_SECRET in Settings → Secrets."}
                   </p>
-                  <Button variant="outline" size="sm" disabled>
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    onClick={() => {
+                      const tab = document.querySelector('[data-value="quickbooks"]');
+                      if (tab) (tab as HTMLElement).click();
+                    }}
+                  >
                     <Settings className="w-4 h-4 mr-2" />
-                    Coming Soon
+                    Configure
                   </Button>
                 </CardContent>
               </Card>
@@ -336,58 +493,59 @@ export default function IntegrationsPage() {
                     </DialogTrigger>
                     <DialogContent>
                       <DialogHeader>
-                        <DialogTitle>Add Shopify Store</DialogTitle>
+                        <DialogTitle>Connect Shopify Store</DialogTitle>
                         <DialogDescription>
-                          Connect a new Shopify store to sync orders and inventory
+                          Enter your Shopify store domain to securely connect via OAuth
                         </DialogDescription>
                       </DialogHeader>
                       <div className="space-y-4 py-4">
                         <div className="space-y-2">
-                          <Label htmlFor="storeName">Store Name</Label>
+                          <Label htmlFor="shopDomain">Shopify Store Domain</Label>
                           <Input
-                            id="storeName"
-                            placeholder="My Store"
-                            value={newShopifyStore.storeName}
-                            onChange={(e) => setNewShopifyStore({ ...newShopifyStore, storeName: e.target.value })}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="storeDomain">Store Domain</Label>
-                          <Input
-                            id="storeDomain"
+                            id="shopDomain"
                             placeholder="mystore.myshopify.com"
-                            value={newShopifyStore.storeDomain}
-                            onChange={(e) => setNewShopifyStore({ ...newShopifyStore, storeDomain: e.target.value })}
+                            value={shopifyShopDomain}
+                            onChange={(e) => setShopifyShopDomain(e.target.value)}
+                            disabled={shopifyConnecting}
                           />
                           <p className="text-xs text-muted-foreground">
-                            Your Shopify store domain (e.g., mystore.myshopify.com)
+                            Enter your store name or full domain (e.g., "mystore" or "mystore.myshopify.com")
                           </p>
                         </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="accessToken">Access Token</Label>
-                          <Input
-                            id="accessToken"
-                            type="password"
-                            placeholder="shpat_..."
-                            value={newShopifyStore.accessToken}
-                            onChange={(e) => setNewShopifyStore({ ...newShopifyStore, accessToken: e.target.value })}
-                          />
-                          <p className="text-xs text-muted-foreground">
-                            Create a private app in Shopify Admin → Settings → Apps → Develop apps
+                        <div className="p-4 bg-blue-50 dark:bg-blue-950/20 rounded-lg border border-blue-200 dark:border-blue-800">
+                          <h4 className="font-medium text-sm mb-2 text-blue-900 dark:text-blue-100">Secure OAuth Connection</h4>
+                          <p className="text-xs text-blue-700 dark:text-blue-300">
+                            You'll be redirected to Shopify to authorize this connection. No need to manually copy access tokens - the integration will be set up automatically.
                           </p>
                         </div>
                       </div>
                       <DialogFooter>
-                        <Button variant="outline" onClick={() => setShowAddShopify(false)}>
+                        <Button 
+                          variant="outline" 
+                          onClick={() => {
+                            setShowAddShopify(false);
+                            setShopifyShopDomain("");
+                            setShopifyConnecting(false);
+                          }}
+                          disabled={shopifyConnecting}
+                        >
                           Cancel
                         </Button>
                         <Button 
-                          onClick={() => {
-                            toast.info("Shopify store connection coming soon");
-                            setShowAddShopify(false);
-                          }}
+                          onClick={handleConnectShopify}
+                          disabled={shopifyConnecting || !shopifyShopDomain.trim()}
                         >
-                          Add Store
+                          {shopifyConnecting ? (
+                            <>
+                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                              Connecting...
+                            </>
+                          ) : (
+                            <>
+                              <ShoppingBag className="w-4 h-4 mr-2" />
+                              Connect to Shopify
+                            </>
+                          )}
                         </Button>
                       </DialogFooter>
                     </DialogContent>
@@ -425,13 +583,27 @@ export default function IntegrationsPage() {
                           </TableCell>
                           <TableCell>
                             <div className="flex gap-2">
-                              <Button variant="ghost" size="sm">
-                                <RefreshCw className="w-4 h-4" />
-                              </Button>
-                              <Button variant="ghost" size="sm">
+                              <Button 
+                                variant="ghost" 
+                                size="sm"
+                                onClick={() => shopifyTestConnectionMutation.mutate({ storeId: store.id })}
+                                disabled={shopifyTestConnectionMutation.isPending || !store.isEnabled}
+                                title="Test connection"
+                              >
                                 <TestTube className="w-4 h-4" />
                               </Button>
-                              <Button variant="ghost" size="sm" className="text-destructive">
+                              <Button 
+                                variant="ghost" 
+                                size="sm" 
+                                className="text-destructive"
+                                onClick={() => {
+                                  if (confirm(`Are you sure you want to disconnect ${store.storeName || store.storeDomain}?`)) {
+                                    shopifyDisconnectMutation.mutate({ storeId: store.id });
+                                  }
+                                }}
+                                disabled={shopifyDisconnectMutation.isPending}
+                                title="Disconnect store"
+                              >
                                 <Trash2 className="w-4 h-4" />
                               </Button>
                             </div>
@@ -450,27 +622,30 @@ export default function IntegrationsPage() {
 
                 <div className="mt-6 p-4 bg-muted/50 rounded-lg">
                   <h4 className="font-medium mb-2">Sync Settings</h4>
+                  <p className="text-xs text-muted-foreground mb-3">
+                    Default settings for new store connections. Editing existing store settings coming soon.
+                  </p>
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
                       <div>
                         <Label>Sync Orders</Label>
                         <p className="text-xs text-muted-foreground">Automatically import orders from Shopify</p>
                       </div>
-                      <Switch defaultChecked />
+                      <Switch defaultChecked disabled />
                     </div>
                     <div className="flex items-center justify-between">
                       <div>
                         <Label>Sync Inventory</Label>
                         <p className="text-xs text-muted-foreground">Push inventory levels to Shopify</p>
                       </div>
-                      <Switch defaultChecked />
+                      <Switch defaultChecked disabled />
                     </div>
                     <div className="flex items-center justify-between">
                       <div>
                         <Label>Auto-fulfill Orders</Label>
                         <p className="text-xs text-muted-foreground">Mark orders as fulfilled when shipped</p>
                       </div>
-                      <Switch />
+                      <Switch disabled />
                     </div>
                   </div>
                 </div>
@@ -603,8 +778,11 @@ export default function IntegrationsPage() {
                         Authorize this application to access your Gmail account to send and manage emails.
                       </p>
                       <Button onClick={() => {
-                        // Navigate to import page which handles Google OAuth
-                        window.location.href = '/import';
+                        if (gmailAuthUrl?.url) {
+                          window.location.href = gmailAuthUrl.url;
+                        } else {
+                          toast.error(gmailAuthUrl?.error || "Google OAuth not configured");
+                        }
                       }}>
                         <Mail className="w-4 h-4 mr-2" />
                         Connect Gmail
@@ -713,8 +891,11 @@ export default function IntegrationsPage() {
                         Authorize this application to create and manage Google Docs and Sheets.
                       </p>
                       <Button onClick={() => {
-                        // Navigate to import page which handles Google OAuth
-                        window.location.href = '/import';
+                        if (workspaceAuthUrl?.url) {
+                          window.location.href = workspaceAuthUrl.url;
+                        } else {
+                          toast.error(workspaceAuthUrl?.error || "Google OAuth not configured");
+                        }
                       }}>
                         <FileSpreadsheet className="w-4 h-4 mr-2" />
                         Connect Google Workspace
@@ -776,6 +957,135 @@ export default function IntegrationsPage() {
                           </p>
                         </div>
                         <Button variant="outline" size="sm">
+                          Disconnect
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* QuickBooks Tab */}
+          <TabsContent value="quickbooks" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>QuickBooks Integration</CardTitle>
+                <CardDescription>
+                  Connect QuickBooks for automatic financial data synchronization
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="flex items-center gap-4 p-4 bg-muted/50 rounded-lg">
+                  <div className={`p-3 rounded-full ${status?.quickbooks?.configured ? 'bg-green-500/10' : 'bg-yellow-500/10'}`}>
+                    {status?.quickbooks?.configured ? (
+                      <CheckCircle2 className="w-6 h-6 text-green-500" />
+                    ) : (
+                      <AlertCircle className="w-6 h-6 text-yellow-500" />
+                    )}
+                  </div>
+                  <div>
+                    <h4 className="font-medium">
+                      {status?.quickbooks?.configured ? 'QuickBooks Connected' : 'QuickBooks Not Connected'}
+                    </h4>
+                    <p className="text-sm text-muted-foreground">
+                      {status?.quickbooks?.configured 
+                        ? `Connected to company ${status.quickbooks.realmId}`
+                        : 'Connect your QuickBooks account to sync financial data'}
+                    </p>
+                  </div>
+                </div>
+
+                {!status?.quickbooks?.configured ? (
+                  <div className="space-y-4">
+                    <div className="p-4 border rounded-lg">
+                      <h4 className="font-medium mb-2">Connect QuickBooks</h4>
+                      <p className="text-sm text-muted-foreground mb-4">
+                        To enable QuickBooks integration, add the following environment variables in Settings → Secrets:
+                      </p>
+                      <ul className="text-sm text-muted-foreground space-y-2 mb-4 list-disc list-inside">
+                        <li><code className="bg-muted px-2 py-1 rounded">QUICKBOOKS_CLIENT_ID</code> - Your QuickBooks app client ID</li>
+                        <li><code className="bg-muted px-2 py-1 rounded">QUICKBOOKS_CLIENT_SECRET</code> - Your QuickBooks app client secret</li>
+                        <li><code className="bg-muted px-2 py-1 rounded">QUICKBOOKS_REDIRECT_URI</code> - OAuth callback URL (optional)</li>
+                        <li><code className="bg-muted px-2 py-1 rounded">QUICKBOOKS_ENVIRONMENT</code> - sandbox or production (optional, defaults to sandbox)</li>
+                      </ul>
+                      <Button
+                        onClick={() => {
+                          if (quickbooksAuthUrl?.url) {
+                            window.location.href = quickbooksAuthUrl.url;
+                          } else {
+                            toast.error(quickbooksAuthUrl?.error || "QuickBooks OAuth not configured");
+                          }
+                        }}
+                      >
+                        <Calculator className="w-4 h-4 mr-2" />
+                        Connect QuickBooks
+                      </Button>
+                    </div>
+
+                    <div className="p-4 bg-blue-500/5 border border-blue-500/20 rounded-lg">
+                      <h4 className="font-medium text-blue-600 dark:text-blue-400 mb-2">
+                        What you can do with QuickBooks:
+                      </h4>
+                      <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
+                        <li>Sync customers and vendors automatically</li>
+                        <li>Create and manage invoices</li>
+                        <li>Track payments and transactions</li>
+                        <li>Sync chart of accounts</li>
+                        <li>Generate financial reports</li>
+                        <li>Reconcile inventory and purchases</li>
+                      </ul>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div className="p-4 border rounded-lg">
+                        <h4 className="font-medium mb-2">Connection Info</h4>
+                        <div className="space-y-2 text-sm">
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Company ID:</span>
+                            <span className="font-medium">{status.quickbooks.realmId}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Status:</span>
+                            <Badge className="bg-green-500/10 text-green-500 border-green-500/20">Active</Badge>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="p-4 border rounded-lg">
+                        <h4 className="font-medium mb-2">Quick Actions</h4>
+                        <div className="space-y-2">
+                          <Button variant="outline" size="sm" className="w-full justify-start" disabled>
+                            <RefreshCw className="w-4 h-4 mr-2" />
+                            Sync Customers
+                          </Button>
+                          <Button variant="outline" size="sm" className="w-full justify-start" disabled>
+                            <RefreshCw className="w-4 h-4 mr-2" />
+                            Sync Invoices
+                          </Button>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-2">
+                          Sync features coming soon
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="p-4 bg-muted/50 rounded-lg">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h4 className="font-medium">Disconnect QuickBooks</h4>
+                          <p className="text-sm text-muted-foreground">
+                            Remove QuickBooks integration from your account
+                          </p>
+                        </div>
+                        <Button 
+                          variant="outline" 
+                          size="sm"
+                          onClick={() => quickbooksDisconnectMutation.mutate()}
+                        >
                           Disconnect
                         </Button>
                       </div>

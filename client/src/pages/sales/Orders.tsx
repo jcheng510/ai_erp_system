@@ -32,6 +32,7 @@ import {
 import { ShoppingCart, Plus, Search, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
+import { Link } from "wouter";
 
 function formatCurrency(value: string | null | undefined) {
   const num = parseFloat(value || "0");
@@ -254,8 +255,12 @@ export default function Orders() {
               </TableHeader>
               <TableBody>
                 {filteredOrders.map((order) => (
-                  <TableRow key={order.id}>
-                    <TableCell className="font-mono">{order.orderNumber}</TableCell>
+                  <TableRow key={order.id} className="cursor-pointer hover:bg-muted/50">
+                    <TableCell className="font-mono">
+                      <Link href={`/sales/orders/${order.id}`}>
+                        <span className="hover:underline">{order.orderNumber}</span>
+                      </Link>
+                    </TableCell>
                     <TableCell className="font-medium">Customer #{order.customerId || "-"}</TableCell>
                     <TableCell>
                       {order.orderDate
