@@ -169,6 +169,16 @@ export const vendors = mysqlTable("vendors", {
   defaultLeadTimeDays: int("defaultLeadTimeDays").default(14), // Default lead time for this vendor
   minOrderAmount: decimal("minOrderAmount", { precision: 12, scale: 2 }), // Minimum order amount
   shippingMethod: varchar("shippingMethod", { length: 64 }), // Preferred shipping method
+  
+  // Phone/Call capabilities for AI-powered communication
+  phoneExtension: varchar("phoneExtension", { length: 20 }),
+  mobilePhone: varchar("mobilePhone", { length: 32 }),
+  faxNumber: varchar("faxNumber", { length: 32 }),
+  preferredContactMethod: mysqlEnum("preferredContactMethod", ["email", "phone", "both"]).default("email"),
+  callAvailability: text("callAvailability"), // JSON with availability schedule
+  voiceCapable: boolean("voiceCapable").default(false), // Can handle AI voice calls
+  voicePreferences: text("voicePreferences"), // JSON with voice call preferences
+  
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -3548,6 +3558,8 @@ export const supplyChainWorkflows = mysqlTable("supplyChainWorkflows", {
     "invoice_matching",
     "payment_processing",
     "exception_handling",
+    "vendor_quote_procurement",
+    "vendor_quote_analysis",
     "custom"
   ]).notNull(),
 
