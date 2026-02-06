@@ -151,6 +151,79 @@ async function startServer() {
     }
   });
   
+  // ============================================
+  // FIREFLIES WEBHOOK ENDPOINT
+  // ============================================
+  app.post('/webhooks/fireflies', express.json(), async (req, res) => {
+    try {
+      const event = req.body;
+      console.log('[Fireflies Webhook] Received event:', event?.event_type || 'unknown');
+
+      // Fireflies sends webhooks when transcription is completed
+      if (event?.event_type === 'Transcription completed' && event?.data?.transcript_id) {
+        const { getIntegrationConfigs, getFirefliesMeetingByFirefliesId, createFirefliesMeeting } = await import('../db');
+        const { getTranscript, extractParticipants, parseActionItems } = await import('./fireflies');
+
+        // Get Fireflies config
+        const configs = await getIntegrationConfigs();
+        const firefliesConfig = configs.find((c: any) => c.type === 'fireflies' && c.isActive);
+
+        if (!firefliesConfig || !firefliesConfig.credentials) {
+          console.warn('[Fireflies Webhook] No active Fireflies configuration found');
+          return res.status(200).json({ received: true, processed: false, reason: 'not_configured' });
+        }
+
+        const apiKey = (firefliesConfig.credentials as any).apiKey;
+        const transcriptId = event.data.transcript_id;
+
+        // Check if already synced
+        const existing = await getFirefliesMeetingByFirefliesId(transcriptId);
+        if (existing) {
+          console.log(`[Fireflies Webhook] Transcript ${transcriptId} already synced`);
+          return res.status(200).json({ received: true, processed: false, reason: 'already_synced' });
+        }
+
+        // Fetch full transcript from Fireflies API
+        const transcript = await getTranscript(apiKey, transcriptId);
+        if (!transcript) {
+          console.warn(`[Fireflies Webhook] Could not fetch transcript ${transcriptId}`);
+          return res.status(200).json({ received: true, processed: false, reason: 'fetch_failed' });
+        }
+
+        const participants = extractParticipants(transcript);
+        const actionItems = transcript.summary?.action_items
+          ? parseActionItems(transcript.summary.action_items)
+          : [];
+
+        await createFirefliesMeeting({
+          firefliesId: transcript.id,
+          title: transcript.title || 'Untitled Meeting',
+          date: transcript.date ? new Date(transcript.date) : undefined,
+          duration: transcript.duration || undefined,
+          organizerEmail: transcript.organizer_email || undefined,
+          participants: JSON.stringify(participants),
+          summary: transcript.summary?.overview || undefined,
+          shortSummary: transcript.summary?.shorthand_bullet?.join('\n') || undefined,
+          keywords: transcript.summary?.keywords ? JSON.stringify(transcript.summary.keywords) : undefined,
+          actionItems: JSON.stringify(actionItems),
+          transcriptUrl: transcript.transcript_url || undefined,
+          calendarEventId: transcript.calendar_id || undefined,
+          recordingUrl: transcript.audio_url || undefined,
+          processingStatus: 'pending',
+        });
+
+        console.log(`[Fireflies Webhook] Synced transcript: ${transcript.title}`);
+        return res.status(200).json({ received: true, processed: true });
+      }
+
+      // Acknowledge other event types
+      res.status(200).json({ received: true });
+    } catch (error) {
+      console.error('[Fireflies Webhook] Error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // Google OAuth callback for Drive/Sheets integration
   app.get('/api/google/callback', async (req, res) => {
     const { code, state } = req.query;
