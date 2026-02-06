@@ -803,7 +803,7 @@ export const notificationPreferences = mysqlTable("notification_preferences", {
 export const integrationConfigs = mysqlTable("integration_configs", {
   id: int("id").autoincrement().primaryKey(),
   companyId: int("companyId"),
-  type: mysqlEnum("type", ["quickbooks", "shopify", "stripe", "slack", "email", "webhook"]).notNull(),
+  type: mysqlEnum("type", ["quickbooks", "shopify", "stripe", "slack", "email", "webhook", "fireflies"]).notNull(),
   name: varchar("name", { length: 255 }).notNull(),
   config: json("config"),
   credentials: json("credentials"),
@@ -3199,7 +3199,7 @@ export const crmContacts = mysqlTable("crm_contacts", {
 
   // CRM classification
   contactType: mysqlEnum("contactType", ["lead", "prospect", "customer", "partner", "investor", "donor", "vendor", "other"]).default("lead").notNull(),
-  source: mysqlEnum("source", ["iphone_bump", "whatsapp", "linkedin_scan", "business_card", "website", "referral", "event", "cold_outreach", "import", "manual"]).default("manual").notNull(),
+  source: mysqlEnum("source", ["iphone_bump", "whatsapp", "linkedin_scan", "business_card", "website", "referral", "event", "cold_outreach", "import", "manual", "fireflies"]).default("manual").notNull(),
   status: mysqlEnum("status", ["active", "inactive", "unsubscribed", "bounced"]).default("active").notNull(),
 
   // Sales/Fundraising context
@@ -4229,3 +4229,104 @@ export const workflowNotifications = mysqlTable("workflowNotifications", {
 
 export type WorkflowNotification = typeof workflowNotifications.$inferSelect;
 export type InsertWorkflowNotification = typeof workflowNotifications.$inferInsert;
+
+// ============================================
+// FIREFLIES.AI INTEGRATION
+// ============================================
+
+export const firefliesMeetings = mysqlTable("fireflies_meetings", {
+  id: int("id").autoincrement().primaryKey(),
+  firefliesId: varchar("firefliesId", { length: 128 }).notNull().unique(),
+  title: varchar("title", { length: 500 }).notNull(),
+  date: timestamp("date"),
+  duration: int("duration"), // seconds
+  organizerEmail: varchar("organizerEmail", { length: 320 }),
+  organizerName: varchar("organizerName", { length: 255 }),
+
+  // Participants
+  participants: text("participants"), // JSON array of { name, email }
+
+  // Content
+  summary: text("summary"),
+  shortSummary: text("shortSummary"),
+  keywords: text("keywords"), // JSON array of strings
+  topics: text("topics"), // JSON array of strings
+  sentimentAnalysis: text("sentimentAnalysis"), // JSON object
+
+  // Transcript
+  transcriptUrl: text("transcriptUrl"),
+  transcriptText: text("transcriptText"),
+
+  // Action items extracted by Fireflies
+  actionItems: text("actionItems"), // JSON array of { text, assignee, dueDate }
+
+  // Processing status
+  processingStatus: mysqlEnum("processingStatus", [
+    "pending", "contacts_created", "tasks_created", "project_created", "fully_processed", "skipped", "error"
+  ]).default("pending").notNull(),
+  processedAt: timestamp("processedAt"),
+  processedBy: int("processedBy"),
+  processingNotes: text("processingNotes"),
+
+  // Auto-generation settings (what was auto-created from this meeting)
+  autoCreatedProjectId: int("autoCreatedProjectId"),
+  autoCreatedTaskCount: int("autoCreatedTaskCount").default(0),
+  autoCreatedContactCount: int("autoCreatedContactCount").default(0),
+
+  // Metadata
+  meetingSource: varchar("meetingSource", { length: 64 }), // zoom, google_meet, teams, etc.
+  calendarEventId: varchar("calendarEventId", { length: 255 }),
+  recordingUrl: text("recordingUrl"),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type FirefliesMeeting = typeof firefliesMeetings.$inferSelect;
+export type InsertFirefliesMeeting = typeof firefliesMeetings.$inferInsert;
+
+// Track individual action items extracted from Fireflies and their mapping to project tasks
+export const firefliesActionItems = mysqlTable("fireflies_action_items", {
+  id: int("id").autoincrement().primaryKey(),
+  meetingId: int("meetingId").notNull(), // FK to firefliesMeetings
+  firefliesMeetingId: varchar("firefliesMeetingId", { length: 128 }).notNull(),
+
+  // Action item content
+  text: text("text").notNull(),
+  assignee: varchar("assignee", { length: 255 }),
+  assigneeEmail: varchar("assigneeEmail", { length: 320 }),
+  dueDate: timestamp("dueDate"),
+
+  // Mapping to ERP entities
+  projectTaskId: int("projectTaskId"), // FK to project_tasks if converted
+  crmContactId: int("crmContactId"), // FK to crm_contacts for assigned person
+
+  // Status
+  status: mysqlEnum("status", ["pending", "converted_to_task", "skipped", "completed"]).default("pending").notNull(),
+  convertedAt: timestamp("convertedAt"),
+  convertedBy: int("convertedBy"),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type FirefliesActionItem = typeof firefliesActionItems.$inferSelect;
+export type InsertFirefliesActionItem = typeof firefliesActionItems.$inferInsert;
+
+// Tracks contacts discovered from Fireflies meeting participants
+export const firefliesContactMappings = mysqlTable("fireflies_contact_mappings", {
+  id: int("id").autoincrement().primaryKey(),
+  meetingId: int("meetingId").notNull(), // FK to firefliesMeetings
+  participantEmail: varchar("participantEmail", { length: 320 }).notNull(),
+  participantName: varchar("participantName", { length: 255 }),
+
+  // Mapping
+  crmContactId: int("crmContactId"), // FK to crm_contacts if matched/created
+  isNewContact: boolean("isNewContact").default(false),
+  wasAutoCreated: boolean("wasAutoCreated").default(false),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type FirefliesContactMapping = typeof firefliesContactMappings.$inferSelect;
+export type InsertFirefliesContactMapping = typeof firefliesContactMappings.$inferInsert;

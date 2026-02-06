@@ -67,6 +67,7 @@ import {
   Target,
   MessageSquare,
   Heart,
+  Mic,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -142,6 +143,7 @@ const menuGroups = [
     items: [
       { icon: Users, label: "Team", path: "/settings/team" },
       { icon: Plug, label: "Integrations", path: "/settings/integrations" },
+      { icon: Mic, label: "Fireflies", path: "/settings/fireflies" },
       { icon: FileSpreadsheet, label: "Import Data", path: "/import" },
       { icon: Settings, label: "Settings", path: "/settings" },
     ],

@@ -87,7 +87,10 @@ import {
   crmContacts, crmTags, crmContactTags, whatsappMessages, crmInteractions,
   crmPipelines, crmDeals, contactCaptures, crmEmailCampaigns, crmCampaignRecipients,
   InsertCrmContact, InsertCrmTag, InsertWhatsappMessage, InsertCrmInteraction,
-  InsertCrmPipeline, InsertCrmDeal, InsertContactCapture, InsertCrmEmailCampaign, InsertCrmCampaignRecipient
+  InsertCrmPipeline, InsertCrmDeal, InsertContactCapture, InsertCrmEmailCampaign, InsertCrmCampaignRecipient,
+  // Fireflies integration
+  firefliesMeetings, firefliesActionItems, firefliesContactMappings,
+  InsertFirefliesMeeting, InsertFirefliesActionItem, InsertFirefliesContactMapping
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -8024,4 +8027,116 @@ export async function checkAndTriggerLowStockPurchaseOrder(
     purchaseOrderId: poResult.id,
     reason: `Auto-generated PO ${poNumber} for ${orderQty} units`
   };
+}
+
+// ============================================
+// FIREFLIES INTEGRATION
+// ============================================
+
+export async function getFirefliesMeetings(filters?: {
+  processingStatus?: string;
+  limit?: number;
+  offset?: number;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (filters?.processingStatus) {
+    conditions.push(eq(firefliesMeetings.processingStatus, filters.processingStatus as any));
+  }
+
+  let query = db.select().from(firefliesMeetings);
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as any;
+  }
+
+  return query
+    .orderBy(desc(firefliesMeetings.date))
+    .limit(filters?.limit || 50)
+    .offset(filters?.offset || 0);
+}
+
+export async function getFirefliesMeetingById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(firefliesMeetings).where(eq(firefliesMeetings.id, id)).limit(1);
+  return result[0];
+}
+
+export async function getFirefliesMeetingByFirefliesId(firefliesId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(firefliesMeetings).where(eq(firefliesMeetings.firefliesId, firefliesId)).limit(1);
+  return result[0];
+}
+
+export async function createFirefliesMeeting(data: InsertFirefliesMeeting) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(firefliesMeetings).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateFirefliesMeeting(id: number, data: Partial<InsertFirefliesMeeting>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(firefliesMeetings).set(data).where(eq(firefliesMeetings.id, id));
+}
+
+export async function getFirefliesActionItems(meetingId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(firefliesActionItems)
+    .where(eq(firefliesActionItems.meetingId, meetingId))
+    .orderBy(firefliesActionItems.id);
+}
+
+export async function getFirefliesActionItemById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(firefliesActionItems).where(eq(firefliesActionItems.id, id)).limit(1);
+  return result[0];
+}
+
+export async function createFirefliesActionItem(data: InsertFirefliesActionItem) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(firefliesActionItems).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateFirefliesActionItem(id: number, data: Partial<InsertFirefliesActionItem>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(firefliesActionItems).set(data).where(eq(firefliesActionItems.id, id));
+}
+
+export async function getFirefliesContactMappings(meetingId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(firefliesContactMappings)
+    .where(eq(firefliesContactMappings.meetingId, meetingId))
+    .orderBy(firefliesContactMappings.id);
+}
+
+export async function createFirefliesContactMapping(data: InsertFirefliesContactMapping) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(firefliesContactMappings).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getFirefliesMeetingStats() {
+  const db = await getDb();
+  if (!db) return { total: 0, pending: 0, processed: 0, contactsCreated: 0, tasksCreated: 0 };
+
+  const allMeetings = await db.select().from(firefliesMeetings);
+  const total = allMeetings.length;
+  const pending = allMeetings.filter(m => m.processingStatus === 'pending').length;
+  const processed = allMeetings.filter(m => ['fully_processed', 'contacts_created', 'tasks_created', 'project_created'].includes(m.processingStatus)).length;
+  const contactsCreated = allMeetings.reduce((sum, m) => sum + (m.autoCreatedContactCount || 0), 0);
+  const tasksCreated = allMeetings.reduce((sum, m) => sum + (m.autoCreatedTaskCount || 0), 0);
+
+  return { total, pending, processed, contactsCreated, tasksCreated };
 }
