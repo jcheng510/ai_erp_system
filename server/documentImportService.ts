@@ -687,13 +687,20 @@ If document type is unknown, return all as null.`;
     const parsed = JSON.parse(jsonText);
     console.log("[DocumentImport] Parsed result:", JSON.stringify(parsed, null, 2).substring(0, 1000));
     
+    // Normalize confidence to 0-1 range (LLM may return 0-100 or 0-1)
+    const rawConfidence = parsed.confidence;
+    const confidence = typeof rawConfidence === 'number'
+      ? (rawConfidence > 1 ? rawConfidence / 100 : rawConfidence)
+      : 0;
+
+    // Inject top-level confidence into the document-specific object
     return {
       success: true,
       documentType: parsed.documentType,
-      purchaseOrder: parsed.purchaseOrder,
-      vendorInvoice: parsed.vendorInvoice,
-      freightInvoice: parsed.freightInvoice,
-      customsDocument: parsed.customsDocument,
+      purchaseOrder: parsed.purchaseOrder ? { ...parsed.purchaseOrder, confidence } : undefined,
+      vendorInvoice: parsed.vendorInvoice ? { ...parsed.vendorInvoice, confidence } : undefined,
+      freightInvoice: parsed.freightInvoice ? { ...parsed.freightInvoice, confidence } : undefined,
+      customsDocument: parsed.customsDocument ? { ...parsed.customsDocument, confidence } : undefined,
       rawText: `Document parsed from: ${fileUrl}`
     };
   } catch (error) {
