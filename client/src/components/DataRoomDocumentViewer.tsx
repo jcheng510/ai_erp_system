@@ -24,6 +24,9 @@ import {
 // Set up PDF.js worker
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`;
 
+// Throttle interval for mouse movement tracking (in milliseconds)
+const MOUSE_MOVE_THROTTLE_MS = 100;
+
 interface DocumentViewerProps {
   documentId: number;
   documentUrl: string;
@@ -142,7 +145,7 @@ export default function DataRoomDocumentViewer({
     if (!currentPageTracking.current) return;
     
     const now = Date.now();
-    if (now - lastMouseMoveTime.current >= 100) {
+    if (now - lastMouseMoveTime.current >= MOUSE_MOVE_THROTTLE_MS) {
       currentPageTracking.current.mouseMovements++;
       lastMouseMoveTime.current = now;
     }
