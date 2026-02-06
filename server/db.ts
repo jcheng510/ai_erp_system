@@ -87,7 +87,10 @@ import {
   crmContacts, crmTags, crmContactTags, whatsappMessages, crmInteractions,
   crmPipelines, crmDeals, contactCaptures, crmEmailCampaigns, crmCampaignRecipients,
   InsertCrmContact, InsertCrmTag, InsertWhatsappMessage, InsertCrmInteraction,
-  InsertCrmPipeline, InsertCrmDeal, InsertContactCapture, InsertCrmEmailCampaign, InsertCrmCampaignRecipient
+  InsertCrmPipeline, InsertCrmDeal, InsertContactCapture, InsertCrmEmailCampaign, InsertCrmCampaignRecipient,
+  // Grant tracking
+  grantApplications, grantChecklistItems,
+  InsertGrantApplication, InsertGrantChecklistItem,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -8006,4 +8009,113 @@ export async function checkAndTriggerLowStockPurchaseOrder(
     purchaseOrderId: poResult.id,
     reason: `Auto-generated PO ${poNumber} for ${orderQty} units`
   };
+}
+
+// ============================================
+// GRANT APPLICATION TRACKING
+// ============================================
+
+export async function getGrantApplications(filters?: { status?: string; category?: string; assignedTo?: number; search?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (filters?.status) conditions.push(eq(grantApplications.status, filters.status as any));
+  if (filters?.category) conditions.push(eq(grantApplications.category, filters.category as any));
+  if (filters?.assignedTo) conditions.push(eq(grantApplications.assignedTo, filters.assignedTo));
+  if (filters?.search) {
+    conditions.push(or(
+      like(grantApplications.title, `%${filters.search}%`),
+      like(grantApplications.funderName, `%${filters.search}%`),
+      like(grantApplications.grantNumber, `%${filters.search}%`),
+    ));
+  }
+
+  if (conditions.length > 0) {
+    return db.select().from(grantApplications).where(and(...conditions)).orderBy(desc(grantApplications.createdAt));
+  }
+  return db.select().from(grantApplications).orderBy(desc(grantApplications.createdAt));
+}
+
+export async function getGrantApplicationById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(grantApplications).where(eq(grantApplications.id, id)).limit(1);
+  return result[0];
+}
+
+export async function getGrantWithChecklist(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+
+  const grant = await getGrantApplicationById(id);
+  if (!grant) return undefined;
+
+  const checklist = await db.select().from(grantChecklistItems)
+    .where(eq(grantChecklistItems.grantId, id))
+    .orderBy(grantChecklistItems.sortOrder);
+  return { ...grant, checklist };
+}
+
+export async function createGrantApplication(data: InsertGrantApplication) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(grantApplications).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateGrantApplication(id: number, data: Partial<InsertGrantApplication>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(grantApplications).set(data).where(eq(grantApplications.id, id));
+}
+
+export async function deleteGrantApplication(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(grantChecklistItems).where(eq(grantChecklistItems.grantId, id));
+  await db.delete(grantApplications).where(eq(grantApplications.id, id));
+}
+
+// Grant checklist items
+
+export async function getGrantChecklistItems(grantId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(grantChecklistItems)
+    .where(eq(grantChecklistItems.grantId, grantId))
+    .orderBy(grantChecklistItems.sortOrder);
+}
+
+export async function createGrantChecklistItem(data: InsertGrantChecklistItem) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(grantChecklistItems).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateGrantChecklistItem(id: number, data: Partial<InsertGrantChecklistItem>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(grantChecklistItems).set(data).where(eq(grantChecklistItems.id, id));
+}
+
+export async function deleteGrantChecklistItem(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(grantChecklistItems).where(eq(grantChecklistItems.id, id));
+}
+
+export async function toggleGrantChecklistItem(id: number, userId: number) {
+  const db = await getDb();
+  if (!db) return;
+  const items = await db.select().from(grantChecklistItems).where(eq(grantChecklistItems.id, id)).limit(1);
+  if (!items[0]) return;
+
+  const isCompleted = !items[0].isCompleted;
+  await db.update(grantChecklistItems).set({
+    isCompleted,
+    completedAt: isCompleted ? new Date() : null,
+    completedBy: isCompleted ? userId : null,
+  }).where(eq(grantChecklistItems.id, id));
 }

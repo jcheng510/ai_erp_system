@@ -4229,3 +4229,125 @@ export const workflowNotifications = mysqlTable("workflowNotifications", {
 
 export type WorkflowNotification = typeof workflowNotifications.$inferSelect;
 export type InsertWorkflowNotification = typeof workflowNotifications.$inferInsert;
+
+// ============================================
+// GRANT APPLICATION TRACKING
+// ============================================
+
+export const grantApplications = mysqlTable("grantApplications", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+
+  // Grant identification
+  grantNumber: varchar("grantNumber", { length: 50 }).notNull(),
+  title: varchar("title", { length: 500 }).notNull(),
+  description: text("description"),
+
+  // Funder / grantor info
+  funderName: varchar("funderName", { length: 255 }).notNull(),
+  funderContactName: varchar("funderContactName", { length: 255 }),
+  funderContactEmail: varchar("funderContactEmail", { length: 320 }),
+  funderWebsite: varchar("funderWebsite", { length: 512 }),
+  programName: varchar("programName", { length: 255 }),
+
+  // Grant classification
+  category: mysqlEnum("category", [
+    "federal",
+    "state",
+    "local",
+    "foundation",
+    "corporate",
+    "nonprofit",
+    "research",
+    "other",
+  ]).default("other").notNull(),
+
+  // Financial
+  requestedAmount: decimal("requestedAmount", { precision: 15, scale: 2 }),
+  awardedAmount: decimal("awardedAmount", { precision: 15, scale: 2 }),
+  matchRequired: boolean("matchRequired").default(false),
+  matchAmount: decimal("matchAmount", { precision: 15, scale: 2 }),
+  currency: varchar("currency", { length: 3 }).default("USD"),
+
+  // Timeline
+  openDate: timestamp("openDate"),
+  deadlineDate: timestamp("deadlineDate"),
+  submittedDate: timestamp("submittedDate"),
+  awardDate: timestamp("awardDate"),
+  startDate: timestamp("startDate"),
+  endDate: timestamp("endDate"),
+  reportingDeadline: timestamp("reportingDeadline"),
+
+  // Status tracking
+  status: mysqlEnum("status", [
+    "researching",
+    "drafting",
+    "internal_review",
+    "submitted",
+    "under_review",
+    "awarded",
+    "declined",
+    "withdrawn",
+    "completed",
+  ]).default("researching").notNull(),
+
+  priority: mysqlEnum("priority", ["low", "medium", "high", "urgent"]).default("medium"),
+
+  // Assignment
+  assignedTo: int("assignedTo"),
+  reviewedBy: int("reviewedBy"),
+
+  // Supporting info
+  applicationUrl: varchar("applicationUrl", { length: 512 }),
+  portalUsername: varchar("portalUsername", { length: 255 }),
+  notes: text("notes"),
+  internalNotes: text("internalNotes"),
+  tags: text("tags"), // JSON array
+
+  // Audit
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type GrantApplication = typeof grantApplications.$inferSelect;
+export type InsertGrantApplication = typeof grantApplications.$inferInsert;
+
+// Grant checklist items - track required steps for each application
+export const grantChecklistItems = mysqlTable("grantChecklistItems", {
+  id: int("id").autoincrement().primaryKey(),
+  grantId: int("grantId").notNull(),
+
+  // Item info
+  title: varchar("title", { length: 500 }).notNull(),
+  description: text("description"),
+  sortOrder: int("sortOrder").default(0).notNull(),
+
+  // Status
+  isCompleted: boolean("isCompleted").default(false).notNull(),
+  completedAt: timestamp("completedAt"),
+  completedBy: int("completedBy"),
+
+  // Deadline
+  dueDate: timestamp("dueDate"),
+
+  // Assignment
+  assignedTo: int("assignedTo"),
+
+  // Category for grouping
+  category: mysqlEnum("category", [
+    "documentation",
+    "financial",
+    "narrative",
+    "review",
+    "submission",
+    "reporting",
+    "other",
+  ]).default("other").notNull(),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type GrantChecklistItem = typeof grantChecklistItems.$inferSelect;
+export type InsertGrantChecklistItem = typeof grantChecklistItems.$inferInsert;

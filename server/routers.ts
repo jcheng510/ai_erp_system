@@ -11506,6 +11506,164 @@ Ask if they received the original request and if they can provide a quote.`;
   // ============================================
   // CRM MODULE - Contacts, Messaging & Tracking
   // ============================================
+  // ============================================
+  // GRANT APPLICATION TRACKING
+  // ============================================
+  grants: router({
+    list: protectedProcedure
+      .input(z.object({
+        status: z.string().optional(),
+        category: z.string().optional(),
+        assignedTo: z.number().optional(),
+        search: z.string().optional(),
+      }).optional())
+      .query(({ input }) => db.getGrantApplications(input)),
+
+    get: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(({ input }) => db.getGrantWithChecklist(input.id)),
+
+    create: protectedProcedure
+      .input(z.object({
+        title: z.string().min(1),
+        description: z.string().optional(),
+        funderName: z.string().min(1),
+        funderContactName: z.string().optional(),
+        funderContactEmail: z.string().optional(),
+        funderWebsite: z.string().optional(),
+        programName: z.string().optional(),
+        category: z.enum(["federal", "state", "local", "foundation", "corporate", "nonprofit", "research", "other"]).optional(),
+        requestedAmount: z.string().optional(),
+        matchRequired: z.boolean().optional(),
+        matchAmount: z.string().optional(),
+        openDate: z.date().optional(),
+        deadlineDate: z.date().optional(),
+        startDate: z.date().optional(),
+        endDate: z.date().optional(),
+        status: z.enum(["researching", "drafting", "internal_review", "submitted", "under_review", "awarded", "declined", "withdrawn", "completed"]).optional(),
+        priority: z.enum(["low", "medium", "high", "urgent"]).optional(),
+        assignedTo: z.number().optional(),
+        applicationUrl: z.string().optional(),
+        notes: z.string().optional(),
+        internalNotes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const grantNumber = generateNumber('GRT');
+        const result = await db.createGrantApplication({
+          ...input,
+          grantNumber,
+          createdBy: ctx.user.id,
+        });
+        await createAuditLog(ctx.user.id, 'create', 'grant_application', result.id, grantNumber);
+        return result;
+      }),
+
+    update: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        title: z.string().optional(),
+        description: z.string().optional(),
+        funderName: z.string().optional(),
+        funderContactName: z.string().optional(),
+        funderContactEmail: z.string().optional(),
+        funderWebsite: z.string().optional(),
+        programName: z.string().optional(),
+        category: z.enum(["federal", "state", "local", "foundation", "corporate", "nonprofit", "research", "other"]).optional(),
+        requestedAmount: z.string().optional(),
+        awardedAmount: z.string().optional(),
+        matchRequired: z.boolean().optional(),
+        matchAmount: z.string().optional(),
+        openDate: z.date().optional(),
+        deadlineDate: z.date().optional(),
+        submittedDate: z.date().optional(),
+        awardDate: z.date().optional(),
+        startDate: z.date().optional(),
+        endDate: z.date().optional(),
+        reportingDeadline: z.date().optional(),
+        status: z.enum(["researching", "drafting", "internal_review", "submitted", "under_review", "awarded", "declined", "withdrawn", "completed"]).optional(),
+        priority: z.enum(["low", "medium", "high", "urgent"]).optional(),
+        assignedTo: z.number().optional(),
+        reviewedBy: z.number().optional(),
+        applicationUrl: z.string().optional(),
+        portalUsername: z.string().optional(),
+        notes: z.string().optional(),
+        internalNotes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { id, ...data } = input;
+        const existing = await db.getGrantApplicationById(id);
+        await db.updateGrantApplication(id, data);
+        await createAuditLog(ctx.user.id, 'update', 'grant_application', id, existing?.grantNumber, existing, data);
+        return { success: true };
+      }),
+
+    delete: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const existing = await db.getGrantApplicationById(input.id);
+        await db.deleteGrantApplication(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'grant_application', input.id, existing?.grantNumber);
+        return { success: true };
+      }),
+
+    // --- CHECKLIST ---
+    checklist: router({
+      list: protectedProcedure
+        .input(z.object({ grantId: z.number() }))
+        .query(({ input }) => db.getGrantChecklistItems(input.grantId)),
+
+      create: protectedProcedure
+        .input(z.object({
+          grantId: z.number(),
+          title: z.string().min(1),
+          description: z.string().optional(),
+          sortOrder: z.number().optional(),
+          dueDate: z.date().optional(),
+          assignedTo: z.number().optional(),
+          category: z.enum(["documentation", "financial", "narrative", "review", "submission", "reporting", "other"]).optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createGrantChecklistItem(input);
+          await createAuditLog(ctx.user.id, 'create', 'grant_checklist_item', result.id, input.title);
+          return result;
+        }),
+
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          title: z.string().optional(),
+          description: z.string().optional(),
+          sortOrder: z.number().optional(),
+          dueDate: z.date().optional(),
+          assignedTo: z.number().optional(),
+          category: z.enum(["documentation", "financial", "narrative", "review", "submission", "reporting", "other"]).optional(),
+          isCompleted: z.boolean().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateGrantChecklistItem(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'grant_checklist_item', id);
+          return { success: true };
+        }),
+
+      toggle: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.toggleGrantChecklistItem(input.id, ctx.user.id);
+          await createAuditLog(ctx.user.id, 'update', 'grant_checklist_item', input.id);
+          return { success: true };
+        }),
+
+      delete: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteGrantChecklistItem(input.id);
+          await createAuditLog(ctx.user.id, 'delete', 'grant_checklist_item', input.id);
+          return { success: true };
+        }),
+    }),
+  }),
+
   crm: router({
     // --- CONTACTS ---
     contacts: router({

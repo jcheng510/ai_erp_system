@@ -85,6 +85,9 @@ import Integrations from "./pages/settings/Integrations";
 import NotificationSettings from "./pages/settings/Notifications";
 import TransactionalEmails from "./pages/settings/TransactionalEmails";
 
+// Grants
+import Grants from "./pages/finance/Grants";
+
 // Projects
 import Projects from "./pages/projects/Projects";
 
@@ -138,6 +141,7 @@ function Router() {
         <Route path="/finance/invoices" component={Invoices} />
         <Route path="/finance/payments" component={Payments} />
         <Route path="/finance/transactions" component={Transactions} />
+        <Route path="/finance/grants" component={Grants} />
 
         {/* Sales */}
         <Route path="/sales/orders/:id" component={OrderDetail} />
