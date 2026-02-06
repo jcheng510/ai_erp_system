@@ -133,7 +133,12 @@ export default function AutonomousDashboard() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Agent Status</CardTitle>
-            <div className={`h-3 w-3 rounded-full ${isRunning ? "bg-green-500 animate-pulse" : "bg-red-500"}`} />
+            <span className="relative flex h-3 w-3">
+              {isRunning && (
+                <span className="absolute inline-flex h-full w-full rounded-full bg-green-500 opacity-75 animate-ping" />
+              )}
+              <span className={`relative inline-flex h-3 w-3 rounded-full ${isRunning ? "bg-green-500" : "bg-red-500"}`} />
+            </span>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{isRunning ? "Running" : "Stopped"}</div>

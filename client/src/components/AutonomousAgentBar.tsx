@@ -67,10 +67,9 @@ export function AutonomousAgentBar() {
     }
   };
 
-  // Don't show if query failed (API not available yet)
-  if (statusQuery.error) {
-    return null;
-  }
+  // Show disconnected state instead of hiding the bar entirely on error,
+  // so the bar doesn't flash in and out on transient network failures.
+  const hasError = !!statusQuery.error;
 
   return (
     <div className="flex items-center justify-between h-9 px-4 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 text-white border-b border-slate-700/50 text-xs">
@@ -84,13 +83,18 @@ export function AutonomousAgentBar() {
 
         {/* Status indicator */}
         <div className="flex items-center gap-1.5">
-          <span
-            className={`h-2 w-2 rounded-full ${
-              isRunning ? "bg-green-400 animate-pulse" : "bg-red-400"
-            }`}
-          />
-          <span className={isRunning ? "text-green-400" : "text-red-400"}>
-            {isRunning ? "Running" : "Stopped"}
+          <span className="relative flex h-2 w-2">
+            {isRunning && !hasError && (
+              <span className="absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75 animate-ping" />
+            )}
+            <span
+              className={`relative inline-flex h-2 w-2 rounded-full ${
+                hasError ? "bg-slate-400" : isRunning ? "bg-green-400" : "bg-red-400"
+              }`}
+            />
+          </span>
+          <span className={hasError ? "text-slate-400" : isRunning ? "text-green-400" : "text-red-400"}>
+            {hasError ? "Disconnected" : isRunning ? "Running" : "Stopped"}
           </span>
         </div>
 
