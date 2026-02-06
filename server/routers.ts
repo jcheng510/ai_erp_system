@@ -10616,9 +10616,14 @@ Ask if they received the original request and if they can provide a quote.`;
 
       // Check if an email has access (for public access flow)
       checkAccess: publicProcedure
-        .input(z.object({ dataRoomId: z.number(), email: z.string() }))
+        .input(z.object({ dataRoomId: z.number(), email: z.string().email() }))
         .query(async ({ input }) => {
-          return db.checkEmailAccess(input.dataRoomId, input.email);
+          const result = await db.checkEmailAccess(input.dataRoomId, input.email);
+          if (!result) {
+            return { allowed: false, permissions: undefined };
+          }
+          const { allowed, permissions } = result as { allowed: boolean; permissions?: unknown };
+          return { allowed, permissions };
         }),
     }),
 
