@@ -574,7 +574,7 @@ function CreateFreightRfqDialog({
       cargoType: formData.cargoType,
       totalWeight: formData.totalWeight || undefined,
       totalVolume: formData.totalVolume || undefined,
-      numberOfPackages: formData.numberOfPackages ? parseInt(formData.numberOfPackages) : undefined,
+      numberOfPackages: formData.numberOfPackages ? parseInt(formData.numberOfPackages, 10) : undefined,
       preferredMode: formData.preferredMode,
       requiredDeliveryDate: formData.requiredDeliveryDate ? new Date(formData.requiredDeliveryDate) : undefined,
       notes: formData.notes || undefined,
@@ -777,7 +777,7 @@ function CreateCustomsClearanceDialog({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     onSubmit({
-      shipmentId: formData.shipmentId ? parseInt(formData.shipmentId) : undefined,
+      shipmentId: formData.shipmentId ? parseInt(formData.shipmentId, 10) : undefined,
       type: formData.type,
       customsOffice: formData.customsOffice || undefined,
       portOfEntry: formData.portOfEntry || undefined,
