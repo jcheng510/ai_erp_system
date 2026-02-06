@@ -60,30 +60,6 @@ export function getShopifyAuthUrl(userId: number, shopDomain: string): { url?: s
 }
 
 /**
- * Validate OAuth state parameter
- */
-export function validateOAuthState(state: string): { userId?: number; error?: string } {
-  const stateData = oauthStates.get(state);
-  
-  if (!stateData) {
-    return { error: "Invalid or expired OAuth state" };
-  }
-  
-  // Check if state is too old (10 minutes)
-  const now = Date.now();
-  const tenMinutesAgo = now - 10 * 60 * 1000;
-  if (stateData.timestamp < tenMinutesAgo) {
-    oauthStates.delete(state);
-    return { error: "OAuth state expired" };
-  }
-  
-  // Clean up the state after validation
-  oauthStates.delete(state);
-  
-  return { userId: stateData.userId };
-}
-
-/**
  * Exchange authorization code for access token
  */
 export async function exchangeCodeForToken(shop: string, code: string): Promise<{
