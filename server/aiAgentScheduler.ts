@@ -197,13 +197,52 @@ async function checkVendorFollowupCondition(condition: RuleCondition): Promise<b
 }
 
 async function checkPaymentReminderCondition(condition: RuleCondition): Promise<boolean> {
-  // Placeholder - check for overdue invoices
-  return false;
+  const db = await getDb();
+  if (!db) return false;
+
+  const { invoices } = await import("../drizzle/schema");
+  const { or: orOp } = await import("drizzle-orm");
+
+  // Check for overdue invoices or invoices due within 3 days
+  const now = new Date();
+  const threeDaysFromNow = new Date(now.getTime() + 3 * 86400000);
+
+  const overdueInvoices = await db
+    .select()
+    .from(invoices)
+    .where(
+      orOp(
+        eq(invoices.status, "overdue"),
+        and(
+          eq(invoices.status, "sent"),
+          sql`${invoices.dueDate} IS NOT NULL AND ${invoices.dueDate} <= ${threeDaysFromNow}`
+        )
+      )
+    );
+
+  return overdueInvoices.length > 0;
 }
 
 async function checkShipmentTrackingCondition(condition: RuleCondition): Promise<boolean> {
-  // Placeholder - check for shipments needing tracking updates
-  return false;
+  const db = await getDb();
+  if (!db) return false;
+
+  const { shipments } = await import("../drizzle/schema");
+
+  // Check for in-transit shipments that haven't had an update in 2+ days
+  const twoDaysAgo = new Date(Date.now() - 2 * 86400000);
+
+  const staleShipments = await db
+    .select()
+    .from(shipments)
+    .where(
+      and(
+        eq(shipments.status, "in_transit"),
+        sql`${shipments.updatedAt} < ${twoDaysAgo}`
+      )
+    );
+
+  return staleShipments.length > 0;
 }
 
 // ============================================
@@ -221,6 +260,10 @@ async function createTaskFromRule(rule: typeof aiAgentRules.$inferSelect): Promi
       return await createRFQTask(rule, actionConfig);
     case "vendor_followup":
       return await createVendorFollowupTask(rule, actionConfig);
+    case "payment_reminder":
+      return await createPaymentReminderTask(rule, actionConfig);
+    case "shipment_tracking":
+      return await createShipmentTrackingTask(rule, actionConfig);
     default:
       return null;
   }
@@ -484,6 +527,161 @@ Respond with JSON: { "subject": "email subject", "body": "email body text" }`,
   return createdTask;
 }
 
+async function createPaymentReminderTask(
+  rule: typeof aiAgentRules.$inferSelect,
+  actionConfig: RuleAction
+): Promise<typeof aiAgentTasks.$inferSelect | null> {
+  const db = await getDb();
+  if (!db) return null;
+
+  const { invoices, customers } = await import("../drizzle/schema");
+  const { or: orOp, leftJoin } = await import("drizzle-orm");
+
+  const now = new Date();
+  const threeDaysFromNow = new Date(now.getTime() + 3 * 86400000);
+
+  const overdueInvoices = await db
+    .select({
+      invoice: invoices,
+      customer: customers,
+    })
+    .from(invoices)
+    .leftJoin(customers, eq(invoices.customerId, customers.id))
+    .where(
+      orOp(
+        eq(invoices.status, "overdue"),
+        and(
+          eq(invoices.status, "sent"),
+          sql`${invoices.dueDate} IS NOT NULL AND ${invoices.dueDate} <= ${threeDaysFromNow}`
+        )
+      )
+    )
+    .limit(5);
+
+  if (overdueInvoices.length === 0) return null;
+
+  const first = overdueInvoices[0];
+  const inv = first.invoice;
+  const cust = first.customer;
+  const outstanding = parseFloat(inv.totalAmount) - parseFloat(inv.paidAmount || "0");
+
+  // Use AI to draft reminder
+  const aiResponse = await invokeLLM({
+    messages: [
+      { role: "system", content: "You are an ERP assistant drafting professional payment reminder emails." },
+      {
+        role: "user",
+        content: `Draft a polite payment reminder email for Invoice #${inv.invoiceNumber} to ${cust?.name || "customer"}.
+Amount outstanding: $${outstanding.toFixed(2)}
+Due date: ${inv.dueDate?.toLocaleDateString() || "N/A"}
+Status: ${inv.status}
+
+Respond with JSON: { "subject": "email subject", "body": "email body text" }`,
+      },
+    ],
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: "payment_reminder",
+        strict: true,
+        schema: {
+          type: "object",
+          properties: {
+            subject: { type: "string" },
+            body: { type: "string" },
+          },
+          required: ["subject", "body"],
+          additionalProperties: false,
+        },
+      },
+    },
+  });
+
+  const emailContentStr = aiResponse.choices[0].message.content;
+  const emailContent = JSON.parse(typeof emailContentStr === "string" ? emailContentStr : "{}");
+
+  const [task] = await db
+    .insert(aiAgentTasks)
+    .values({
+      taskType: "payment_reminder",
+      status: "pending_approval",
+      priority: inv.status === "overdue" ? "high" : "medium",
+      taskData: JSON.stringify({
+        title: `Payment reminder for Invoice #${inv.invoiceNumber}`,
+        description: `${overdueInvoices.length} invoice(s) overdue or due soon. Total outstanding: $${outstanding.toFixed(2)}`,
+        invoiceId: inv.id,
+        customerId: cust?.id,
+        customerEmail: cust?.email,
+        emailSubject: emailContent.subject,
+        emailBody: emailContent.body,
+        outstanding,
+      }),
+      aiReasoning: `Invoice #${inv.invoiceNumber} is ${inv.status}. Payment reminder recommended.`,
+      aiConfidence: "0.9",
+      relatedEntityType: "invoice",
+      relatedEntityId: inv.id,
+      requiresApproval: true,
+    })
+    .$returningId();
+
+  const [createdTask] = await db.select().from(aiAgentTasks).where(eq(aiAgentTasks.id, task.id));
+  return createdTask;
+}
+
+async function createShipmentTrackingTask(
+  rule: typeof aiAgentRules.$inferSelect,
+  actionConfig: RuleAction
+): Promise<typeof aiAgentTasks.$inferSelect | null> {
+  const db = await getDb();
+  if (!db) return null;
+
+  const { shipments, vendors: vendorsTable } = await import("../drizzle/schema");
+  const { leftJoin } = await import("drizzle-orm");
+
+  const twoDaysAgo = new Date(Date.now() - 2 * 86400000);
+
+  const staleShipments = await db
+    .select()
+    .from(shipments)
+    .where(
+      and(
+        eq(shipments.status, "in_transit"),
+        sql`${shipments.updatedAt} < ${twoDaysAgo}`
+      )
+    )
+    .limit(5);
+
+  if (staleShipments.length === 0) return null;
+
+  const first = staleShipments[0];
+
+  const [task] = await db
+    .insert(aiAgentTasks)
+    .values({
+      taskType: "shipment_tracking",
+      status: "pending_approval",
+      priority: "medium",
+      taskData: JSON.stringify({
+        title: `Track shipment ${first.shipmentNumber}`,
+        description: `${staleShipments.length} shipment(s) in transit without recent updates. Carrier: ${first.carrier || "Unknown"}, Tracking: ${first.trackingNumber || "N/A"}`,
+        shipmentId: first.id,
+        shipmentNumber: first.shipmentNumber,
+        carrier: first.carrier,
+        trackingNumber: first.trackingNumber,
+        totalStaleShipments: staleShipments.length,
+      }),
+      aiReasoning: `Shipment ${first.shipmentNumber} has been in transit without updates for more than 2 days.`,
+      aiConfidence: "0.85",
+      relatedEntityType: "shipment",
+      relatedEntityId: first.id,
+      requiresApproval: false, // Auto-approve tracking checks
+    })
+    .$returningId();
+
+  const [createdTask] = await db.select().from(aiAgentTasks).where(eq(aiAgentTasks.id, task.id));
+  return createdTask;
+}
+
 // ============================================
 // TASK EXECUTION ENGINE
 // ============================================
@@ -577,6 +775,10 @@ async function executeTask(task: typeof aiAgentTasks.$inferSelect): Promise<{
       return await executeVendorFollowup(task);
     case "reply_email":
       return await executeEmailReply(task);
+    case "payment_reminder":
+      return await executePaymentReminder(task);
+    case "shipment_tracking":
+      return await executeShipmentTracking(task);
     default:
       return { success: false, error: `Unknown task type: ${task.taskType}` };
   }
@@ -721,6 +923,84 @@ async function executeEmailReply(task: typeof aiAgentTasks.$inferSelect): Promis
   }
 }
 
+async function executePaymentReminder(task: typeof aiAgentTasks.$inferSelect): Promise<{
+  success: boolean;
+  data?: any;
+  error?: string;
+}> {
+  const db = await getDb();
+  if (!db) return { success: false, error: "Database not available" };
+
+  try {
+    const inputData = JSON.parse(task.taskData || "{}");
+    const { customerEmail, emailSubject, emailBody, invoiceId } = inputData;
+
+    if (!customerEmail) {
+      return { success: false, error: "No customer email address" };
+    }
+
+    const emailResult = await sendEmail({
+      to: customerEmail,
+      subject: emailSubject,
+      text: emailBody,
+    });
+
+    // Update invoice status to overdue if not already
+    if (invoiceId) {
+      const { invoices } = await import("../drizzle/schema");
+      const [inv] = await db.select().from(invoices).where(eq(invoices.id, invoiceId)).limit(1);
+      if (inv && inv.status === "sent" && inv.dueDate && inv.dueDate < new Date()) {
+        await db.update(invoices).set({ status: "overdue" }).where(eq(invoices.id, invoiceId));
+      }
+    }
+
+    return {
+      success: emailResult.success,
+      data: { emailSent: true, messageId: emailResult.messageId },
+      error: emailResult.error,
+    };
+  } catch (err) {
+    return { success: false, error: `Failed to send payment reminder: ${err}` };
+  }
+}
+
+async function executeShipmentTracking(task: typeof aiAgentTasks.$inferSelect): Promise<{
+  success: boolean;
+  data?: any;
+  error?: string;
+}> {
+  const db = await getDb();
+  if (!db) return { success: false, error: "Database not available" };
+
+  try {
+    const inputData = JSON.parse(task.taskData || "{}");
+    const { shipmentId, carrier, trackingNumber } = inputData;
+
+    // Create a notification for operations team to check tracking
+    const { notifications } = await import("../drizzle/schema");
+    await db.insert(notifications).values({
+      userId: 1, // System notification - will be picked up by ops team
+      type: "shipment_tracking",
+      title: `Shipment tracking update needed: ${inputData.shipmentNumber}`,
+      message: `Shipment ${inputData.shipmentNumber} (Carrier: ${carrier || "Unknown"}, Tracking: ${trackingNumber || "N/A"}) has been in transit without updates. Please check status.`,
+      isRead: false,
+    });
+
+    // Touch the shipment updatedAt to prevent repeated alerts
+    if (shipmentId) {
+      const { shipments } = await import("../drizzle/schema");
+      await db.update(shipments).set({ notes: sql`CONCAT(COALESCE(${shipments.notes}, ''), '\n[Auto] Tracking check triggered ${new Date().toISOString()}')` }).where(eq(shipments.id, shipmentId));
+    }
+
+    return {
+      success: true,
+      data: { notificationCreated: true, shipmentId },
+    };
+  } catch (err) {
+    return { success: false, error: `Failed to process shipment tracking: ${err}` };
+  }
+}
+
 // ============================================
 // SCHEDULER MAIN LOOP
 // ============================================
@@ -749,6 +1029,17 @@ export function startScheduler(config: Partial<SchedulerConfig> = {}): void {
       const execResults = await executeApprovedTasks();
       if (execResults.executed > 0 || execResults.failed > 0) {
         console.log(`[AI Agent Scheduler] Executed ${execResults.executed} tasks, ${execResults.failed} failed`);
+      }
+
+      // Run three-way match automation (every cycle)
+      try {
+        const { runAutoThreeWayMatch } = await import("./threeWayMatchService");
+        const matchResults = await runAutoThreeWayMatch();
+        if (matchResults.matched > 0 || matchResults.discrepancies > 0) {
+          console.log(`[AI Agent Scheduler] Three-way match: ${matchResults.matched} matched, ${matchResults.discrepancies} discrepancies`);
+        }
+      } catch (matchErr) {
+        console.error("[AI Agent Scheduler] Three-way match error:", matchErr);
       }
     } catch (err) {
       console.error("[AI Agent Scheduler] Error in main loop:", err);

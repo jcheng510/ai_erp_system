@@ -19,6 +19,9 @@ import Accounts from "./pages/finance/Accounts";
 import Invoices from "./pages/finance/Invoices";
 import Payments from "./pages/finance/Payments";
 import Transactions from "./pages/finance/Transactions";
+import FinancialStatements from "./pages/finance/FinancialStatements";
+import ThreeWayMatch from "./pages/finance/ThreeWayMatch";
+import Reports from "./pages/finance/Reports";
 
 // Sales
 import Orders from "./pages/sales/Orders";
@@ -138,6 +141,9 @@ function Router() {
         <Route path="/finance/invoices" component={Invoices} />
         <Route path="/finance/payments" component={Payments} />
         <Route path="/finance/transactions" component={Transactions} />
+        <Route path="/finance/statements" component={FinancialStatements} />
+        <Route path="/finance/three-way-match" component={ThreeWayMatch} />
+        <Route path="/finance/reports" component={Reports} />
 
         {/* Sales */}
         <Route path="/sales/orders/:id" component={OrderDetail} />

@@ -4229,3 +4229,111 @@ export const workflowNotifications = mysqlTable("workflowNotifications", {
 
 export type WorkflowNotification = typeof workflowNotifications.$inferSelect;
 export type InsertWorkflowNotification = typeof workflowNotifications.$inferInsert;
+
+// ============================================
+// GENERAL LEDGER & PERIOD CLOSE
+// ============================================
+
+// Fiscal periods for period close
+export const fiscalPeriods = mysqlTable("fiscalPeriods", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 64 }).notNull(), // e.g. "Jan 2026", "Q1 2026"
+  periodType: mysqlEnum("periodType", ["month", "quarter", "year"]).default("month").notNull(),
+  startDate: timestamp("startDate").notNull(),
+  endDate: timestamp("endDate").notNull(),
+  status: mysqlEnum("status", ["open", "closed", "locked"]).default("open").notNull(),
+  closedBy: int("closedBy"),
+  closedAt: timestamp("closedAt"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type FiscalPeriod = typeof fiscalPeriods.$inferSelect;
+export type InsertFiscalPeriod = typeof fiscalPeriods.$inferInsert;
+
+// ============================================
+// THREE-WAY MATCH
+// ============================================
+
+// Three-way match records (PO vs Receipt vs Vendor Invoice)
+export const threeWayMatches = mysqlTable("threeWayMatches", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  matchNumber: varchar("matchNumber", { length: 64 }).notNull(),
+  purchaseOrderId: int("purchaseOrderId").notNull(),
+  receivingRecordId: int("receivingRecordId"),
+  vendorInvoiceId: int("vendorInvoiceId"), // references parsedDocuments or invoices
+  vendorId: int("vendorId"),
+  status: mysqlEnum("status", ["pending", "matched", "discrepancy", "approved", "rejected"]).default("pending").notNull(),
+  // PO totals
+  poQuantity: decimal("poQuantity", { precision: 15, scale: 4 }),
+  poAmount: decimal("poAmount", { precision: 15, scale: 2 }),
+  // Receipt totals
+  receiptQuantity: decimal("receiptQuantity", { precision: 15, scale: 4 }),
+  // Invoice totals
+  invoiceAmount: decimal("invoiceAmount", { precision: 15, scale: 2 }),
+  // Variances
+  quantityVariance: decimal("quantityVariance", { precision: 15, scale: 4 }),
+  amountVariance: decimal("amountVariance", { precision: 15, scale: 2 }),
+  variancePercent: decimal("variancePercent", { precision: 5, scale: 2 }),
+  // Tolerance
+  tolerancePercent: decimal("tolerancePercent", { precision: 5, scale: 2 }).default("2.00"),
+  // Resolution
+  resolvedBy: int("resolvedBy"),
+  resolvedAt: timestamp("resolvedAt"),
+  resolutionNotes: text("resolutionNotes"),
+  autoApproved: boolean("autoApproved").default(false),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ThreeWayMatch = typeof threeWayMatches.$inferSelect;
+export type InsertThreeWayMatch = typeof threeWayMatches.$inferInsert;
+
+// Line-level match details
+export const threeWayMatchLines = mysqlTable("threeWayMatchLines", {
+  id: int("id").autoincrement().primaryKey(),
+  matchId: int("matchId").notNull(),
+  poItemId: int("poItemId"),
+  receivingItemId: int("receivingItemId"),
+  description: text("description"),
+  poQuantity: decimal("poQuantity", { precision: 15, scale: 4 }),
+  poUnitPrice: decimal("poUnitPrice", { precision: 15, scale: 2 }),
+  poLineTotal: decimal("poLineTotal", { precision: 15, scale: 2 }),
+  receiptQuantity: decimal("receiptQuantity", { precision: 15, scale: 4 }),
+  invoiceQuantity: decimal("invoiceQuantity", { precision: 15, scale: 4 }),
+  invoiceUnitPrice: decimal("invoiceUnitPrice", { precision: 15, scale: 2 }),
+  invoiceLineTotal: decimal("invoiceLineTotal", { precision: 15, scale: 2 }),
+  quantityMatch: boolean("quantityMatch").default(false),
+  priceMatch: boolean("priceMatch").default(false),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type ThreeWayMatchLine = typeof threeWayMatchLines.$inferSelect;
+export type InsertThreeWayMatchLine = typeof threeWayMatchLines.$inferInsert;
+
+// ============================================
+// SAVED REPORTS
+// ============================================
+
+export const savedReports = mysqlTable("savedReports", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 255 }).notNull(),
+  reportType: mysqlEnum("reportType", [
+    "profit_loss", "balance_sheet", "cash_flow", "trial_balance",
+    "aged_receivables", "aged_payables", "vendor_spend",
+    "sales_summary", "inventory_valuation", "custom"
+  ]).notNull(),
+  parameters: text("parameters"), // JSON: date range, filters, etc.
+  schedule: mysqlEnum("schedule", ["none", "daily", "weekly", "monthly"]).default("none"),
+  lastRunAt: timestamp("lastRunAt"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type SavedReport = typeof savedReports.$inferSelect;
+export type InsertSavedReport = typeof savedReports.$inferInsert;

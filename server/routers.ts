@@ -2064,6 +2064,256 @@ export const appRouter = router({
   }),
 
   // ============================================
+  // GENERAL LEDGER & FINANCIAL STATEMENTS
+  // ============================================
+  generalLedger: router({
+    postJournalEntry: financeProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        date: z.date(),
+        description: z.string().min(1),
+        referenceType: z.string().optional(),
+        referenceId: z.number().optional(),
+        lines: z.array(z.object({
+          accountId: z.number(),
+          debit: z.string().optional(),
+          credit: z.string().optional(),
+          description: z.string().optional(),
+        })).min(2),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { postJournalEntry } = await import("./generalLedgerService");
+        const result = await postJournalEntry({ ...input, createdBy: ctx.user.id });
+        await createAuditLog(ctx.user.id, 'create', 'journalEntry', result.id, result.transactionNumber);
+        return result;
+      }),
+    trialBalance: financeProcedure
+      .input(z.object({ companyId: z.number().optional(), asOfDate: z.date().optional() }).optional())
+      .query(async ({ input }) => {
+        const { getTrialBalance } = await import("./generalLedgerService");
+        return getTrialBalance(input);
+      }),
+    profitAndLoss: financeProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        startDate: z.date(),
+        endDate: z.date(),
+      }))
+      .query(async ({ input }) => {
+        const { getProfitAndLoss } = await import("./generalLedgerService");
+        return getProfitAndLoss(input);
+      }),
+    balanceSheet: financeProcedure
+      .input(z.object({ companyId: z.number().optional(), asOfDate: z.date().optional() }).optional())
+      .query(async ({ input }) => {
+        const { getBalanceSheet } = await import("./generalLedgerService");
+        return getBalanceSheet(input);
+      }),
+    cashFlow: financeProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        startDate: z.date(),
+        endDate: z.date(),
+      }))
+      .query(async ({ input }) => {
+        const { getCashFlowStatement } = await import("./generalLedgerService");
+        return getCashFlowStatement(input);
+      }),
+    agedReceivables: financeProcedure
+      .input(z.object({ companyId: z.number().optional() }).optional())
+      .query(async ({ input }) => {
+        const { getAgedReceivables } = await import("./generalLedgerService");
+        return getAgedReceivables(input?.companyId);
+      }),
+    agedPayables: financeProcedure
+      .input(z.object({ companyId: z.number().optional() }).optional())
+      .query(async ({ input }) => {
+        const { getAgedPayables } = await import("./generalLedgerService");
+        return getAgedPayables(input?.companyId);
+      }),
+    fiscalPeriods: financeProcedure
+      .input(z.object({ companyId: z.number().optional() }).optional())
+      .query(async ({ input }) => {
+        const { getFiscalPeriods } = await import("./generalLedgerService");
+        return getFiscalPeriods(input?.companyId);
+      }),
+    createFiscalPeriod: financeProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        name: z.string().min(1),
+        periodType: z.enum(["month", "quarter", "year"]),
+        startDate: z.date(),
+        endDate: z.date(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { createFiscalPeriod } = await import("./generalLedgerService");
+        const result = await createFiscalPeriod(input);
+        await createAuditLog(ctx.user.id, 'create', 'fiscalPeriod', result.id, input.name);
+        return result;
+      }),
+    closePeriod: financeProcedure
+      .input(z.object({ periodId: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const { closeFiscalPeriod } = await import("./generalLedgerService");
+        const result = await closeFiscalPeriod(input.periodId, ctx.user.id);
+        if (result.success) {
+          await createAuditLog(ctx.user.id, 'update', 'fiscalPeriod', input.periodId, 'Period closed');
+        }
+        return result;
+      }),
+    reopenPeriod: financeProcedure
+      .input(z.object({ periodId: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const { reopenFiscalPeriod } = await import("./generalLedgerService");
+        const result = await reopenFiscalPeriod(input.periodId);
+        if (result.success) {
+          await createAuditLog(ctx.user.id, 'update', 'fiscalPeriod', input.periodId, 'Period reopened');
+        }
+        return result;
+      }),
+  }),
+
+  // ============================================
+  // THREE-WAY MATCH
+  // ============================================
+  threeWayMatch: router({
+    list: financeProcedure
+      .input(z.object({
+        status: z.string().optional(),
+        vendorId: z.number().optional(),
+        companyId: z.number().optional(),
+      }).optional())
+      .query(async ({ input }) => {
+        const { getThreeWayMatches } = await import("./threeWayMatchService");
+        return getThreeWayMatches(input);
+      }),
+    get: financeProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const { getThreeWayMatchDetail } = await import("./threeWayMatchService");
+        return getThreeWayMatchDetail(input.id);
+      }),
+    create: financeProcedure
+      .input(z.object({
+        purchaseOrderId: z.number(),
+        receivingRecordId: z.number().optional(),
+        vendorInvoiceId: z.number().optional(),
+        tolerancePercent: z.number().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { createThreeWayMatch } = await import("./threeWayMatchService");
+        const result = await createThreeWayMatch({ ...input, createdBy: ctx.user.id });
+        await createAuditLog(ctx.user.id, 'create', 'threeWayMatch', result.id, `Status: ${result.status}`);
+        return result;
+      }),
+    resolve: financeProcedure
+      .input(z.object({
+        matchId: z.number(),
+        action: z.enum(["approve", "reject"]),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { resolveThreeWayMatch } = await import("./threeWayMatchService");
+        const result = await resolveThreeWayMatch(input.matchId, {
+          action: input.action,
+          resolvedBy: ctx.user.id,
+          notes: input.notes,
+        });
+        await createAuditLog(ctx.user.id, input.action, 'threeWayMatch', input.matchId);
+        return result;
+      }),
+    runAutoMatch: financeProcedure
+      .mutation(async ({ ctx }) => {
+        const { runAutoThreeWayMatch } = await import("./threeWayMatchService");
+        const result = await runAutoThreeWayMatch();
+        await createAuditLog(ctx.user.id, 'create', 'threeWayMatch', 0, `Auto-matched ${result.matched} POs`);
+        return result;
+      }),
+  }),
+
+  // ============================================
+  // REPORTING ENGINE
+  // ============================================
+  reports: router({
+    kpiDashboard: protectedProcedure
+      .input(z.object({ companyId: z.number().optional() }).optional())
+      .query(async ({ input }) => {
+        const { getKPIDashboard } = await import("./reportingService");
+        return getKPIDashboard(input);
+      }),
+    vendorSpend: financeProcedure
+      .input(z.object({
+        startDate: z.date(),
+        endDate: z.date(),
+        companyId: z.number().optional(),
+      }))
+      .query(async ({ input }) => {
+        const { getVendorSpendReport } = await import("./reportingService");
+        return getVendorSpendReport(input);
+      }),
+    salesSummary: financeProcedure
+      .input(z.object({
+        startDate: z.date(),
+        endDate: z.date(),
+        companyId: z.number().optional(),
+      }))
+      .query(async ({ input }) => {
+        const { getSalesSummaryReport } = await import("./reportingService");
+        return getSalesSummaryReport(input);
+      }),
+    inventoryValuation: financeProcedure
+      .input(z.object({ companyId: z.number().optional() }).optional())
+      .query(async ({ input }) => {
+        const { getInventoryValuationReport } = await import("./reportingService");
+        return getInventoryValuationReport(input?.companyId);
+      }),
+    cashFlowSummary: financeProcedure
+      .input(z.object({
+        startDate: z.date(),
+        endDate: z.date(),
+        companyId: z.number().optional(),
+      }))
+      .query(async ({ input }) => {
+        const { getCashFlowSummary } = await import("./reportingService");
+        return getCashFlowSummary(input);
+      }),
+    saved: router({
+      list: protectedProcedure
+        .input(z.object({ companyId: z.number().optional() }).optional())
+        .query(async ({ input }) => {
+          const { getSavedReports } = await import("./reportingService");
+          return getSavedReports(input?.companyId);
+        }),
+      create: financeProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          name: z.string().min(1),
+          reportType: z.enum([
+            "profit_loss", "balance_sheet", "cash_flow", "trial_balance",
+            "aged_receivables", "aged_payables", "vendor_spend",
+            "sales_summary", "inventory_valuation", "custom",
+          ]),
+          parameters: z.string().optional(),
+          schedule: z.enum(["none", "daily", "weekly", "monthly"]).optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { createSavedReport } = await import("./reportingService");
+          const result = await createSavedReport({ ...input, createdBy: ctx.user.id });
+          await createAuditLog(ctx.user.id, 'create', 'savedReport', result.id, input.name);
+          return result;
+        }),
+      delete: financeProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const { deleteSavedReport } = await import("./reportingService");
+          await deleteSavedReport(input.id);
+          await createAuditLog(ctx.user.id, 'delete', 'savedReport', input.id);
+          return { success: true };
+        }),
+    }),
+  }),
+
+  // ============================================
   // AUDIT LOGS
   // ============================================
   auditLogs: router({

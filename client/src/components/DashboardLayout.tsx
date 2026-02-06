@@ -67,6 +67,9 @@ import {
   Target,
   MessageSquare,
   Heart,
+  BookOpen,
+  BarChart3,
+  ArrowRightLeft,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -100,6 +103,9 @@ const menuGroups = [
       { icon: Target, label: "Campaigns", path: "/crm/campaigns" },
       { icon: DollarSign, label: "Accounts", path: "/finance/accounts" },
       { icon: TrendingUp, label: "Transactions", path: "/finance/transactions" },
+      { icon: BookOpen, label: "Financial Statements", path: "/finance/statements" },
+      { icon: ArrowRightLeft, label: "Three-Way Match", path: "/finance/three-way-match" },
+      { icon: BarChart3, label: "Reports", path: "/finance/reports" },
     ],
   },
   {
@@ -274,6 +280,8 @@ function DashboardLayoutContent({
             case 'p': setLocation('/operations/procurement-hub'); break; // Go to Procurement
             case 'l': setLocation('/operations/logistics-hub'); break; // Go to Logistics
             case 'e': setLocation('/operations/email-inbox'); break; // Go to Email
+            case 'f': setLocation('/finance/statements'); break; // Go to Financial Statements
+            case 'r': setLocation('/finance/reports'); break; // Go to Reports
           }
         };
         document.addEventListener('keydown', handleNextKey, { once: true });
