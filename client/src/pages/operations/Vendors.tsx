@@ -32,8 +32,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Building2, Plus, Search, Loader2, Ship, Star, Truck } from "lucide-react";
+import { Building2, Plus, Search, Loader2, Ship, Star, Truck, Globe } from "lucide-react";
 import { toast } from "sonner";
+import { BusinessLookup } from "@/components/BusinessLookup";
+import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 
 export default function Vendors() {
   const [activeTab, setActiveTab] = useState("suppliers");
@@ -233,13 +235,27 @@ export default function Vendors() {
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label htmlFor="name">Company Name *</Label>
-                        <Input
+                        <BusinessLookup
                           id="name"
                           value={formData.name}
-                          onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                          placeholder="Vendor name"
-                          required
+                          onChange={(name) => setFormData({ ...formData, name })}
+                          onSelect={(biz) => {
+                            setFormData((prev) => ({
+                              ...prev,
+                              name: biz.name,
+                              address: biz.address || prev.address,
+                              city: biz.city || prev.city,
+                              state: biz.state || prev.state,
+                              country: biz.country || prev.country,
+                              postalCode: biz.postalCode || prev.postalCode,
+                              phone: biz.phone || prev.phone,
+                              email: biz.email || prev.email,
+                            }));
+                            toast.success("Business info auto-filled from lookup");
+                          }}
+                          placeholder="Search vendor name..."
                         />
+                        <p className="text-xs text-muted-foreground">Type to search businesses online</p>
                       </div>
                       <div className="space-y-2">
                         <Label htmlFor="type">Type</Label>
@@ -290,12 +306,23 @@ export default function Vendors() {
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="address">Address</Label>
-                      <Input
+                      <AddressAutocomplete
                         id="address"
                         value={formData.address}
-                        onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-                        placeholder="Street address"
+                        onChange={(address) => setFormData({ ...formData, address })}
+                        onSelect={(addr) => {
+                          setFormData((prev) => ({
+                            ...prev,
+                            address: addr.address,
+                            city: addr.city || prev.city,
+                            state: addr.state || prev.state,
+                            country: addr.country || prev.country,
+                            postalCode: addr.postalCode || prev.postalCode,
+                          }));
+                        }}
+                        placeholder="Start typing an address..."
                       />
+                      <p className="text-xs text-muted-foreground">Address fields auto-fill as you type</p>
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
@@ -307,11 +334,29 @@ export default function Vendors() {
                         />
                       </div>
                       <div className="space-y-2">
+                        <Label htmlFor="state">State</Label>
+                        <Input
+                          id="state"
+                          value={formData.state}
+                          onChange={(e) => setFormData({ ...formData, state: e.target.value })}
+                        />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
                         <Label htmlFor="country">Country</Label>
                         <Input
                           id="country"
                           value={formData.country}
                           onChange={(e) => setFormData({ ...formData, country: e.target.value })}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="postalCode">Postal Code</Label>
+                        <Input
+                          id="postalCode"
+                          value={formData.postalCode}
+                          onChange={(e) => setFormData({ ...formData, postalCode: e.target.value })}
                         />
                       </div>
                     </div>
@@ -378,12 +423,23 @@ export default function Vendors() {
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label htmlFor="carrierName">Company Name *</Label>
-                        <Input
+                        <BusinessLookup
                           id="carrierName"
                           value={carrierForm.name}
-                          onChange={(e) => setCarrierForm({ ...carrierForm, name: e.target.value })}
-                          placeholder="Carrier name"
-                          required
+                          onChange={(name) => setCarrierForm({ ...carrierForm, name })}
+                          onSelect={(biz) => {
+                            setCarrierForm((prev) => ({
+                              ...prev,
+                              name: biz.name,
+                              phone: biz.phone || prev.phone,
+                              email: biz.email || prev.email,
+                              website: biz.website || prev.website,
+                              country: biz.country || prev.country,
+                              address: biz.address || prev.address,
+                            }));
+                            toast.success("Carrier info auto-filled from lookup");
+                          }}
+                          placeholder="Search carrier name..."
                         />
                       </div>
                       <div className="space-y-2">

@@ -21,6 +21,8 @@ import {
 import { Loader2, Plus, Building, Package, FileText, Wrench, Box, Users, MapPin, Layers } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
+import { BusinessLookup } from "@/components/BusinessLookup";
+import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 
 type EntityType = "vendor" | "material" | "bom" | "workOrder" | "rfq" | "product" | "customer" | "inventory" | "location";
 
@@ -172,10 +174,12 @@ const entityConfig: Record<EntityType, {
   fields: Array<{
     name: string;
     label: string;
-    type: "text" | "email" | "number" | "textarea" | "select" | "productSelect" | "bomSelect" | "warehouseSelect";
+    type: "text" | "email" | "number" | "textarea" | "select" | "productSelect" | "bomSelect" | "warehouseSelect" | "businessLookup" | "addressAutocomplete";
     placeholder?: string;
     required?: boolean;
     options?: Array<{ value: string; label: string }>;
+    helperText?: string;
+    autoFillFields?: string[];
   }>;
 }> = {
   vendor: {
@@ -183,10 +187,10 @@ const entityConfig: Record<EntityType, {
     description: "Add a new vendor to your supplier list",
     icon: <Building className="h-5 w-5" />,
     fields: [
-      { name: "name", label: "Vendor Name", type: "text", placeholder: "e.g., Acme Supplies", required: true },
+      { name: "name", label: "Vendor Name", type: "businessLookup", placeholder: "Search vendor name...", required: true, helperText: "Type to search businesses online", autoFillFields: ["email", "phone", "address", "city", "state", "country", "postalCode"] },
       { name: "email", label: "Email", type: "email", placeholder: "contact@vendor.com" },
       { name: "phone", label: "Phone", type: "text", placeholder: "+1 (555) 123-4567" },
-      { name: "address", label: "Address", type: "textarea", placeholder: "123 Main St, City, State" },
+      { name: "address", label: "Address", type: "addressAutocomplete", placeholder: "Start typing an address...", helperText: "Address fields auto-fill as you type", autoFillFields: ["city", "state", "country", "postalCode"] },
       { name: "defaultLeadTimeDays", label: "Default Lead Time (days)", type: "number", placeholder: "7" },
     ],
   },
@@ -269,10 +273,10 @@ const entityConfig: Record<EntityType, {
     description: "Add a new customer to your CRM",
     icon: <Users className="h-5 w-5" />,
     fields: [
-      { name: "name", label: "Customer Name", type: "text", placeholder: "e.g., John Smith or Acme Corp", required: true },
+      { name: "name", label: "Customer Name", type: "businessLookup", placeholder: "Search business or type name...", required: true, helperText: "Type to search businesses online", autoFillFields: ["email", "phone", "address"] },
       { name: "email", label: "Email", type: "email", placeholder: "customer@example.com" },
       { name: "phone", label: "Phone", type: "text", placeholder: "+1 (555) 123-4567" },
-      { name: "address", label: "Address", type: "textarea", placeholder: "123 Main St, City, State" },
+      { name: "address", label: "Address", type: "addressAutocomplete", placeholder: "Start typing an address...", helperText: "Address auto-fills as you type" },
       { name: "type", label: "Customer Type", type: "select", options: [
         { value: "individual", label: "Individual" },
         { value: "business", label: "Business" },
@@ -437,6 +441,10 @@ export function QuickCreateDialog({
             email: formData.email || undefined,
             phone: formData.phone || undefined,
             address: formData.address || undefined,
+            city: formData.city || undefined,
+            state: formData.state || undefined,
+            country: formData.country || undefined,
+            postalCode: formData.postalCode || undefined,
             defaultLeadTimeDays: formData.defaultLeadTimeDays ? parseInt(formData.defaultLeadTimeDays) : undefined,
           });
           break;
@@ -557,7 +565,49 @@ export function QuickCreateDialog({
                 {field.label}
                 {field.required && <span className="text-red-500">*</span>}
               </Label>
-              {field.type === "textarea" ? (
+              {field.type === "businessLookup" ? (
+                <div className="space-y-1">
+                  <BusinessLookup
+                    id={field.name}
+                    value={formData[field.name] || ""}
+                    onChange={(value) => handleFieldChange(field.name, value)}
+                    onSelect={(biz) => {
+                      handleFieldChange(field.name, biz.name);
+                      if (biz.email) handleFieldChange("email", biz.email);
+                      if (biz.phone) handleFieldChange("phone", biz.phone);
+                      if (biz.address) handleFieldChange("address", biz.address);
+                      if (biz.city) handleFieldChange("city", biz.city);
+                      if (biz.state) handleFieldChange("state", biz.state);
+                      if (biz.country) handleFieldChange("country", biz.country);
+                      if (biz.postalCode) handleFieldChange("postalCode", biz.postalCode);
+                      toast.success("Info auto-filled from business lookup");
+                    }}
+                    placeholder={field.placeholder}
+                  />
+                  {field.helperText && (
+                    <p className="text-xs text-muted-foreground">{field.helperText}</p>
+                  )}
+                </div>
+              ) : field.type === "addressAutocomplete" ? (
+                <div className="space-y-1">
+                  <AddressAutocomplete
+                    id={field.name}
+                    value={formData[field.name] || ""}
+                    onChange={(value) => handleFieldChange(field.name, value)}
+                    onSelect={(addr) => {
+                      handleFieldChange(field.name, addr.address);
+                      if (addr.city) handleFieldChange("city", addr.city);
+                      if (addr.state) handleFieldChange("state", addr.state);
+                      if (addr.country) handleFieldChange("country", addr.country);
+                      if (addr.postalCode) handleFieldChange("postalCode", addr.postalCode);
+                    }}
+                    placeholder={field.placeholder}
+                  />
+                  {field.helperText && (
+                    <p className="text-xs text-muted-foreground">{field.helperText}</p>
+                  )}
+                </div>
+              ) : field.type === "textarea" ? (
                 <Textarea
                   id={field.name}
                   placeholder={field.placeholder}

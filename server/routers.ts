@@ -492,6 +492,82 @@ export const appRouter = router({
         await createAuditLog(ctx.user.id, 'delete', 'vendor', input.id);
         return { success: true };
       }),
+    // Search for businesses by name using OpenStreetMap Nominatim
+    searchBusiness: protectedProcedure
+      .input(z.object({ query: z.string().min(2).max(200) }))
+      .query(async ({ input }) => {
+        const url = new URL('https://nominatim.openstreetmap.org/search');
+        url.searchParams.set('q', input.query);
+        url.searchParams.set('format', 'json');
+        url.searchParams.set('addressdetails', '1');
+        url.searchParams.set('limit', '8');
+        url.searchParams.set('extratags', '1');
+        const res = await fetch(url.toString(), {
+          headers: { 'User-Agent': 'AI-ERP-System/1.0' },
+        });
+        if (!res.ok) return [];
+        const data = await res.json() as Array<{
+          place_id: number; display_name: string; type: string; class: string;
+          address?: Record<string, string>; extratags?: Record<string, string>;
+          lat: string; lon: string;
+        }>;
+        return data.map((item) => ({
+          placeId: item.place_id,
+          displayName: item.display_name,
+          type: item.type,
+          category: item.class,
+          lat: item.lat,
+          lon: item.lon,
+          address: item.address ? {
+            road: item.address.road || item.address.street || '',
+            houseNumber: item.address.house_number || '',
+            city: item.address.city || item.address.town || item.address.village || item.address.municipality || '',
+            state: item.address.state || item.address.province || '',
+            country: item.address.country || '',
+            postalCode: item.address.postcode || '',
+            county: item.address.county || '',
+          } : null,
+          extras: item.extratags ? {
+            phone: item.extratags.phone || item.extratags['contact:phone'] || '',
+            website: item.extratags.website || item.extratags['contact:website'] || '',
+            email: item.extratags.email || item.extratags['contact:email'] || '',
+            openingHours: item.extratags.opening_hours || '',
+            description: item.extratags.description || '',
+          } : null,
+        }));
+      }),
+    // Search for addresses using OpenStreetMap Nominatim
+    searchAddress: protectedProcedure
+      .input(z.object({ query: z.string().min(2).max(200) }))
+      .query(async ({ input }) => {
+        const url = new URL('https://nominatim.openstreetmap.org/search');
+        url.searchParams.set('q', input.query);
+        url.searchParams.set('format', 'json');
+        url.searchParams.set('addressdetails', '1');
+        url.searchParams.set('limit', '6');
+        const res = await fetch(url.toString(), {
+          headers: { 'User-Agent': 'AI-ERP-System/1.0' },
+        });
+        if (!res.ok) return [];
+        const data = await res.json() as Array<{
+          place_id: number; display_name: string;
+          address?: Record<string, string>;
+          lat: string; lon: string;
+        }>;
+        return data.map((item) => ({
+          placeId: item.place_id,
+          displayName: item.display_name,
+          lat: item.lat,
+          lon: item.lon,
+          street: item.address
+            ? [item.address.house_number, item.address.road || item.address.street].filter(Boolean).join(' ')
+            : '',
+          city: item.address?.city || item.address?.town || item.address?.village || item.address?.municipality || '',
+          state: item.address?.state || item.address?.province || '',
+          country: item.address?.country || '',
+          postalCode: item.address?.postcode || '',
+        }));
+      }),
   }),
 
   // ============================================
