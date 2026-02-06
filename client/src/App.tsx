@@ -61,7 +61,9 @@ import InventoryHub from "./pages/operations/InventoryHub";
 import OperationsHub from "./pages/operations/OperationsHub";
 import InventoryManagementHub from "./pages/operations/InventoryManagementHub";
 import DocumentImport from "./pages/operations/DocumentImport";
+import InvoiceShippingAutomation from "./pages/operations/InvoiceShippingAutomation";
 import SupplierPortal from "./pages/SupplierPortal";
+import SupplierShippingForm from "./pages/SupplierShippingForm";
 
 // Freight
 import FreightDashboard from "./pages/freight/FreightDashboard";
@@ -181,6 +183,7 @@ function Router() {
         <Route path="/operations/inventory-hub" component={InventoryHub} />
         <Route path="/operations/inventory-management" component={InventoryManagementHub} />
         <Route path="/operations/document-import" component={DocumentImport} />
+        <Route path="/operations/invoice-shipping-automation" component={InvoiceShippingAutomation} />
 
         {/* Freight */}
         <Route path="/freight" component={FreightDashboard} />
@@ -236,6 +239,8 @@ function App() {
               <Route path="/share/:code" component={DataRoomPublic} />
               {/* Supplier Portal (public) */}
               <Route path="/supplier-portal/:token" component={SupplierPortal} />
+              {/* Supplier Shipping Info Form (public - from invoice automation) */}
+              <Route path="/supplier-shipping/:token" component={SupplierShippingForm} />
               {/* All other routes go through dashboard */}
               <Route component={Router} />
             </Switch>

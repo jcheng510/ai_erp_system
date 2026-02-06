@@ -4229,3 +4229,71 @@ export const workflowNotifications = mysqlTable("workflowNotifications", {
 
 export type WorkflowNotification = typeof workflowNotifications.$inferSelect;
 export type InsertWorkflowNotification = typeof workflowNotifications.$inferInsert;
+
+// ============================================
+// SUPPLIER INVOICE SHIPPING AUTOMATION
+// ============================================
+
+// Tracks automated shipping info requests triggered by supplier invoices
+export const supplierInvoiceAutomations = mysqlTable("supplier_invoice_automations", {
+  id: int("id").autoincrement().primaryKey(),
+
+  // Source email that triggered this automation
+  inboundEmailId: int("inboundEmailId"),
+  fromEmail: varchar("fromEmail", { length: 320 }).notNull(),
+  fromName: varchar("fromName", { length: 255 }),
+  invoiceSubject: varchar("invoiceSubject", { length: 500 }),
+
+  // Matched vendor
+  vendorId: int("vendorId"),
+  vendorName: varchar("vendorName", { length: 255 }),
+
+  // Extracted invoice data
+  invoiceNumber: varchar("invoiceNumber", { length: 100 }),
+  invoiceDate: varchar("invoiceDate", { length: 50 }),
+  invoiceTotal: decimal("invoiceTotal", { precision: 12, scale: 2 }),
+  currency: varchar("currency", { length: 10 }),
+  lineItemsSummary: text("lineItemsSummary"), // JSON summary of items
+
+  // Matched purchase order (if any)
+  purchaseOrderId: int("purchaseOrderId"),
+  poNumber: varchar("poNumber", { length: 100 }),
+
+  // Supplier portal session for shipping info collection
+  portalSessionId: int("portalSessionId"),
+  portalToken: varchar("portalToken", { length: 64 }),
+
+  // Outbound email requesting shipping info
+  sentEmailId: int("sentEmailId"),
+
+  // Status tracking
+  status: mysqlEnum("status", [
+    "detected",            // Invoice email detected
+    "vendor_matched",      // Vendor matched in system
+    "portal_created",      // Portal session created
+    "email_sent",          // Request email sent to supplier
+    "supplier_responded",  // Supplier submitted info via portal
+    "info_complete",       // All shipping info received
+    "freight_quoted",      // Freight quote obtained
+    "failed",              // Processing failed
+    "skipped",             // Skipped (manual override or duplicate)
+  ]).default("detected").notNull(),
+
+  // Attachment parsing results
+  attachmentsParsed: boolean("attachmentsParsed").default(false),
+  parsedShippingData: text("parsedShippingData"), // JSON - shipping data extracted from attachments
+
+  // Error tracking
+  errorMessage: text("errorMessage"),
+  retryCount: int("retryCount").default(0),
+
+  // Automation metadata
+  aiConfidence: decimal("aiConfidence", { precision: 5, scale: 2 }),
+  processingNotes: text("processingNotes"),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type SupplierInvoiceAutomation = typeof supplierInvoiceAutomations.$inferSelect;
+export type InsertSupplierInvoiceAutomation = typeof supplierInvoiceAutomations.$inferInsert;

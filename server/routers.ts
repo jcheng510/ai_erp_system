@@ -10,6 +10,7 @@ import { processEmailReply, analyzeEmail, generateEmailReply } from "./emailRepl
 import * as emailService from "./_core/emailService";
 import * as sendgridProvider from "./_core/sendgridProvider";
 import { parseUploadedDocument, importPurchaseOrder, importFreightInvoice, importVendorInvoice, importCustomsDocument, matchLineItemsToMaterials } from "./documentImportService";
+import { processInboundInvoices, processStoredInboundEmail, handleSupplierPortalSubmission, processSupplierReplyWithAttachments } from "./supplierInvoiceAutomationService";
 import { processAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingActions, type AIAgentContext } from "./aiAgentService";
 import { autonomousWorkflowRouter } from "./autonomousWorkflowRouter";
 import * as db from "./db";
@@ -11008,6 +11009,202 @@ Ask if they received the original request and if they can provide a quote.`;
         // Update PO status
         await db.updatePurchaseOrder(session.purchaseOrderId, { status: 'confirmed' });
         return { success: true };
+      }),
+  }),
+
+  // ============================================
+  // SUPPLIER INVOICE SHIPPING AUTOMATION
+  // ============================================
+  supplierInvoiceAutomation: router({
+    // Trigger: scan inbox and auto-process invoice emails
+    scanAndProcess: protectedProcedure
+      .mutation(async () => {
+        return processInboundInvoices();
+      }),
+
+    // Process a specific stored inbound email
+    processEmail: protectedProcedure
+      .input(z.object({ emailId: z.number() }))
+      .mutation(async ({ input }) => {
+        return processStoredInboundEmail(input.emailId);
+      }),
+
+    // Process a reply email with attachments
+    processReply: protectedProcedure
+      .input(z.object({ emailId: z.number() }))
+      .mutation(async ({ input }) => {
+        return processSupplierReplyWithAttachments(input.emailId);
+      }),
+
+    // List all automation records
+    list: protectedProcedure
+      .input(z.object({
+        status: z.string().optional(),
+        vendorId: z.number().optional(),
+        limit: z.number().optional(),
+        offset: z.number().optional(),
+      }).optional())
+      .query(async ({ input }) => {
+        return db.getSupplierInvoiceAutomations(input || {});
+      }),
+
+    // Get a single automation record
+    getById: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        return db.getSupplierInvoiceAutomationById(input.id);
+      }),
+
+    // Update automation status (e.g., mark as skipped)
+    updateStatus: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        status: z.string(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        await db.updateSupplierInvoiceAutomation(input.id, {
+          status: input.status as any,
+          processingNotes: input.notes,
+        });
+        return { success: true };
+      }),
+
+    // Public: get automation details by portal token (for supplier-facing page)
+    getByToken: publicProcedure
+      .input(z.object({ token: z.string() }))
+      .query(async ({ input }) => {
+        const automation = await db.getSupplierInvoiceAutomationByToken(input.token);
+        if (!automation) return null;
+        // Return limited info for the public-facing supplier page
+        return {
+          id: automation.id,
+          vendorName: automation.vendorName,
+          invoiceNumber: automation.invoiceNumber,
+          poNumber: automation.poNumber,
+          status: automation.status,
+          parsedShippingData: automation.parsedShippingData
+            ? JSON.parse(automation.parsedShippingData)
+            : null,
+          portalToken: automation.portalToken,
+          purchaseOrderId: automation.purchaseOrderId,
+          portalSessionId: automation.portalSessionId,
+        };
+      }),
+
+    // Public: submit shipping info directly (without supplier portal session)
+    submitShippingInfo: publicProcedure
+      .input(z.object({
+        token: z.string(),
+        totalPackages: z.number().optional(),
+        totalGrossWeight: z.string().optional(),
+        totalNetWeight: z.string().optional(),
+        weightUnit: z.string().optional(),
+        totalVolume: z.string().optional(),
+        volumeUnit: z.string().optional(),
+        packageDimensions: z.string().optional(), // JSON array
+        hsCodes: z.string().optional(), // JSON array
+        preferredShipDate: z.string().optional(),
+        preferredCarrier: z.string().optional(),
+        incoterms: z.string().optional(),
+        countryOfOrigin: z.string().optional(),
+        specialInstructions: z.string().optional(),
+        hasDangerousGoods: z.boolean().optional(),
+        dangerousGoodsClass: z.string().optional(),
+        unNumber: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const automation = await db.getSupplierInvoiceAutomationByToken(input.token);
+        if (!automation) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'Invalid or expired link' });
+        }
+        if (automation.status === 'info_complete' || automation.status === 'freight_quoted') {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'Shipping info already submitted' });
+        }
+
+        // Save freight info if we have a PO and portal session
+        const { token, countryOfOrigin, preferredShipDate, ...freightData } = input;
+        if (automation.purchaseOrderId && automation.purchaseOrderId > 0 && automation.portalSessionId) {
+          const existing = await db.getSupplierFreightInfo(automation.purchaseOrderId);
+          const saveData = {
+            ...freightData,
+            preferredShipDate: preferredShipDate ? new Date(preferredShipDate) : undefined,
+            specialInstructions: freightData.specialInstructions
+              ? `${freightData.specialInstructions}${countryOfOrigin ? `\nCountry of Origin: ${countryOfOrigin}` : ''}`
+              : countryOfOrigin ? `Country of Origin: ${countryOfOrigin}` : undefined,
+          };
+          if (existing) {
+            await db.updateSupplierFreightInfo(existing.id, saveData);
+          } else {
+            await db.createSupplierFreightInfo({
+              portalSessionId: automation.portalSessionId,
+              purchaseOrderId: automation.purchaseOrderId,
+              vendorId: automation.vendorId || 0,
+              ...saveData,
+            });
+          }
+        }
+
+        // Also store as parsed shipping data on the automation record
+        const parsedData = {
+          weight: input.totalGrossWeight,
+          dimensions: input.packageDimensions,
+          packageCount: input.totalPackages,
+          hsCodes: input.hsCodes ? JSON.parse(input.hsCodes) : undefined,
+          incoterms: input.incoterms,
+          countryOfOrigin: input.countryOfOrigin,
+          estimatedShipDate: input.preferredShipDate,
+          dangerousGoods: input.hasDangerousGoods,
+          specialInstructions: input.specialInstructions,
+          confidence: 100,
+        };
+
+        await db.updateSupplierInvoiceAutomation(automation.id, {
+          parsedShippingData: JSON.stringify(parsedData),
+          status: 'supplier_responded' as any,
+          processingNotes: 'Supplier submitted shipping info via form',
+        });
+
+        // Check completeness
+        const result = await handleSupplierPortalSubmission(input.token);
+        return result;
+      }),
+
+    // Public: upload a document for this automation
+    uploadDocument: publicProcedure
+      .input(z.object({
+        token: z.string(),
+        documentType: z.string(),
+        fileName: z.string(),
+        fileData: z.string(), // base64
+        mimeType: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const automation = await db.getSupplierInvoiceAutomationByToken(input.token);
+        if (!automation) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'Invalid or expired link' });
+        }
+
+        // Upload file
+        const buffer = Buffer.from(input.fileData, 'base64');
+        const fileKey = `supplier-shipping-docs/${automation.id}/${input.documentType}/${Date.now()}-${input.fileName}`;
+        const { url } = await storagePut(fileKey, buffer, input.mimeType || 'application/octet-stream');
+
+        // Save document record if we have a portal session
+        if (automation.portalSessionId && automation.purchaseOrderId) {
+          await db.createSupplierDocument({
+            portalSessionId: automation.portalSessionId,
+            purchaseOrderId: automation.purchaseOrderId,
+            vendorId: automation.vendorId || 0,
+            documentType: input.documentType,
+            fileName: input.fileName,
+            fileUrl: url,
+            fileSize: buffer.length,
+            mimeType: input.mimeType,
+          });
+        }
+
+        return { success: true, url };
       }),
   }),
 

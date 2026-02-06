@@ -87,7 +87,9 @@ import {
   crmContacts, crmTags, crmContactTags, whatsappMessages, crmInteractions,
   crmPipelines, crmDeals, contactCaptures, crmEmailCampaigns, crmCampaignRecipients,
   InsertCrmContact, InsertCrmTag, InsertWhatsappMessage, InsertCrmInteraction,
-  InsertCrmPipeline, InsertCrmDeal, InsertContactCapture, InsertCrmEmailCampaign, InsertCrmCampaignRecipient
+  InsertCrmPipeline, InsertCrmDeal, InsertContactCapture, InsertCrmEmailCampaign, InsertCrmCampaignRecipient,
+  // Supplier invoice automation
+  supplierInvoiceAutomations, InsertSupplierInvoiceAutomation
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -8006,4 +8008,74 @@ export async function checkAndTriggerLowStockPurchaseOrder(
     purchaseOrderId: poResult.id,
     reason: `Auto-generated PO ${poNumber} for ${orderQty} units`
   };
+}
+
+// ============================================
+// SUPPLIER INVOICE AUTOMATION
+// ============================================
+
+export async function createSupplierInvoiceAutomation(data: InsertSupplierInvoiceAutomation) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(supplierInvoiceAutomations).values(data);
+  return { id: result[0].insertId, ...data };
+}
+
+export async function getSupplierInvoiceAutomations(options?: {
+  status?: string;
+  vendorId?: number;
+  limit?: number;
+  offset?: number;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (options?.status) {
+    conditions.push(eq(supplierInvoiceAutomations.status, options.status as any));
+  }
+  if (options?.vendorId) {
+    conditions.push(eq(supplierInvoiceAutomations.vendorId, options.vendorId));
+  }
+  let query = db.select().from(supplierInvoiceAutomations);
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as any;
+  }
+  return query
+    .orderBy(desc(supplierInvoiceAutomations.createdAt))
+    .limit(options?.limit || 100)
+    .offset(options?.offset || 0);
+}
+
+export async function getSupplierInvoiceAutomationById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(supplierInvoiceAutomations)
+    .where(eq(supplierInvoiceAutomations.id, id));
+  return result[0] || null;
+}
+
+export async function getSupplierInvoiceAutomationByEmailId(inboundEmailId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(supplierInvoiceAutomations)
+    .where(eq(supplierInvoiceAutomations.inboundEmailId, inboundEmailId));
+  return result[0] || null;
+}
+
+export async function getSupplierInvoiceAutomationByToken(portalToken: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(supplierInvoiceAutomations)
+    .where(eq(supplierInvoiceAutomations.portalToken, portalToken));
+  return result[0] || null;
+}
+
+export async function updateSupplierInvoiceAutomation(
+  id: number,
+  data: Partial<InsertSupplierInvoiceAutomation & { status: string }>
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(supplierInvoiceAutomations).set(data as any)
+    .where(eq(supplierInvoiceAutomations.id, id));
 }
