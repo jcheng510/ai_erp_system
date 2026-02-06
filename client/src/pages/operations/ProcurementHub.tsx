@@ -194,6 +194,16 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
     onError: (err) => toast.error(err.message),
   });
 
+  // AI Agent mutations
+  const compareQuotes = trpc.vendorQuotes.agent.compareQuotes.useMutation({
+    onSuccess: (result) => {
+      toast.success(`Best quote: ${result.bestQuote.vendor} - $${result.bestQuote.totalPrice}`);
+      utils.vendorQuotes.quotes.list.invalidate();
+      utils.vendorQuotes.quotes.getWithVendorInfo.invalidate();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
   const selectedRfq = rfqs?.find((r: any) => r.id === selectedRfqId);
 
   const rfqColumns: Column<any>[] = [
@@ -410,7 +420,23 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
                   {/* Received Quotes Comparison */}
                   {selectedRfqQuotes && selectedRfqQuotes.length > 0 && (
                     <div>
-                      <h4 className="text-sm font-medium mb-2">Received Quotes ({selectedRfqQuotes.length})</h4>
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="text-sm font-medium">Received Quotes ({selectedRfqQuotes.length})</h4>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => compareQuotes.mutate({ rfqId: selectedRfq.id })}
+                          disabled={compareQuotes.isPending}
+                          className="gap-1"
+                        >
+                          {compareQuotes.isPending ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <Bot className="h-3 w-3" />
+                          )}
+                          AI Compare Quotes
+                        </Button>
+                      </div>
                       <div className="border rounded overflow-hidden">
                         <table className="w-full text-sm">
                           <thead className="bg-muted">
@@ -540,7 +566,9 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Create Request for Quote</DialogTitle>
-            <DialogDescription>Send an RFQ to vendors for material pricing</DialogDescription>
+            <DialogDescription>
+              Send an RFQ to vendors for material pricing. Our AI agent will automatically send emails, gather responses, compare quotes, and highlight the best option.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div>
