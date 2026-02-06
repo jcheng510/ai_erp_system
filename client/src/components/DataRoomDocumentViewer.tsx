@@ -24,6 +24,9 @@ import {
 // Set up PDF.js worker
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`;
 
+// Throttle interval for mouse movement tracking (in milliseconds)
+const MOUSE_MOVE_THROTTLE_MS = 100;
+
 interface DocumentViewerProps {
   documentId: number;
   documentUrl: string;
@@ -66,6 +69,7 @@ export default function DataRoomDocumentViewer({
   // Page tracking state
   const currentPageTracking = useRef<PageTrackingData | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const lastMouseMoveTime = useRef<number>(0);
 
   // Mutations for tracking
   const recordPageViewMutation = trpc.dataRoom.pageTracking.recordPageView.useMutation();
@@ -136,10 +140,14 @@ export default function DataRoomDocumentViewer({
     );
   }, []);
 
-  // Track mouse movements (throttled)
+  // Track mouse movements (throttled to at most once per 100ms)
   const handleMouseMove = useCallback(() => {
-    if (currentPageTracking.current) {
+    if (!currentPageTracking.current) return;
+    
+    const now = Date.now();
+    if (now - lastMouseMoveTime.current >= MOUSE_MOVE_THROTTLE_MS) {
       currentPageTracking.current.mouseMovements++;
+      lastMouseMoveTime.current = now;
     }
   }, []);
 
