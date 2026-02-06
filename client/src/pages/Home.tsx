@@ -45,20 +45,20 @@ function KPICard({
       className={`${onClick ? 'cursor-pointer hover:shadow-md transition-shadow' : ''}`}
       onClick={onClick}
     >
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-sm font-medium text-muted-foreground">
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-0 pt-0">
+        <CardTitle className="text-xs font-medium text-muted-foreground">
           {title}
         </CardTitle>
-        <Icon className="h-4 w-4 text-muted-foreground" />
+        <Icon className="h-3.5 w-3.5 text-muted-foreground" />
       </CardHeader>
       <CardContent>
         {loading ? (
-          <Skeleton className="h-8 w-24" />
+          <Skeleton className="h-6 w-20" />
         ) : (
           <>
-            <div className="text-2xl font-bold">{value}</div>
+            <div className="text-lg font-bold">{value}</div>
             {description && (
-              <p className="text-xs text-muted-foreground mt-1">{description}</p>
+              <p className="text-[11px] text-muted-foreground">{description}</p>
             )}
           </>
         )}
@@ -72,53 +72,47 @@ export default function Home() {
   const { data: metrics, isLoading } = trpc.dashboard.metrics.useQuery();
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-3 animate-fade-in">
       {/* Header */}
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
-        <p className="text-muted-foreground mt-1">
-          Overview of your business operations and key metrics.
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-lg font-bold tracking-tight">Dashboard</h1>
+          <p className="text-xs text-muted-foreground">
+            Business overview and key metrics
+          </p>
+        </div>
       </div>
 
-      {/* KPI Grid */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      {/* Consolidated KPI Grid - all metrics in one dense row */}
+      <div className="grid gap-2 grid-cols-3 md:grid-cols-5 lg:grid-cols-9">
         <KPICard
-          title="Revenue This Month"
+          title="Revenue"
           value={formatCurrency(metrics?.revenueThisMonth)}
           icon={DollarSign}
-          description="From all sales orders"
           onClick={() => setLocation('/sales/orders')}
           loading={isLoading}
         />
         <KPICard
-          title="Invoices Paid"
+          title="Collected"
           value={formatCurrency(metrics?.invoicesPaid)}
           icon={TrendingUp}
-          description="Total collected"
           onClick={() => setLocation('/finance/invoices')}
           loading={isLoading}
         />
         <KPICard
-          title="Pending Invoices"
+          title="Pending Inv."
           value={metrics?.pendingInvoices || 0}
           icon={FileText}
-          description="Awaiting payment"
           onClick={() => setLocation('/finance/invoices')}
           loading={isLoading}
         />
         <KPICard
-          title="Open Disputes"
+          title="Disputes"
           value={metrics?.openDisputes || 0}
           icon={AlertTriangle}
-          description="Requiring attention"
           onClick={() => setLocation('/legal/disputes')}
           loading={isLoading}
         />
-      </div>
-
-      {/* Secondary KPIs */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
         <KPICard
           title="Customers"
           value={metrics?.customers || 0}
@@ -141,14 +135,14 @@ export default function Home() {
           loading={isLoading}
         />
         <KPICard
-          title="Active Employees"
+          title="Employees"
           value={metrics?.activeEmployees || 0}
           icon={UserCog}
           onClick={() => setLocation('/hr/employees')}
           loading={isLoading}
         />
         <KPICard
-          title="Active Projects"
+          title="Projects"
           value={metrics?.activeProjects || 0}
           icon={FolderKanban}
           onClick={() => setLocation('/projects')}
@@ -156,23 +150,22 @@ export default function Home() {
         />
       </div>
 
-      {/* Quick Actions */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+      {/* Consolidated summaries and actions in a single row */}
+      <div className="grid gap-2 md:grid-cols-3">
         <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">Finance Overview</CardTitle>
-            <CardDescription>Track invoices, payments, and cash flow</CardDescription>
+          <CardHeader className="pb-0 pt-0">
+            <CardTitle className="text-sm">Finance</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-2">
-            <div className="flex justify-between text-sm">
+          <CardContent className="space-y-1">
+            <div className="flex justify-between text-xs">
               <span className="text-muted-foreground">Pending Invoices</span>
               <span className="font-medium">{metrics?.pendingInvoices || 0}</span>
             </div>
-            <div className="flex justify-between text-sm">
+            <div className="flex justify-between text-xs">
               <span className="text-muted-foreground">Pending POs</span>
               <span className="font-medium">{metrics?.pendingPurchaseOrders || 0}</span>
             </div>
-            <div className="flex justify-between text-sm">
+            <div className="flex justify-between text-xs">
               <span className="text-muted-foreground">Active Contracts</span>
               <span className="font-medium">{metrics?.activeContracts || 0}</span>
             </div>
@@ -180,20 +173,19 @@ export default function Home() {
         </Card>
 
         <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">Operations Summary</CardTitle>
-            <CardDescription>Inventory, vendors, and logistics</CardDescription>
+          <CardHeader className="pb-0 pt-0">
+            <CardTitle className="text-sm">Operations</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-2">
-            <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">Total Products</span>
+          <CardContent className="space-y-1">
+            <div className="flex justify-between text-xs">
+              <span className="text-muted-foreground">Products</span>
               <span className="font-medium">{metrics?.products || 0}</span>
             </div>
-            <div className="flex justify-between text-sm">
+            <div className="flex justify-between text-xs">
               <span className="text-muted-foreground">Active Vendors</span>
               <span className="font-medium">{metrics?.vendors || 0}</span>
             </div>
-            <div className="flex justify-between text-sm">
+            <div className="flex justify-between text-xs">
               <span className="text-muted-foreground">Pending POs</span>
               <span className="font-medium">{metrics?.pendingPurchaseOrders || 0}</span>
             </div>
@@ -201,30 +193,29 @@ export default function Home() {
         </Card>
 
         <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">Quick Actions</CardTitle>
-            <CardDescription>Common tasks and shortcuts</CardDescription>
+          <CardHeader className="pb-0 pt-0">
+            <CardTitle className="text-sm">Quick Actions</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-2">
+          <CardContent className="space-y-0.5">
             <button
               onClick={() => setLocation('/finance/invoices')}
-              className="w-full text-left text-sm p-2 rounded-md hover:bg-muted transition-colors flex items-center gap-2"
+              className="w-full text-left text-xs p-1.5 rounded hover:bg-muted transition-colors flex items-center gap-2"
             >
-              <FileText className="h-4 w-4" />
+              <FileText className="h-3.5 w-3.5" />
               Create Invoice
             </button>
             <button
               onClick={() => setLocation('/operations/purchase-orders')}
-              className="w-full text-left text-sm p-2 rounded-md hover:bg-muted transition-colors flex items-center gap-2"
+              className="w-full text-left text-xs p-1.5 rounded hover:bg-muted transition-colors flex items-center gap-2"
             >
-              <ShoppingCart className="h-4 w-4" />
+              <ShoppingCart className="h-3.5 w-3.5" />
               New Purchase Order
             </button>
             <button
               onClick={() => setLocation('/ai')}
-              className="w-full text-left text-sm p-2 rounded-md hover:bg-muted transition-colors flex items-center gap-2"
+              className="w-full text-left text-xs p-1.5 rounded hover:bg-muted transition-colors flex items-center gap-2"
             >
-              <TrendingUp className="h-4 w-4" />
+              <TrendingUp className="h-3.5 w-3.5" />
               Ask AI Assistant
             </button>
           </CardContent>

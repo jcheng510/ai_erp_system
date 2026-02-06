@@ -52,7 +52,7 @@
   --chart-3: var(--color-blue-600);
   --chart-4: var(--color-blue-700);
   --chart-5: var(--color-blue-800);
-  --radius: 0.65rem;
+  --radius: 0.5rem;
   --background: oklch(1 0 0);
   --foreground: oklch(0.235 0.015 65);
   --card: oklch(1 0 0);
@@ -151,8 +151,8 @@
     width: 100%;
     margin-left: auto;
     margin-right: auto;
-    padding-left: 1rem; /* 16px - mobile padding */
-    padding-right: 1rem;
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
   }
 
   .flex {
@@ -162,16 +162,16 @@
 
   @media (min-width: 640px) {
     .container {
-      padding-left: 1.5rem; /* 24px - tablet padding */
-      padding-right: 1.5rem;
+      padding-left: 1rem;
+      padding-right: 1rem;
     }
   }
 
   @media (min-width: 1024px) {
     .container {
-      padding-left: 2rem; /* 32px - desktop padding */
-      padding-right: 2rem;
-      max-width: 1280px; /* Standard content width */
+      padding-left: 1.5rem;
+      padding-right: 1.5rem;
+      max-width: 1440px;
     }
   }
 }
@@ -205,15 +205,15 @@
 
 /* Data table styles */
 .data-table {
-  @apply w-full text-sm;
+  @apply w-full text-xs;
 }
 
 .data-table th {
-  @apply text-left font-medium text-muted-foreground px-4 py-3 border-b bg-muted/30;
+  @apply text-left font-medium text-muted-foreground px-3 py-1.5 border-b bg-muted/30;
 }
 
 .data-table td {
-  @apply px-4 py-3 border-b border-border/50;
+  @apply px-3 py-1.5 border-b border-border/50;
 }
 
 .data-table tr:hover td {
@@ -239,19 +239,19 @@
 
 /* KPI card styles */
 .kpi-card {
-  @apply p-6 rounded-xl border bg-card;
+  @apply p-3 rounded-lg border bg-card;
 }
 
 .kpi-card-title {
-  @apply text-sm font-medium text-muted-foreground;
+  @apply text-xs font-medium text-muted-foreground;
 }
 
 .kpi-card-value {
-  @apply text-2xl font-semibold mt-2;
+  @apply text-lg font-semibold mt-1;
 }
 
 .kpi-card-change {
-  @apply text-xs mt-1;
+  @apply text-xs mt-0.5;
 }
 
 .kpi-card-change.positive {
@@ -264,24 +264,24 @@
 
 /* Module section styles */
 .module-header {
-  @apply flex items-center justify-between mb-6;
+  @apply flex items-center justify-between mb-3;
 }
 
 .module-title {
-  @apply text-2xl font-semibold tracking-tight;
+  @apply text-lg font-semibold tracking-tight;
 }
 
 .module-description {
-  @apply text-muted-foreground mt-1;
+  @apply text-muted-foreground text-sm mt-0.5;
 }
 
 /* Form styles */
 .form-section {
-  @apply space-y-4 p-6 rounded-lg border bg-card;
+  @apply space-y-3 p-4 rounded-lg border bg-card;
 }
 
 .form-section-title {
-  @apply text-lg font-medium mb-4;
+  @apply text-sm font-medium mb-3;
 }
 
 /* Animation utilities */

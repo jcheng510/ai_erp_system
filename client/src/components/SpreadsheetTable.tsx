@@ -124,8 +124,8 @@ export function SpreadsheetTable<T extends { id: number | string }>({
   selectedRows,
   onSelectionChange,
   stickyHeader = true,
-  compact = false,
-  maxHeight = "calc(100vh - 300px)",
+  compact = true,
+  maxHeight = "calc(100vh - 200px)",
   expandable = false,
   renderExpanded,
   expandedRowId: controlledExpandedId,
@@ -447,7 +447,7 @@ export function SpreadsheetTable<T extends { id: number | string }>({
     );
   };
 
-  const cellPadding = compact ? "px-2 py-1" : "px-3 py-2";
+  const cellPadding = compact ? "px-2 py-0.5" : "px-3 py-1.5";
   const fontSize = compact ? "text-xs" : "text-sm";
 
   // Calculate total columns for expanded row
@@ -489,15 +489,15 @@ export function SpreadsheetTable<T extends { id: number | string }>({
       )}
 
       {/* Toolbar */}
-      <div className="flex items-center gap-2 mb-3 flex-wrap">
+      <div className="flex items-center gap-1.5 mb-2 flex-wrap">
         {showSearch && (
-          <div className="relative flex-1 min-w-[200px] max-w-[300px]">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <div className="relative flex-1 min-w-[180px] max-w-[260px]">
+            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
             <Input
               placeholder="Search..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="pl-8 h-8 text-sm"
+              className="pl-7 h-7 text-xs"
             />
           </div>
         )}
@@ -508,7 +508,7 @@ export function SpreadsheetTable<T extends { id: number | string }>({
             value={filters[col.key as string] || "all"}
             onValueChange={(v) => setFilters({ ...filters, [col.key as string]: v })}
           >
-            <SelectTrigger className="w-[130px] h-8 text-sm">
+            <SelectTrigger className="w-[120px] h-7 text-xs">
               <Filter className="h-3 w-3 mr-1" />
               <SelectValue placeholder={col.header} />
             </SelectTrigger>
@@ -524,15 +524,15 @@ export function SpreadsheetTable<T extends { id: number | string }>({
         <div className="flex-1" />
 
         {showExport && (
-          <Button variant="outline" size="sm" onClick={exportToCsv} className="h-8">
-            <Download className="h-4 w-4 mr-1" />
+          <Button variant="outline" size="sm" onClick={exportToCsv} className="h-7 text-xs">
+            <Download className="h-3.5 w-3.5 mr-1" />
             Export
           </Button>
         )}
 
         {onAdd && (
-          <Button size="sm" onClick={onAdd} className="h-8">
-            <Plus className="h-4 w-4 mr-1" />
+          <Button size="sm" onClick={onAdd} className="h-7 text-xs">
+            <Plus className="h-3.5 w-3.5 mr-1" />
             {addLabel}
           </Button>
         )}
@@ -659,7 +659,7 @@ export function SpreadsheetTable<T extends { id: number | string }>({
                     <tr key={`${row.id}-expanded`} className="bg-muted/20">
                       <td colSpan={totalColumns} className="p-0">
                         <div className="border-t border-b border-primary/20 bg-card">
-                          <div className="p-4">
+                          <div className="p-3">
                             {renderExpanded(row, () => setExpandedId(null))}
                           </div>
                         </div>
@@ -731,7 +731,7 @@ export function SpreadsheetTable<T extends { id: number | string }>({
       </div>
 
       {/* Footer */}
-      <div className="flex items-center justify-between mt-2 text-xs text-muted-foreground">
+      <div className="flex items-center justify-between mt-1 text-[11px] text-muted-foreground">
         <span>{filteredData.length} of {data.length} rows</span>
         {selectedRows && selectedRows.size > 0 && (
           <span>{selectedRows.size} selected</span>

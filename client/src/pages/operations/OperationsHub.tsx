@@ -46,65 +46,62 @@ function formatDate(value: string | Date | null | undefined) {
 }
 
 // Detail Panel Components
-function WorkOrderDetailPanel({ workOrder, onStatusChange, onStartProduction, onCompleteProduction }: { 
-  workOrder: any; 
+function WorkOrderDetailPanel({ workOrder, onStatusChange, onStartProduction, onCompleteProduction }: {
+  workOrder: any;
   onStatusChange: (id: number, status: string) => void;
   onStartProduction?: (id: number) => void;
   onCompleteProduction?: (id: number, completedQuantity: string) => void;
 }) {
   const statusOption = workOrderStatuses.find(s => s.value === workOrder.status);
-  
+
   return (
-    <div className="p-6 space-y-4">
-      <div className="flex items-start justify-between">
-        <div>
-          <h3 className="text-lg font-semibold">WO-{workOrder.id}</h3>
-          <p className="text-sm text-muted-foreground">{workOrder.product?.name || workOrder.bom?.name}</p>
-        </div>
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Badge className={statusOption?.color}>{statusOption?.label}</Badge>
+          <span className="text-sm font-semibold">WO-{workOrder.id}</span>
+          <span className="text-xs text-muted-foreground">{workOrder.product?.name || workOrder.bom?.name}</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <Badge className={`text-[10px] ${statusOption?.color}`}>{statusOption?.label}</Badge>
           {(workOrder.status === "pending" || workOrder.status === "draft" || workOrder.status === "scheduled") && (
-            <Button size="sm" onClick={() => onStartProduction?.(workOrder.id)}>
-              <Play className="h-4 w-4 mr-1" /> Start
+            <Button size="sm" className="h-6 text-xs" onClick={() => onStartProduction?.(workOrder.id)}>
+              <Play className="h-3 w-3 mr-1" /> Start
             </Button>
           )}
           {workOrder.status === "in_progress" && (
             <>
-              <Button size="sm" variant="outline" onClick={() => onStatusChange(workOrder.id, "scheduled")}>
-                <Pause className="h-4 w-4 mr-1" /> Pause
+              <Button size="sm" variant="outline" className="h-6 text-xs" onClick={() => onStatusChange(workOrder.id, "scheduled")}>
+                <Pause className="h-3 w-3 mr-1" /> Pause
               </Button>
-              <Button size="sm" onClick={() => onCompleteProduction?.(workOrder.id, workOrder.quantity)}>
-                <CheckCircle className="h-4 w-4 mr-1" /> Complete
+              <Button size="sm" className="h-6 text-xs" onClick={() => onCompleteProduction?.(workOrder.id, workOrder.quantity)}>
+                <CheckCircle className="h-3 w-3 mr-1" /> Complete
               </Button>
             </>
           )}
         </div>
       </div>
-      
-      <div className="grid grid-cols-4 gap-4 text-sm">
-        <div className="p-3 bg-muted rounded-lg">
-          <div className="text-muted-foreground">Quantity</div>
+
+      <div className="grid grid-cols-4 gap-2 text-xs">
+        <div className="p-2 bg-muted rounded">
+          <div className="text-muted-foreground text-[10px]">Quantity</div>
           <div className="font-medium">{workOrder.quantity}</div>
         </div>
-        <div className="p-3 bg-muted rounded-lg">
-          <div className="text-muted-foreground">Completed</div>
+        <div className="p-2 bg-muted rounded">
+          <div className="text-muted-foreground text-[10px]">Completed</div>
           <div className="font-medium">{workOrder.completedQuantity || 0}</div>
         </div>
-        <div className="p-3 bg-muted rounded-lg">
-          <div className="text-muted-foreground">Start Date</div>
-          <div className="font-medium">{workOrder.startDate ? formatDate(workOrder.startDate) : "Not set"}</div>
+        <div className="p-2 bg-muted rounded">
+          <div className="text-muted-foreground text-[10px]">Start</div>
+          <div className="font-medium">{workOrder.startDate ? formatDate(workOrder.startDate) : "-"}</div>
         </div>
-        <div className="p-3 bg-muted rounded-lg">
-          <div className="text-muted-foreground">Due Date</div>
-          <div className="font-medium">{workOrder.dueDate ? formatDate(workOrder.dueDate) : "Not set"}</div>
+        <div className="p-2 bg-muted rounded">
+          <div className="text-muted-foreground text-[10px]">Due</div>
+          <div className="font-medium">{workOrder.dueDate ? formatDate(workOrder.dueDate) : "-"}</div>
         </div>
       </div>
-      
+
       {workOrder.notes && (
-        <div>
-          <h4 className="font-medium mb-1">Notes</h4>
-          <p className="text-sm text-muted-foreground">{workOrder.notes}</p>
-        </div>
+        <p className="text-xs text-muted-foreground">{workOrder.notes}</p>
       )}
     </div>
   );
@@ -264,10 +261,7 @@ function InventoryItemDetailPanel({ item }: { item: any }) {
 
 export default function OperationsHub() {
   const [searchTerm, setSearchTerm] = useState("");
-  const [activeTab, setActiveTab] = useState("procurement");
-  const [procurementSubTab, setProcurementSubTab] = useState("purchase-orders");
-  const [manufacturingSubTab, setManufacturingSubTab] = useState("workorders");
-  const [inventorySubTab, setInventorySubTab] = useState("exceptions");
+  const [activeTab, setActiveTab] = useState("purchase-orders");
   
   // Expanded row states
   const [expandedPoId, setExpandedPoId] = useState<number | string | null>(null);
@@ -422,354 +416,236 @@ export default function OperationsHub() {
   }, [alerts]);
 
   return (
-    <div className="p-6 space-y-4">
+    <div className="space-y-2">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">Operations Hub</h1>
-          <p className="text-muted-foreground">
-            Procurement, Manufacturing, and Inventory Management
+          <h1 className="text-lg font-bold">Operations Hub</h1>
+          <p className="text-xs text-muted-foreground">
+            Procurement, Manufacturing, and Inventory
           </p>
         </div>
         <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
           <Input
             placeholder="Search all..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-9 w-64"
+            className="pl-8 w-52 h-7 text-xs"
           />
         </div>
       </div>
 
-      {/* Consolidated Stats Row */}
-      <div className="grid grid-cols-5 gap-3">
-        <Card className="cursor-pointer hover:bg-muted/50" onClick={() => { setActiveTab("procurement"); setProcurementSubTab("purchase-orders"); }}>
-          <CardContent className="pt-3 pb-3">
+      {/* Inline Stats Row */}
+      <div className="grid grid-cols-5 gap-2">
+        <Card className="cursor-pointer hover:bg-muted/50" onClick={() => setActiveTab("purchase-orders")}>
+          <CardContent className="pt-2 pb-2">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs text-muted-foreground">Pending POs</p>
-                <p className="text-xl font-bold">{stats.pendingPos}</p>
+                <p className="text-[10px] text-muted-foreground">Pending POs</p>
+                <p className="text-base font-bold">{stats.pendingPos}</p>
               </div>
-              <ShoppingCart className="h-6 w-6 text-muted-foreground" />
+              <ShoppingCart className="h-4 w-4 text-muted-foreground" />
             </div>
           </CardContent>
         </Card>
-        <Card className="cursor-pointer hover:bg-muted/50" onClick={() => { setActiveTab("procurement"); setProcurementSubTab("vendors"); }}>
-          <CardContent className="pt-3 pb-3">
+        <Card className="cursor-pointer hover:bg-muted/50" onClick={() => setActiveTab("vendors")}>
+          <CardContent className="pt-2 pb-2">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs text-muted-foreground">Active Vendors</p>
-                <p className="text-xl font-bold">{stats.activeVendors}</p>
+                <p className="text-[10px] text-muted-foreground">Active Vendors</p>
+                <p className="text-base font-bold">{stats.activeVendors}</p>
               </div>
-              <Users className="h-6 w-6 text-muted-foreground" />
+              <Users className="h-4 w-4 text-muted-foreground" />
             </div>
           </CardContent>
         </Card>
-        <Card className="cursor-pointer hover:bg-muted/50" onClick={() => { setActiveTab("procurement"); setProcurementSubTab("materials"); }}>
-          <CardContent className="pt-3 pb-3">
+        <Card className="cursor-pointer hover:bg-muted/50" onClick={() => setActiveTab("materials")}>
+          <CardContent className="pt-2 pb-2">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs text-muted-foreground">Low Stock</p>
-                <p className="text-xl font-bold text-amber-600">{stats.lowStockMaterials}</p>
+                <p className="text-[10px] text-muted-foreground">Low Stock</p>
+                <p className="text-base font-bold text-amber-600">{stats.lowStockMaterials}</p>
               </div>
-              <AlertTriangle className="h-6 w-6 text-amber-500" />
+              <AlertTriangle className="h-4 w-4 text-amber-500" />
             </div>
           </CardContent>
         </Card>
-        <Card className="cursor-pointer hover:bg-muted/50" onClick={() => { setActiveTab("manufacturing"); setManufacturingSubTab("workorders"); }}>
-          <CardContent className="pt-3 pb-3">
+        <Card className="cursor-pointer hover:bg-muted/50" onClick={() => setActiveTab("workorders")}>
+          <CardContent className="pt-2 pb-2">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs text-muted-foreground">Open WOs</p>
-                <p className="text-xl font-bold">{stats.openWorkOrders}</p>
+                <p className="text-[10px] text-muted-foreground">Open WOs</p>
+                <p className="text-base font-bold">{stats.openWorkOrders}</p>
               </div>
-              <Factory className="h-6 w-6 text-muted-foreground" />
+              <Factory className="h-4 w-4 text-muted-foreground" />
             </div>
           </CardContent>
         </Card>
-        <Card className="cursor-pointer hover:bg-muted/50" onClick={() => { setActiveTab("inventory"); setInventorySubTab("exceptions"); }}>
-          <CardContent className="pt-3 pb-3">
+        <Card className="cursor-pointer hover:bg-muted/50" onClick={() => setActiveTab("exceptions")}>
+          <CardContent className="pt-2 pb-2">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs text-muted-foreground">Exceptions</p>
-                <p className="text-xl font-bold text-red-600">{stats.exceptions}</p>
+                <p className="text-[10px] text-muted-foreground">Exceptions</p>
+                <p className="text-base font-bold text-red-600">{stats.exceptions}</p>
               </div>
-              <AlertTriangle className="h-6 w-6 text-red-500" />
+              <AlertTriangle className="h-4 w-4 text-red-500" />
             </div>
           </CardContent>
         </Card>
       </div>
 
-      {/* Main Tabbed Interface */}
+      {/* Flat single-level tabs - all views accessible in one click */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-3">
-          <TabsTrigger value="procurement" className="gap-2">
-            <ShoppingCart className="h-4 w-4" />
-            Procurement
+        <TabsList className="w-full justify-start overflow-x-auto">
+          <TabsTrigger value="purchase-orders">POs</TabsTrigger>
+          <TabsTrigger value="vendors">Vendors</TabsTrigger>
+          <TabsTrigger value="materials">Materials</TabsTrigger>
+          <TabsTrigger value="workorders">Work Orders</TabsTrigger>
+          <TabsTrigger value="boms">BOMs</TabsTrigger>
+          <TabsTrigger value="locations">Locations</TabsTrigger>
+          <TabsTrigger value="exceptions">
+            Exceptions
+            {exceptions.length > 0 && (
+              <Badge variant="destructive" className="ml-1 h-4 px-1 text-[10px]">
+                {exceptions.length}
+              </Badge>
+            )}
           </TabsTrigger>
-          <TabsTrigger value="manufacturing" className="gap-2">
-            <Factory className="h-4 w-4" />
-            Manufacturing
-          </TabsTrigger>
-          <TabsTrigger value="inventory" className="gap-2">
-            <Package className="h-4 w-4" />
-            Inventory
-          </TabsTrigger>
+          <TabsTrigger value="inventory">Inventory</TabsTrigger>
         </TabsList>
 
-        {/* PROCUREMENT TAB */}
-        <TabsContent value="procurement" className="mt-4">
-          <Tabs value={procurementSubTab} onValueChange={setProcurementSubTab}>
-            <TabsList>
-              <TabsTrigger value="purchase-orders" className="gap-2">
-                <FileText className="h-4 w-4" />
-                Purchase Orders
-              </TabsTrigger>
-              <TabsTrigger value="vendors" className="gap-2">
-                <Users className="h-4 w-4" />
-                Vendors
-              </TabsTrigger>
-              <TabsTrigger value="materials" className="gap-2">
-                <Package className="h-4 w-4" />
-                Materials
-              </TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="purchase-orders" className="mt-4">
-              <Card>
-                <CardContent className="pt-6">
-                  <SpreadsheetTable
-                    data={purchaseOrders || []}
-                    columns={poColumns}
-                    isLoading={posLoading}
-                    showSearch
-                    onAdd={() => setShowPoDialog(true)}
-                    addLabel="New PO"
-                    expandedRowId={expandedPoId}
-                    onExpandChange={setExpandedPoId}
-                  />
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            <TabsContent value="vendors" className="mt-4">
-              <Card>
-                <CardContent className="pt-6">
-                  <SpreadsheetTable
-                    data={vendors || []}
-                    columns={vendorColumns}
-                    isLoading={vendorsLoading}
-                    showSearch
-                    onAdd={() => setShowVendorDialog(true)}
-                    addLabel="New Vendor"
-                    expandedRowId={expandedVendorId}
-                    onExpandChange={setExpandedVendorId}
-                  />
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            <TabsContent value="materials" className="mt-4">
-              <Card>
-                <CardContent className="pt-6">
-                  <SpreadsheetTable
-                    data={rawMaterials || []}
-                    columns={materialColumns}
-                    isLoading={materialsLoading}
-                    showSearch
-                    onAdd={() => setShowMaterialDialog(true)}
-                    addLabel="New Material"
-                    expandedRowId={expandedMaterialId}
-                    onExpandChange={setExpandedMaterialId}
-                  />
-                </CardContent>
-              </Card>
-            </TabsContent>
-          </Tabs>
+        <TabsContent value="purchase-orders" className="mt-2">
+          <SpreadsheetTable
+            data={purchaseOrders || []}
+            columns={poColumns}
+            isLoading={posLoading}
+            showSearch
+            onAdd={() => setShowPoDialog(true)}
+            addLabel="New PO"
+            expandedRowId={expandedPoId}
+            onExpandChange={setExpandedPoId}
+          />
         </TabsContent>
 
-        {/* MANUFACTURING TAB */}
-        <TabsContent value="manufacturing" className="mt-4">
-          <Tabs value={manufacturingSubTab} onValueChange={setManufacturingSubTab}>
-            <TabsList>
-              <TabsTrigger value="workorders" className="gap-2">
-                <Clock className="h-4 w-4" />
-                Work Orders
-              </TabsTrigger>
-              <TabsTrigger value="boms" className="gap-2">
-                <ClipboardList className="h-4 w-4" />
-                BOMs
-              </TabsTrigger>
-              <TabsTrigger value="locations" className="gap-2">
-                <MapPin className="h-4 w-4" />
-                Locations
-              </TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="workorders" className="mt-4">
-              <Card>
-                <CardContent className="pt-6">
-                  <SpreadsheetTable
-                    data={workOrders || []}
-                    columns={workOrderColumns}
-                    isLoading={workOrdersLoading}
-                    showSearch
-                    onAdd={() => setShowWorkOrderDialog(true)}
-                    addLabel="New Work Order"
-                    expandedRowId={expandedWorkOrderId}
-                    onExpandChange={setExpandedWorkOrderId}
-                    renderExpanded={(workOrder) => (
-                      <WorkOrderDetailPanel 
-                        workOrder={workOrder} 
-                        onStatusChange={(id, status) => updateWorkOrderStatus.mutate({ id, status })}
-                        onStartProduction={(id) => startProduction.mutate({ id })}
-                        onCompleteProduction={(id, completedQuantity) => completeProduction.mutate({ id, completedQuantity })}
-                      />
-                    )}
-                  />
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            <TabsContent value="boms" className="mt-4">
-              <Card>
-                <CardContent className="pt-6">
-                  <SpreadsheetTable
-                    data={boms || []}
-                    columns={bomColumns}
-                    isLoading={bomsLoading}
-                    showSearch
-                    onAdd={() => setShowBomDialog(true)}
-                    addLabel="New BOM"
-                    expandedRowId={expandedBomId}
-                    onExpandChange={setExpandedBomId}
-                    renderExpanded={(bom) => (
-                      <BomDetailPanel bom={bom} />
-                    )}
-                  />
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            <TabsContent value="locations" className="mt-4">
-              <Card>
-                <CardContent className="pt-6">
-                  <SpreadsheetTable
-                    data={locations || []}
-                    columns={locationColumns}
-                    isLoading={locationsLoading}
-                    showSearch
-                    expandedRowId={expandedLocationId}
-                    onExpandChange={setExpandedLocationId}
-                    renderExpanded={(location, onClose) => (
-                      <LocationDetailPanel location={location} onClose={onClose} />
-                    )}
-                  />
-                </CardContent>
-              </Card>
-            </TabsContent>
-          </Tabs>
+        <TabsContent value="vendors" className="mt-2">
+          <SpreadsheetTable
+            data={vendors || []}
+            columns={vendorColumns}
+            isLoading={vendorsLoading}
+            showSearch
+            onAdd={() => setShowVendorDialog(true)}
+            addLabel="New Vendor"
+            expandedRowId={expandedVendorId}
+            onExpandChange={setExpandedVendorId}
+          />
         </TabsContent>
 
-        {/* INVENTORY TAB */}
-        <TabsContent value="inventory" className="mt-4">
-          <Tabs value={inventorySubTab} onValueChange={setInventorySubTab}>
-            <TabsList>
-              <TabsTrigger value="exceptions" className="gap-2">
-                <AlertTriangle className="h-4 w-4" />
-                Exceptions
-                {exceptions.length > 0 && (
-                  <Badge variant="destructive" className="ml-1 h-5 px-1.5">
-                    {exceptions.length}
-                  </Badge>
-                )}
-              </TabsTrigger>
-              <TabsTrigger value="by_item" className="gap-2">
-                <Package className="h-4 w-4" />
-                By Item
-              </TabsTrigger>
-              <TabsTrigger value="by_location" className="gap-2">
-                <MapPin className="h-4 w-4" />
-                By Location
-              </TabsTrigger>
-            </TabsList>
+        <TabsContent value="materials" className="mt-2">
+          <SpreadsheetTable
+            data={rawMaterials || []}
+            columns={materialColumns}
+            isLoading={materialsLoading}
+            showSearch
+            onAdd={() => setShowMaterialDialog(true)}
+            addLabel="New Material"
+            expandedRowId={expandedMaterialId}
+            onExpandChange={setExpandedMaterialId}
+          />
+        </TabsContent>
 
-            <TabsContent value="exceptions" className="mt-4">
-              <Card>
-                <CardContent className="pt-6">
-                  {exceptions.length === 0 ? (
-                    <div className="text-center py-12">
-                      <CheckCircle className="h-12 w-12 text-green-500 mx-auto mb-4" />
-                      <p className="text-lg font-medium">No exceptions</p>
-                      <p className="text-sm text-muted-foreground">All operations running smoothly</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {exceptions.map((exc: any) => (
-                        <div key={exc.id} className={`border-l-4 p-4 rounded ${
-                          exc.severity === 'critical' ? 'border-red-500 bg-red-50' :
-                          exc.severity === 'warning' ? 'border-yellow-500 bg-yellow-50' :
-                          'border-blue-500 bg-blue-50'
-                        }`}>
-                          <div className="flex items-start justify-between">
-                            <div className="flex-1">
-                              <div className="flex items-center gap-2">
-                                <Badge variant={exc.severity === 'critical' ? 'destructive' : 'secondary'}>
-                                  {exc.severity}
-                                </Badge>
-                                <span className="font-medium">{exc.title}</span>
-                              </div>
-                              <p className="text-sm text-muted-foreground mt-1">{exc.description}</p>
-                              <p className="text-xs text-muted-foreground mt-1">
-                                {exc.entityType} #{exc.entityId} • {formatDate(exc.createdAt)}
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </TabsContent>
+        <TabsContent value="workorders" className="mt-2">
+          <SpreadsheetTable
+            data={workOrders || []}
+            columns={workOrderColumns}
+            isLoading={workOrdersLoading}
+            showSearch
+            onAdd={() => setShowWorkOrderDialog(true)}
+            addLabel="New Work Order"
+            expandedRowId={expandedWorkOrderId}
+            onExpandChange={setExpandedWorkOrderId}
+            renderExpanded={(workOrder) => (
+              <WorkOrderDetailPanel
+                workOrder={workOrder}
+                onStatusChange={(id, status) => updateWorkOrderStatus.mutate({ id, status })}
+                onStartProduction={(id) => startProduction.mutate({ id })}
+                onCompleteProduction={(id, completedQuantity) => completeProduction.mutate({ id, completedQuantity })}
+              />
+            )}
+          />
+        </TabsContent>
 
-            <TabsContent value="by_item" className="mt-4">
-              <Card>
-                <CardContent className="pt-6">
-                  <SpreadsheetTable
-                    data={inventory || []}
-                    columns={inventoryColumns}
-                    isLoading={inventoryLoading}
-                    showSearch
-                    expandedRowId={expandedInventoryId}
-                    onExpandChange={setExpandedInventoryId}
-                    renderExpanded={(item) => (
-                      <InventoryItemDetailPanel item={item} />
-                    )}
-                  />
-                </CardContent>
-              </Card>
-            </TabsContent>
+        <TabsContent value="boms" className="mt-2">
+          <SpreadsheetTable
+            data={boms || []}
+            columns={bomColumns}
+            isLoading={bomsLoading}
+            showSearch
+            onAdd={() => setShowBomDialog(true)}
+            addLabel="New BOM"
+            expandedRowId={expandedBomId}
+            onExpandChange={setExpandedBomId}
+            renderExpanded={(bom) => (
+              <BomDetailPanel bom={bom} />
+            )}
+          />
+        </TabsContent>
 
-            <TabsContent value="by_location" className="mt-4">
-              <Card>
-                <CardContent className="pt-6">
-                  <SpreadsheetTable
-                    data={locations || []}
-                    columns={locationColumns}
-                    isLoading={locationsLoading}
-                    showSearch
-                    expandedRowId={expandedLocationId}
-                    onExpandChange={setExpandedLocationId}
-                    renderExpanded={(location) => (
-                      <LocationDetailPanel location={location} />
-                    )}
-                  />
-                </CardContent>
-              </Card>
-            </TabsContent>
-          </Tabs>
+        <TabsContent value="locations" className="mt-2">
+          <SpreadsheetTable
+            data={locations || []}
+            columns={locationColumns}
+            isLoading={locationsLoading}
+            showSearch
+            expandedRowId={expandedLocationId}
+            onExpandChange={setExpandedLocationId}
+            renderExpanded={(location) => (
+              <LocationDetailPanel location={location} />
+            )}
+          />
+        </TabsContent>
+
+        <TabsContent value="exceptions" className="mt-2">
+          {exceptions.length === 0 ? (
+            <div className="text-center py-6">
+              <CheckCircle className="h-8 w-8 text-green-500 mx-auto mb-2" />
+              <p className="text-sm font-medium">No exceptions</p>
+              <p className="text-xs text-muted-foreground">All operations running smoothly</p>
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              {exceptions.map((exc: any) => (
+                <div key={exc.id} className={`border-l-4 p-2.5 rounded text-xs ${
+                  exc.severity === 'critical' ? 'border-red-500 bg-red-50 dark:bg-red-950/30' :
+                  exc.severity === 'warning' ? 'border-yellow-500 bg-yellow-50 dark:bg-yellow-950/30' :
+                  'border-blue-500 bg-blue-50 dark:bg-blue-950/30'
+                }`}>
+                  <div className="flex items-center gap-2">
+                    <Badge variant={exc.severity === 'critical' ? 'destructive' : 'secondary'} className="text-[10px] px-1 py-0">
+                      {exc.severity}
+                    </Badge>
+                    <span className="font-medium">{exc.title}</span>
+                    <span className="text-muted-foreground ml-auto">{exc.entityType} #{exc.entityId}</span>
+                  </div>
+                  {exc.description && <p className="text-muted-foreground mt-0.5">{exc.description}</p>}
+                </div>
+              ))}
+            </div>
+          )}
+        </TabsContent>
+
+        <TabsContent value="inventory" className="mt-2">
+          <SpreadsheetTable
+            data={inventory || []}
+            columns={inventoryColumns}
+            isLoading={inventoryLoading}
+            showSearch
+            expandedRowId={expandedInventoryId}
+            onExpandChange={setExpandedInventoryId}
+            renderExpanded={(item) => (
+              <InventoryItemDetailPanel item={item} />
+            )}
+          />
         </TabsContent>
       </Tabs>
 

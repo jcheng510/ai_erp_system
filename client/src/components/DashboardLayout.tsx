@@ -149,9 +149,9 @@ const menuGroups = [
 ];
 
 const SIDEBAR_WIDTH_KEY = "sidebar-width";
-const DEFAULT_WIDTH = 260;
-const MIN_WIDTH = 200;
-const MAX_WIDTH = 400;
+const DEFAULT_WIDTH = 220;
+const MIN_WIDTH = 180;
+const MAX_WIDTH = 320;
 
 const roleColors: Record<string, string> = {
   admin: "bg-red-500/10 text-red-500 border-red-500/20",
@@ -360,18 +360,18 @@ function DashboardLayoutContent({
           className="border-r border-border/40"
           disableTransition={isResizing}
         >
-          <SidebarHeader className="h-16 justify-center border-b border-border/40">
-            <div className="flex items-center gap-3 px-2 transition-all w-full">
+          <SidebarHeader className="h-11 justify-center border-b border-border/40">
+            <div className="flex items-center gap-2 px-1.5 transition-all w-full">
               <button
                 onClick={toggleSidebar}
-                className="h-8 w-8 flex items-center justify-center hover:bg-accent rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring shrink-0"
+                className="h-7 w-7 flex items-center justify-center hover:bg-accent rounded-md transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring shrink-0"
                 aria-label="Toggle navigation"
               >
-                <PanelLeft className="h-4 w-4 text-muted-foreground" />
+                <PanelLeft className="h-3.5 w-3.5 text-muted-foreground" />
               </button>
               {!isCollapsed ? (
                 <div className="flex items-center gap-2 min-w-0">
-                  <span className="font-semibold tracking-tight truncate text-sm">
+                  <span className="font-semibold tracking-tight truncate text-xs">
                     ERP System
                   </span>
                 </div>
@@ -379,35 +379,35 @@ function DashboardLayoutContent({
             </div>
           </SidebarHeader>
 
-          <SidebarContent className="overflow-y-auto px-2 py-2">
-            <nav className="flex flex-col gap-1">
+          <SidebarContent className="overflow-y-auto px-1.5 py-1">
+            <nav className="flex flex-col gap-0.5">
               {menuGroups.map((group) => (
-                <div key={group.label} className="mb-1">
+                <div key={group.label} className="mb-0.5">
                   {!isCollapsed && (
                     <button
                       onClick={() => toggleGroup(group.label)}
-                      className="w-full flex items-center justify-between px-2 py-1 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider hover:text-foreground transition-colors"
+                      className="w-full flex items-center justify-between px-2 py-0.5 text-[9px] font-semibold text-muted-foreground uppercase tracking-wider hover:text-foreground transition-colors"
                     >
                       <span>{group.label}</span>
-                      <ChevronDown className={`h-3 w-3 transition-transform duration-200 ${openGroups.includes(group.label) ? "" : "-rotate-90"}`} />
+                      <ChevronDown className={`h-2.5 w-2.5 transition-transform duration-200 ${openGroups.includes(group.label) ? "" : "-rotate-90"}`} />
                     </button>
                   )}
                   {(isCollapsed || openGroups.includes(group.label)) && (
-                    <div className="flex flex-col gap-0.5">
+                    <div className="flex flex-col">
                       {group.items.map(item => {
                         const isActive = location === item.path;
                         return (
                           <button
                             key={item.path}
                             onClick={() => setLocation(item.path)}
-                            className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-sm transition-colors ${
+                            className={`flex items-center gap-2 px-2 py-1 rounded-md text-xs transition-colors ${
                               isActive
                                 ? "bg-primary/10 text-primary font-medium"
                                 : "text-muted-foreground hover:bg-accent hover:text-foreground"
                             } ${isCollapsed ? "justify-center" : ""}`}
                             title={isCollapsed ? item.label : undefined}
                           >
-                            <item.icon className={`h-4 w-4 shrink-0 ${isActive ? "text-primary" : ""}`} />
+                            <item.icon className={`h-3.5 w-3.5 shrink-0 ${isActive ? "text-primary" : ""}`} />
                             {!isCollapsed && <span className="truncate">{item.label}</span>}
                           </button>
                         );
@@ -419,25 +419,25 @@ function DashboardLayoutContent({
             </nav>
           </SidebarContent>
 
-          <SidebarFooter className="p-3 border-t border-border/40">
+          <SidebarFooter className="p-2 border-t border-border/40">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <button className="flex items-center gap-3 rounded-lg px-1 py-1 hover:bg-accent/50 transition-colors w-full text-left group-data-[collapsible=icon]:justify-center focus:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                  <Avatar className="h-9 w-9 border shrink-0">
-                    <AvatarFallback className="text-xs font-medium bg-primary/10 text-primary">
+                <button className="flex items-center gap-2 rounded-md px-1 py-0.5 hover:bg-accent/50 transition-colors w-full text-left group-data-[collapsible=icon]:justify-center focus:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                  <Avatar className="h-7 w-7 border shrink-0">
+                    <AvatarFallback className="text-[10px] font-medium bg-primary/10 text-primary">
                       {user?.name?.charAt(0).toUpperCase() || "U"}
                     </AvatarFallback>
                   </Avatar>
                   <div className="flex-1 min-w-0 group-data-[collapsible=icon]:hidden">
-                    <div className="flex items-center gap-2">
-                      <p className="text-sm font-medium truncate leading-none">
+                    <div className="flex items-center gap-1.5">
+                      <p className="text-xs font-medium truncate leading-none">
                         {user?.name || "User"}
                       </p>
-                      <Badge variant="outline" className={`text-[10px] px-1.5 py-0 ${roleColors[user?.role || "user"]}`}>
+                      <Badge variant="outline" className={`text-[9px] px-1 py-0 ${roleColors[user?.role || "user"]}`}>
                         {user?.role?.toUpperCase()}
                       </Badge>
                     </div>
-                    <p className="text-xs text-muted-foreground truncate mt-1">
+                    <p className="text-[10px] text-muted-foreground truncate mt-0.5">
                       {user?.email || "-"}
                     </p>
                   </div>
@@ -480,26 +480,26 @@ function DashboardLayoutContent({
         <AutonomousAgentBar />
 
         {/* Top header bar */}
-        <header className="flex h-14 items-center justify-between border-b border-border/40 bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/60 sticky top-0 z-40">
-          <div className="flex items-center gap-3">
-            {isMobile && <SidebarTrigger className="h-9 w-9 rounded-lg" />}
+        <header className="flex h-10 items-center justify-between border-b border-border/40 bg-background/95 px-3 backdrop-blur supports-[backdrop-filter]:bg-background/60 sticky top-0 z-40">
+          <div className="flex items-center gap-2">
+            {isMobile && <SidebarTrigger className="h-7 w-7 rounded-md" />}
             <button
               onClick={() => setAiCommandOpen(true)}
-              className="relative hidden sm:flex items-center gap-2 w-64 h-9 px-3 bg-muted/50 hover:bg-muted rounded-md border border-border/40 text-sm text-muted-foreground transition-colors"
+              className="relative hidden sm:flex items-center gap-2 w-56 h-7 px-2.5 bg-muted/50 hover:bg-muted rounded-md border border-border/40 text-xs text-muted-foreground transition-colors"
             >
-              <Search className="h-4 w-4" />
+              <Search className="h-3.5 w-3.5" />
               <span className="flex-1 text-left">Search or ask AI...</span>
-              <kbd className="pointer-events-none hidden h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium opacity-100 sm:flex">
-                <span className="text-xs">⌘</span>K
+              <kbd className="pointer-events-none hidden h-4 select-none items-center gap-0.5 rounded border bg-muted px-1 font-mono text-[9px] font-medium opacity-100 sm:flex">
+                <span className="text-[10px]">⌘</span>K
               </kbd>
             </button>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             <NotificationCenter />
           </div>
         </header>
         <AICommandBar open={aiCommandOpen} onOpenChange={setAiCommandOpen} />
-        <main className="flex-1 overflow-auto p-4 md:p-6">{children}</main>
+        <main className="flex-1 overflow-auto p-2 md:p-3">{children}</main>
       </SidebarInset>
 
       {/* Floating AI Assistant - available throughout the app */}
