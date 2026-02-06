@@ -68,7 +68,7 @@ function ProductDetailPanel({ product }: { product: any }) {
   );
 }
 
-function OrderDetailPanel({ order, onStatusChange }: { order: any; onStatusChange: (id: number, status: string) => void }) {
+function OrderDetailPanel({ order, onStatusChange, onConvertToInvoice, isConverting }: { order: any; onStatusChange: (id: number, status: string) => void; onConvertToInvoice: (orderId: number) => void; isConverting?: boolean }) {
   const statusOption = orderStatuses.find(s => s.value === order.status);
   return (
     <div className="p-6 space-y-4">
@@ -84,6 +84,12 @@ function OrderDetailPanel({ order, onStatusChange }: { order: any; onStatusChang
           )}
           {order.status === "confirmed" && (
             <Button size="sm" onClick={() => onStatusChange(order.id, "shipped")}>Ship</Button>
+          )}
+          {order.status !== "cancelled" && order.status !== "refunded" && (
+            <Button size="sm" variant="outline" onClick={() => onConvertToInvoice(order.id)} disabled={isConverting}>
+              {isConverting ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <FileText className="h-4 w-4 mr-1" />}
+              Create Invoice
+            </Button>
           )}
         </div>
       </div>
@@ -222,12 +228,17 @@ export default function SalesHub() {
 
   const { data: products, isLoading: productsLoading } = trpc.products.list.useQuery();
   const { data: orders, isLoading: ordersLoading, refetch: refetchOrders } = trpc.orders.list.useQuery();
-  const { data: invoices, isLoading: invoicesLoading } = trpc.invoices.list.useQuery();
+  const { data: invoices, isLoading: invoicesLoading, refetch: refetchInvoices } = trpc.invoices.list.useQuery();
   const { data: customers, isLoading: customersLoading } = trpc.customers.list.useQuery();
   const { data: payments, isLoading: paymentsLoading } = trpc.payments.list.useQuery();
 
   const updateOrderStatus = trpc.orders.update.useMutation({
     onSuccess: () => { toast.success("Order updated"); refetchOrders(); },
+    onError: (err: any) => toast.error(err.message),
+  });
+
+  const convertToInvoice = trpc.orders.convertToInvoice.useMutation({
+    onSuccess: (data) => { toast.success(`Invoice ${data.invoiceNumber} created`); refetchOrders(); refetchInvoices(); },
     onError: (err: any) => toast.error(err.message),
   });
 
@@ -499,7 +510,7 @@ export default function SalesHub() {
 
           <TabsContent value="orders" className="mt-4">
             <Card><CardContent className="pt-6">
-              <SpreadsheetTable data={orders || []} columns={orderColumns} isLoading={ordersLoading} showSearch expandedRowId={expandedOrderId} onExpandChange={setExpandedOrderId} renderExpanded={(order, onClose) => <OrderDetailPanel order={order} onStatusChange={(id, status) => updateOrderStatus.mutate({ id, status } as any)} />} />
+              <SpreadsheetTable data={orders || []} columns={orderColumns} isLoading={ordersLoading} showSearch expandedRowId={expandedOrderId} onExpandChange={setExpandedOrderId} renderExpanded={(order, onClose) => <OrderDetailPanel order={order} onStatusChange={(id, status) => updateOrderStatus.mutate({ id, status } as any)} onConvertToInvoice={(orderId) => convertToInvoice.mutate({ orderId })} isConverting={convertToInvoice.isPending} />} />
             </CardContent></Card>
           </TabsContent>
 

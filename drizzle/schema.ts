@@ -232,6 +232,7 @@ export const invoices = mysqlTable("invoices", {
   currency: varchar("currency", { length: 3 }).default("USD"),
   notes: text("notes"),
   terms: text("terms"),
+  salesOrderId: int("salesOrderId"),
   quickbooksInvoiceId: varchar("quickbooksInvoiceId", { length: 64 }),
   createdBy: int("createdBy"),
   approvedBy: int("approvedBy"),

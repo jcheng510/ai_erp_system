@@ -418,6 +418,7 @@ export async function getInvoices(filters?: { companyId?: number; status?: strin
     companyId: invoices.companyId,
     invoiceNumber: invoices.invoiceNumber,
     customerId: invoices.customerId,
+    salesOrderId: invoices.salesOrderId,
     type: invoices.type,
     status: invoices.status,
     issueDate: invoices.issueDate,
@@ -505,6 +506,77 @@ export async function createInvoiceItem(data: typeof invoiceItems.$inferInsert) 
   if (!db) throw new Error("Database not available");
   const result = await db.insert(invoiceItems).values(data);
   return { id: result[0].insertId };
+}
+
+// ============================================
+// SALES ORDER → INVOICE CONVERSION
+// ============================================
+
+export async function createInvoiceFromSalesOrder(
+  salesOrderId: number,
+  options: {
+    invoiceNumber: string;
+    createdBy: number;
+    dueDate?: Date;
+    notes?: string;
+    terms?: string;
+  }
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Fetch the sales order
+  const [order] = await db.select().from(salesOrders).where(eq(salesOrders.id, salesOrderId)).limit(1);
+  if (!order) throw new Error("Sales order not found");
+
+  // Check if an invoice already exists for this sales order
+  const existing = await db.select({ id: invoices.id, invoiceNumber: invoices.invoiceNumber })
+    .from(invoices)
+    .where(eq(invoices.salesOrderId, salesOrderId))
+    .limit(1);
+  if (existing.length > 0) {
+    throw new Error(`Invoice ${existing[0].invoiceNumber} already exists for this sales order`);
+  }
+
+  // Fetch the sales order lines
+  const lines = await db.select().from(salesOrderLines).where(eq(salesOrderLines.salesOrderId, salesOrderId));
+
+  // Create the invoice
+  const invoiceResult = await db.insert(invoices).values({
+    salesOrderId,
+    customerId: order.customerId,
+    invoiceNumber: options.invoiceNumber,
+    type: "invoice",
+    status: "draft",
+    issueDate: new Date(),
+    dueDate: options.dueDate || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // Net 30 default
+    subtotal: order.subtotal || "0",
+    taxAmount: order.taxAmount || "0",
+    discountAmount: order.discountAmount || "0",
+    totalAmount: order.totalAmount || "0",
+    currency: order.currency || "USD",
+    notes: options.notes || `Generated from Sales Order ${order.orderNumber}`,
+    terms: options.terms,
+    createdBy: options.createdBy,
+  });
+
+  const invoiceId = invoiceResult[0].insertId;
+
+  // Create invoice line items from sales order lines
+  for (const line of lines) {
+    await db.insert(invoiceItems).values({
+      invoiceId,
+      productId: line.productId,
+      description: line.name || line.sku || `Product #${line.productId}`,
+      quantity: line.quantity,
+      unitPrice: line.unitPrice,
+      taxRate: "0",
+      taxAmount: "0",
+      totalAmount: line.totalPrice,
+    });
+  }
+
+  return { id: invoiceId, invoiceNumber: options.invoiceNumber };
 }
 
 // ============================================
@@ -627,6 +699,86 @@ export async function createOrderItem(data: typeof orderItems.$inferInsert) {
   if (!db) throw new Error("Database not available");
   const result = await db.insert(orderItems).values(data);
   return { id: result[0].insertId };
+}
+
+// ============================================
+// ORDER → INVOICE CONVERSION
+// ============================================
+
+export async function createInvoiceFromOrder(
+  orderId: number,
+  options: {
+    invoiceNumber: string;
+    createdBy: number;
+    dueDate?: Date;
+    notes?: string;
+    terms?: string;
+  }
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Fetch the order
+  const [order] = await db.select().from(orders).where(eq(orders.id, orderId)).limit(1);
+  if (!order) throw new Error("Order not found");
+
+  // Check if order already has an invoice linked
+  if (order.invoiceId) {
+    throw new Error(`Order already has invoice #${order.invoiceId} linked`);
+  }
+
+  // Check if an invoice already exists for this order via salesOrderId
+  const existing = await db.select({ id: invoices.id, invoiceNumber: invoices.invoiceNumber })
+    .from(invoices)
+    .where(eq(invoices.salesOrderId, orderId))
+    .limit(1);
+  if (existing.length > 0) {
+    throw new Error(`Invoice ${existing[0].invoiceNumber} already exists for this order`);
+  }
+
+  // Fetch order items
+  const items = await db.select().from(orderItems).where(eq(orderItems.orderId, orderId));
+
+  // Create the invoice
+  const invoiceResult = await db.insert(invoices).values({
+    salesOrderId: orderId,
+    companyId: order.companyId,
+    customerId: order.customerId,
+    invoiceNumber: options.invoiceNumber,
+    type: "invoice",
+    status: "draft",
+    issueDate: new Date(),
+    dueDate: options.dueDate || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+    subtotal: order.subtotal,
+    taxAmount: order.taxAmount || "0",
+    discountAmount: order.discountAmount || "0",
+    totalAmount: order.totalAmount,
+    currency: order.currency || "USD",
+    notes: options.notes || `Generated from Order ${order.orderNumber}`,
+    terms: options.terms,
+    createdBy: options.createdBy,
+  });
+
+  const invoiceId = invoiceResult[0].insertId;
+
+  // Create invoice line items from order items
+  for (const item of items) {
+    await db.insert(invoiceItems).values({
+      invoiceId,
+      productId: item.productId,
+      description: item.name || item.sku || `Product #${item.productId}`,
+      quantity: item.quantity,
+      unitPrice: item.unitPrice,
+      taxRate: "0",
+      taxAmount: item.taxAmount || "0",
+      totalAmount: item.totalAmount,
+    });
+  }
+
+  // Link the invoice back to the order
+  await db.update(orders).set({ invoiceId }).where(eq(orders.id, orderId));
+
+  return { id: invoiceId, invoiceNumber: options.invoiceNumber };
 }
 
 // ============================================

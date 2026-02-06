@@ -957,6 +957,25 @@ export const appRouter = router({
         await createAuditLog(ctx.user.id, 'update', 'order', id);
         return { success: true };
       }),
+    convertToInvoice: protectedProcedure
+      .input(z.object({
+        orderId: z.number(),
+        dueDate: z.date().optional(),
+        notes: z.string().optional(),
+        terms: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const invoiceNumber = generateNumber('INV');
+        const result = await db.createInvoiceFromOrder(input.orderId, {
+          invoiceNumber,
+          createdBy: ctx.user.id,
+          dueDate: input.dueDate,
+          notes: input.notes,
+          terms: input.terms,
+        });
+        await createAuditLog(ctx.user.id, 'create', 'invoice', result.id, invoiceNumber);
+        return result;
+      }),
   }),
 
   // ============================================
@@ -7838,6 +7857,25 @@ Ask if they received the original request and if they can provide a quote.`;
       .mutation(async ({ input }) => {
         await db.updateSalesOrder(input.id, { status: input.status });
         return { success: true };
+      }),
+    convertToInvoice: protectedProcedure
+      .input(z.object({
+        salesOrderId: z.number(),
+        dueDate: z.date().optional(),
+        notes: z.string().optional(),
+        terms: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const invoiceNumber = generateNumber('INV');
+        const result = await db.createInvoiceFromSalesOrder(input.salesOrderId, {
+          invoiceNumber,
+          createdBy: ctx.user.id,
+          dueDate: input.dueDate,
+          notes: input.notes,
+          terms: input.terms,
+        });
+        await createAuditLog(ctx.user.id, 'create', 'invoice', result.id, invoiceNumber);
+        return result;
       }),
   }),
 
