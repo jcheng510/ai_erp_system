@@ -31,7 +31,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { SelectWithCreate } from "@/components/ui/select-with-create";
-import { ClipboardList, Plus, Search, Loader2 } from "lucide-react";
+import { ClipboardList, Plus, Search, Loader2, Sparkles, Send } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 
@@ -47,6 +47,26 @@ export default function PurchaseOrders() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [isOpen, setIsOpen] = useState(false);
+  const [isTextPOOpen, setIsTextPOOpen] = useState(false);
+  const [textInput, setTextInput] = useState("");
+  const [poPreview, setPoPreview] = useState<{
+    vendorId: number;
+    vendorName: string;
+    rawMaterialId: number | null;
+    items: Array<{
+      description: string;
+      quantity: string;
+      unitPrice: string;
+      totalAmount: string;
+      rawMaterialId: number | null;
+    }>;
+    shippingAddress: string;
+    notes: string;
+    subtotal: string;
+    totalAmount: string;
+    suggested: boolean;
+    isPriceEstimated?: boolean;
+  } | null>(null);
   const [formData, setFormData] = useState({
     vendorId: 0,
     subtotal: "",
@@ -59,6 +79,7 @@ export default function PurchaseOrders() {
   const { data: purchaseOrders, isLoading, refetch } = trpc.purchaseOrders.list.useQuery();
   const { data: vendors } = trpc.vendors.list.useQuery();
   const utils = trpc.useUtils();
+  
   const createPO = trpc.purchaseOrders.create.useMutation({
     onSuccess: () => {
       toast.success("Purchase order created successfully");
@@ -68,6 +89,33 @@ export default function PurchaseOrders() {
     },
     onError: (error) => {
       toast.error(error.message);
+    },
+  });
+
+  const parseText = trpc.purchaseOrders.parseText.useMutation({
+    onSuccess: (data) => {
+      setPoPreview(data.preview);
+      toast.success("Text parsed successfully! Review the preview below.");
+    },
+    onError: (error) => {
+      toast.error(`Failed to parse text: ${error.message}`);
+    },
+  });
+
+  const createFromText = trpc.purchaseOrders.createFromText.useMutation({
+    onSuccess: (data) => {
+      toast.success(
+        data.emailSent
+          ? "PO created and email sent to supplier!"
+          : "PO created successfully!"
+      );
+      setIsTextPOOpen(false);
+      setTextInput("");
+      setPoPreview(null);
+      refetch();
+    },
+    onError: (error) => {
+      toast.error(`Failed to create PO: ${error.message}`);
     },
   });
 
@@ -100,6 +148,26 @@ export default function PurchaseOrders() {
     });
   };
 
+  const handleParseText = () => {
+    if (!textInput.trim()) {
+      toast.error("Please enter a text description");
+      return;
+    }
+    parseText.mutate({ text: textInput });
+  };
+
+  const handleCreateFromText = (sendEmail: boolean) => {
+    if (!poPreview) {
+      toast.error("Please parse the text first");
+      return;
+    }
+    createFromText.mutate({
+      text: textInput,
+      preview: poPreview,
+      sendEmail,
+    });
+  };
+
   return (
     <div className="space-y-6 animate-fade-in">
       <div className="flex items-center justify-between">
@@ -112,13 +180,129 @@ export default function PurchaseOrders() {
             Manage vendor orders and track deliveries.
           </p>
         </div>
-        <Dialog open={isOpen} onOpenChange={setIsOpen}>
-          <DialogTrigger asChild>
-            <Button>
-              <Plus className="h-4 w-4 mr-2" />
-              Create PO
-            </Button>
-          </DialogTrigger>
+        <div className="flex gap-2">
+          <Dialog open={isTextPOOpen} onOpenChange={setIsTextPOOpen}>
+            <DialogTrigger asChild>
+              <Button variant="outline">
+                <Sparkles className="h-4 w-4 mr-2" />
+                Quick Create from Text
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-2xl">
+              <DialogHeader>
+                <DialogTitle>Create PO from Text</DialogTitle>
+                <DialogDescription>
+                  Describe what you want to order in plain text, and we'll create a PO for you.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 py-4">
+                <div className="space-y-2">
+                  <Label htmlFor="textInput">Order Description</Label>
+                  <Textarea
+                    id="textInput"
+                    value={textInput}
+                    onChange={(e) => setTextInput(e.target.value)}
+                    placeholder='Example: "order 3 tons of mushrooms ship to alex meats"'
+                    rows={3}
+                    className="resize-none"
+                  />
+                </div>
+                <Button
+                  onClick={handleParseText}
+                  disabled={parseText.isPending || !textInput.trim()}
+                  className="w-full"
+                  variant="secondary"
+                >
+                  {parseText.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                  {parseText.isPending ? "Parsing..." : "Parse & Preview"}
+                </Button>
+
+                {poPreview && (
+                  <div className="border rounded-lg p-4 bg-muted/50 space-y-3">
+                    <h3 className="font-semibold">Preview</h3>
+                    <div className="space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Vendor:</span>
+                        <span className="font-medium">{poPreview.vendorName}</span>
+                      </div>
+                      {poPreview.suggested && (
+                        <p className="text-xs text-amber-600">
+                          ⚠️ Default vendor suggested. Material not found in inventory.
+                        </p>
+                      )}
+                      {poPreview.isPriceEstimated && (
+                        <p className="text-xs text-amber-600">
+                          ⚠️ Price not available. Please update manually after creation.
+                        </p>
+                      )}
+                      <div className="border-t pt-2">
+                        <p className="font-medium mb-2">Items:</p>
+                        {poPreview.items.map((item: any, idx: number) => (
+                          <div key={idx} className="flex justify-between text-sm">
+                            <span>{item.description}</span>
+                            <span className="font-mono">${item.totalAmount}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="border-t pt-2 flex justify-between font-semibold">
+                        <span>Total:</span>
+                        <span className="font-mono">${poPreview.totalAmount}</span>
+                      </div>
+                      {poPreview.shippingAddress && (
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Ship To:</span>
+                          <span>{poPreview.shippingAddress}</span>
+                        </div>
+                      )}
+                      {poPreview.notes && (
+                        <div className="border-t pt-2">
+                          <span className="text-muted-foreground">Notes:</span>
+                          <p className="text-xs mt-1">{poPreview.notes}</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+              <DialogFooter className="gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setIsTextPOOpen(false);
+                    setTextInput("");
+                    setPoPreview(null);
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={() => handleCreateFromText(false)}
+                  disabled={!poPreview || createFromText.isPending}
+                >
+                  {createFromText.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                  Create Draft
+                </Button>
+                <Button
+                  onClick={() => handleCreateFromText(true)}
+                  disabled={!poPreview || createFromText.isPending}
+                  className="bg-green-600 hover:bg-green-700"
+                >
+                  {createFromText.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                  <Send className="h-4 w-4 mr-2" />
+                  Create & Email
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+          
+          <Dialog open={isOpen} onOpenChange={setIsOpen}>
+            <DialogTrigger asChild>
+              <Button>
+                <Plus className="h-4 w-4 mr-2" />
+                Create PO
+              </Button>
+            </DialogTrigger>
           <DialogContent>
             <form onSubmit={handleSubmit}>
               <DialogHeader>
@@ -225,6 +409,7 @@ export default function PurchaseOrders() {
             </form>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       <Card>
