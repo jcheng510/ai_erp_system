@@ -11,7 +11,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
-import { Upload, FileText, Truck, Package, AlertCircle, CheckCircle, Clock, Edit2, X, ChevronRight, History, Loader2, FolderOpen, Cloud, ChevronLeft, File, RefreshCw } from "lucide-react";
+import { Upload, FileText, Truck, Package, AlertCircle, CheckCircle, Clock, Edit2, X, ChevronRight, History, Loader2, FolderOpen, Cloud, ChevronLeft, File, RefreshCw, Files, Trash2, Eye } from "lucide-react";
 import { useDropzone } from "react-dropzone";
 
 interface ParsedLineItem {
@@ -134,6 +134,27 @@ interface DriveFolder {
   modifiedTime?: string;
 }
 
+interface BulkQueueItem {
+  id: string;
+  file: File;
+  status: "pending" | "uploading" | "parsed" | "failed" | "imported";
+  error?: string;
+  parsedData?: any;
+  documentType?: string;
+  documentLabel?: string;
+  confidence?: number;
+}
+
+function getDocumentLabel(type: string): string {
+  switch (type) {
+    case "purchase_order": return "Purchase Order";
+    case "vendor_invoice": return "Vendor Invoice";
+    case "freight_invoice": return "Freight Invoice";
+    case "customs_document": return "Customs Document";
+    default: return "Unknown";
+  }
+}
+
 export default function DocumentImport() {
   const [activeTab, setActiveTab] = useState("upload");
   const [uploadType, setUploadType] = useState<"po" | "freight" | "vendor_invoice" | "customs">("po");
@@ -156,12 +177,22 @@ export default function DocumentImport() {
   const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0 });
   const [batchResults, setBatchResults] = useState<Array<{ fileName: string; success: boolean; error?: string; data?: any }>>([]);
 
+  // Bulk upload state
+  const [bulkQueue, setBulkQueue] = useState<BulkQueueItem[]>([]);
+  const [isBulkParsing, setIsBulkParsing] = useState(false);
+  const [isBulkImporting, setIsBulkImporting] = useState(false);
+  const [bulkMarkAsReceived, setBulkMarkAsReceived] = useState(true);
+  const [bulkUpdateInventory, setBulkUpdateInventory] = useState(true);
+  const [bulkLinkToPO, setBulkLinkToPO] = useState(true);
+
   const parseMutation = trpc.documentImport.parse.useMutation();
   const importPOMutation = trpc.documentImport.importPO.useMutation();
   const importFreightMutation = trpc.documentImport.importFreightInvoice.useMutation();
   const importVendorInvoiceMutation = trpc.documentImport.importVendorInvoice.useMutation();
   const importCustomsMutation = trpc.documentImport.importCustomsDocument.useMutation();
   const matchMaterialsMutation = trpc.documentImport.matchMaterials.useMutation();
+  const bulkParseMutation = trpc.documentImport.bulkParse.useMutation();
+  const bulkImportMutation = trpc.documentImport.bulkImport.useMutation();
   const historyQuery = trpc.documentImport.getHistory.useQuery({ limit: 50 });
   
   // Google Drive queries
@@ -306,6 +337,177 @@ export default function DocumentImport() {
     maxFiles: 1,
   });
 
+  // Bulk upload dropzone
+  const onBulkDrop = useCallback((acceptedFiles: File[]) => {
+    if (acceptedFiles.length === 0) return;
+    const newItems: BulkQueueItem[] = acceptedFiles.map((file) => ({
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      file,
+      status: "pending" as const,
+    }));
+    setBulkQueue((prev) => [...prev, ...newItems]);
+  }, []);
+
+  const { getRootProps: getBulkRootProps, getInputProps: getBulkInputProps, isDragActive: isBulkDragActive } = useDropzone({
+    onDrop: onBulkDrop,
+    accept: {
+      "application/pdf": [".pdf"],
+      "image/*": [".png", ".jpg", ".jpeg"],
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
+      "application/vnd.ms-excel": [".xls"],
+      "text/csv": [".csv"],
+    },
+    multiple: true,
+  });
+
+  const handleBulkParse = async () => {
+    const pendingItems = bulkQueue.filter((item) => item.status === "pending");
+    if (pendingItems.length === 0) return;
+
+    setIsBulkParsing(true);
+
+    // Mark all pending as uploading
+    setBulkQueue((prev) =>
+      prev.map((item) =>
+        item.status === "pending" ? { ...item, status: "uploading" as const } : item
+      )
+    );
+
+    // Read all files to base64
+    const fileDataPromises = pendingItems.map(
+      (item) =>
+        new Promise<{ id: string; fileData: string; fileName: string; mimeType: string }>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const base64 = (reader.result as string).split(",")[1];
+            resolve({
+              id: item.id,
+              fileData: base64,
+              fileName: item.file.name,
+              mimeType: item.file.type || "application/pdf",
+            });
+          };
+          reader.onerror = () => reject(new Error(`Failed to read ${item.file.name}`));
+          reader.readAsDataURL(item.file);
+        })
+    );
+
+    try {
+      const fileDataArray = await Promise.all(fileDataPromises);
+
+      const result = await bulkParseMutation.mutateAsync({
+        files: fileDataArray.map((fd) => ({
+          fileData: fd.fileData,
+          fileName: fd.fileName,
+          mimeType: fd.mimeType,
+        })),
+      });
+
+      // Map results back to queue items by index
+      setBulkQueue((prev) =>
+        prev.map((item) => {
+          const idx = fileDataArray.findIndex((fd) => fd.id === item.id);
+          if (idx === -1 || !result.results[idx]) return item;
+          const r = result.results[idx];
+          if (r.success && r.data) {
+            return {
+              ...item,
+              status: "parsed" as const,
+              parsedData: r.data,
+              documentType: r.data.documentType,
+              documentLabel: getDocumentLabel(r.data.documentType),
+              confidence: r.data.purchaseOrder?.confidence ??
+                r.data.vendorInvoice?.confidence ??
+                r.data.freightInvoice?.confidence ??
+                r.data.customsDocument?.confidence ?? 0,
+            };
+          } else {
+            return { ...item, status: "failed" as const, error: r.error || "Parse failed" };
+          }
+        })
+      );
+
+      const successCount = result.results.filter((r) => r.success).length;
+      if (successCount === result.results.length) {
+        toast.success(`Successfully parsed all ${successCount} documents with OCR`);
+      } else {
+        toast.warning(`Parsed ${successCount} of ${result.results.length} documents`);
+      }
+    } catch (error) {
+      console.error("Bulk parse error:", error);
+      setBulkQueue((prev) =>
+        prev.map((item) =>
+          item.status === "uploading"
+            ? { ...item, status: "failed" as const, error: "Upload failed" }
+            : item
+        )
+      );
+      toast.error("Failed to process documents. Please try again.");
+    } finally {
+      setIsBulkParsing(false);
+    }
+  };
+
+  const handleBulkImportAll = async () => {
+    const parsedItems = bulkQueue.filter((item) => item.status === "parsed" && item.parsedData);
+    if (parsedItems.length === 0) return;
+
+    setIsBulkImporting(true);
+
+    try {
+      const documents = parsedItems.map((item) => ({
+        fileName: item.file.name,
+        documentType: item.documentType as "purchase_order" | "freight_invoice" | "vendor_invoice" | "customs_document",
+        purchaseOrder: item.parsedData.purchaseOrder || undefined,
+        freightInvoice: item.parsedData.freightInvoice || undefined,
+        vendorInvoice: item.parsedData.vendorInvoice || undefined,
+        customsDocument: item.parsedData.customsDocument || undefined,
+      }));
+
+      const result = await bulkImportMutation.mutateAsync({
+        documents,
+        markAsReceived: bulkMarkAsReceived,
+        updateInventory: bulkUpdateInventory,
+        linkToPO: bulkLinkToPO,
+      });
+
+      // Update queue items based on results
+      setBulkQueue((prev) =>
+        prev.map((item) => {
+          if (item.status !== "parsed") return item;
+          const r = result.results.find((res) => res.fileName === item.file.name);
+          if (r?.success) {
+            return { ...item, status: "imported" as const };
+          } else if (r) {
+            return { ...item, status: "failed" as const, error: r.error || "Import failed" };
+          }
+          return item;
+        })
+      );
+
+      if (result.successful === result.totalProcessed) {
+        toast.success(`Successfully imported all ${result.successful} documents`);
+      } else {
+        toast.warning(`Imported ${result.successful} of ${result.totalProcessed} documents`);
+      }
+
+      historyQuery.refetch();
+    } catch (error) {
+      console.error("Bulk import error:", error);
+      toast.error("Failed to import documents. Please try again.");
+    } finally {
+      setIsBulkImporting(false);
+    }
+  };
+
+  const removeBulkItem = (id: string) => {
+    setBulkQueue((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  const clearBulkQueue = () => {
+    setBulkQueue([]);
+  };
+
   const handleImportPO = async () => {
     if (!parsedPO) return;
     
@@ -411,7 +613,11 @@ export default function DocumentImport() {
         <TabsList>
           <TabsTrigger value="upload" className="gap-2">
             <Upload className="h-4 w-4" />
-            Upload Documents
+            Single Upload
+          </TabsTrigger>
+          <TabsTrigger value="bulk" className="gap-2">
+            <Files className="h-4 w-4" />
+            Bulk Upload
           </TabsTrigger>
           <TabsTrigger value="drive" className="gap-2">
             <Cloud className="h-4 w-4" />
@@ -557,6 +763,263 @@ export default function DocumentImport() {
               </div>
             </CardContent>
           </Card>
+        </TabsContent>
+
+        {/* Bulk Upload Tab */}
+        <TabsContent value="bulk" className="space-y-6">
+          <div className="grid gap-6 lg:grid-cols-3">
+            {/* Bulk Drop Zone */}
+            <Card className="lg:col-span-1">
+              <CardHeader>
+                <CardTitle>Upload Multiple Files</CardTitle>
+                <CardDescription>
+                  Drop multiple documents for batch OCR processing and import
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div
+                  {...getBulkRootProps()}
+                  className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${
+                    isBulkDragActive ? "border-primary bg-primary/5" : "border-muted-foreground/25 hover:border-primary/50"
+                  }`}
+                >
+                  <input {...getBulkInputProps()} />
+                  <Files className="h-8 w-8 mx-auto mb-3 text-muted-foreground" />
+                  <p className="text-sm font-medium">
+                    {isBulkDragActive ? "Drop files here" : "Drag & drop files, or click to select"}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    PDF, images, Excel, CSV - no file limit
+                  </p>
+                </div>
+
+                {bulkQueue.length > 0 && (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium">{bulkQueue.length} file{bulkQueue.length !== 1 ? "s" : ""} queued</span>
+                      <Button variant="ghost" size="sm" onClick={clearBulkQueue} disabled={isBulkParsing || isBulkImporting}>
+                        <Trash2 className="h-3 w-3 mr-1" />
+                        Clear
+                      </Button>
+                    </div>
+
+                    <Button
+                      className="w-full"
+                      onClick={handleBulkParse}
+                      disabled={isBulkParsing || bulkQueue.filter((i) => i.status === "pending").length === 0}
+                    >
+                      {isBulkParsing ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Running OCR...
+                        </>
+                      ) : (
+                        <>
+                          <Upload className="h-4 w-4 mr-2" />
+                          Parse All ({bulkQueue.filter((i) => i.status === "pending").length} pending)
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                )}
+
+                {/* Bulk Import Options */}
+                {bulkQueue.some((i) => i.status === "parsed") && (
+                  <div className="space-y-3 border-t pt-4">
+                    <Label className="text-sm font-medium">Import Options</Label>
+                    <div className="flex items-center gap-2">
+                      <Checkbox
+                        id="bulkMarkReceived"
+                        checked={bulkMarkAsReceived}
+                        onCheckedChange={(checked) => setBulkMarkAsReceived(!!checked)}
+                      />
+                      <label htmlFor="bulkMarkReceived" className="text-sm">
+                        Mark as received
+                      </label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Checkbox
+                        id="bulkUpdateInventory"
+                        checked={bulkUpdateInventory}
+                        onCheckedChange={(checked) => setBulkUpdateInventory(!!checked)}
+                      />
+                      <label htmlFor="bulkUpdateInventory" className="text-sm">
+                        Update inventory
+                      </label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Checkbox
+                        id="bulkLinkToPO"
+                        checked={bulkLinkToPO}
+                        onCheckedChange={(checked) => setBulkLinkToPO(!!checked)}
+                      />
+                      <label htmlFor="bulkLinkToPO" className="text-sm">
+                        Link to related POs
+                      </label>
+                    </div>
+
+                    <Button
+                      className="w-full"
+                      variant="default"
+                      onClick={handleBulkImportAll}
+                      disabled={isBulkImporting || bulkQueue.filter((i) => i.status === "parsed").length === 0}
+                    >
+                      {isBulkImporting ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Importing...
+                        </>
+                      ) : (
+                        <>
+                          <CheckCircle className="h-4 w-4 mr-2" />
+                          Import All Parsed ({bulkQueue.filter((i) => i.status === "parsed").length})
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Bulk Queue Panel */}
+            <Card className="lg:col-span-2">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle>Document Queue</CardTitle>
+                    <CardDescription>
+                      {bulkQueue.length === 0
+                        ? "Upload files to start bulk processing"
+                        : `${bulkQueue.filter((i) => i.status === "parsed").length} parsed, ${bulkQueue.filter((i) => i.status === "imported").length} imported, ${bulkQueue.filter((i) => i.status === "failed").length} failed`}
+                    </CardDescription>
+                  </div>
+                  {bulkQueue.length > 0 && (
+                    <div className="flex gap-1">
+                      <Badge variant="secondary">
+                        {bulkQueue.filter((i) => i.status === "pending").length} pending
+                      </Badge>
+                      <Badge variant="default">
+                        {bulkQueue.filter((i) => i.status === "parsed").length} ready
+                      </Badge>
+                      <Badge variant="outline" className="text-green-600 border-green-300">
+                        {bulkQueue.filter((i) => i.status === "imported").length} done
+                      </Badge>
+                    </div>
+                  )}
+                </div>
+              </CardHeader>
+              <CardContent>
+                {bulkQueue.length === 0 ? (
+                  <div className="text-center py-12 text-muted-foreground">
+                    <Files className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                    <p className="font-medium">No documents in queue</p>
+                    <p className="text-sm mt-1">Drop files on the left or click to select multiple documents</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2 max-h-[600px] overflow-y-auto">
+                    {bulkQueue.map((item) => (
+                      <div
+                        key={item.id}
+                        className={`flex items-center gap-3 p-3 rounded-lg border transition-colors ${
+                          item.status === "imported"
+                            ? "bg-green-500/5 border-green-200"
+                            : item.status === "parsed"
+                            ? "bg-blue-500/5 border-blue-200"
+                            : item.status === "failed"
+                            ? "bg-red-500/5 border-red-200"
+                            : item.status === "uploading"
+                            ? "bg-yellow-500/5 border-yellow-200"
+                            : "bg-background"
+                        }`}
+                      >
+                        {/* Status Icon */}
+                        <div className="flex-shrink-0">
+                          {item.status === "pending" && <File className="h-5 w-5 text-muted-foreground" />}
+                          {item.status === "uploading" && <Loader2 className="h-5 w-5 text-yellow-500 animate-spin" />}
+                          {item.status === "parsed" && <CheckCircle className="h-5 w-5 text-blue-500" />}
+                          {item.status === "imported" && <CheckCircle className="h-5 w-5 text-green-500" />}
+                          {item.status === "failed" && <AlertCircle className="h-5 w-5 text-red-500" />}
+                        </div>
+
+                        {/* File Info */}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">{item.file.name}</p>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <span className="text-xs text-muted-foreground">
+                              {(item.file.size / 1024).toFixed(0)} KB
+                            </span>
+                            {item.documentLabel && (
+                              <Badge variant="secondary" className="text-xs h-5">
+                                {item.documentLabel}
+                              </Badge>
+                            )}
+                            {item.confidence != null && item.confidence > 0 && (
+                              <Badge
+                                variant={item.confidence > 0.8 ? "default" : item.confidence > 0.6 ? "secondary" : "destructive"}
+                                className="text-xs h-5"
+                              >
+                                {Math.round(item.confidence * 100)}%
+                              </Badge>
+                            )}
+                            {item.status === "imported" && (
+                              <span className="text-xs text-green-600 font-medium">Imported</span>
+                            )}
+                            {item.error && (
+                              <span className="text-xs text-red-500 truncate max-w-[200px]">{item.error}</span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Actions */}
+                        <div className="flex items-center gap-1 flex-shrink-0">
+                          {item.status === "parsed" && item.parsedData && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 px-2"
+                              onClick={() => {
+                                const data = item.parsedData;
+                                if (data.documentType === "purchase_order" && data.purchaseOrder) {
+                                  setParsedPO(data.purchaseOrder);
+                                  setUploadType("po");
+                                  setShowPreview(true);
+                                } else if (data.documentType === "vendor_invoice" && data.vendorInvoice) {
+                                  setParsedVendorInvoice(data.vendorInvoice);
+                                  setUploadType("vendor_invoice");
+                                  setShowPreview(true);
+                                } else if (data.documentType === "freight_invoice" && data.freightInvoice) {
+                                  setParsedFreight(data.freightInvoice);
+                                  setUploadType("freight");
+                                  setShowPreview(true);
+                                } else if (data.documentType === "customs_document" && data.customsDocument) {
+                                  setParsedCustoms(data.customsDocument);
+                                  setUploadType("customs");
+                                  setShowPreview(true);
+                                }
+                              }}
+                            >
+                              <Eye className="h-3 w-3 mr-1" />
+                              Review
+                            </Button>
+                          )}
+                          {item.status !== "uploading" && item.status !== "imported" && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 w-7 p-0"
+                              onClick={() => removeBulkItem(item.id)}
+                            >
+                              <X className="h-3 w-3" />
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
         </TabsContent>
 
         <TabsContent value="history">

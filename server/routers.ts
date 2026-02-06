@@ -11171,6 +11171,226 @@ Ask if they received the original request and if they can provide a quote.`;
         return importCustomsDocument(input.documentData as any, ctx.user.id);
       }),
 
+    // Bulk parse multiple uploaded documents with OCR
+    bulkParse: protectedProcedure
+      .input(z.object({
+        files: z.array(z.object({
+          fileData: z.string(), // base64 encoded
+          fileName: z.string(),
+          mimeType: z.string().optional(),
+        })),
+      }))
+      .mutation(async ({ input }) => {
+        const results: Array<{
+          fileName: string;
+          success: boolean;
+          data?: any;
+          error?: string;
+        }> = [];
+
+        for (const file of input.files) {
+          try {
+            const buffer = Buffer.from(file.fileData, 'base64');
+            const fileKey = `document-imports/${Date.now()}-${file.fileName}`;
+            const { url } = await storagePut(fileKey, buffer, file.mimeType || 'application/octet-stream');
+            const mimeType = file.mimeType || 'application/pdf';
+            const parseResult = await parseUploadedDocument(url, file.fileName, undefined, mimeType);
+
+            results.push({
+              fileName: file.fileName,
+              success: parseResult.success,
+              data: parseResult.success ? { ...parseResult, fileUrl: url } : undefined,
+              error: parseResult.error,
+            });
+          } catch (error: any) {
+            results.push({
+              fileName: file.fileName,
+              success: false,
+              error: error.message || 'Unknown error',
+            });
+          }
+        }
+
+        return { results };
+      }),
+
+    // Bulk import multiple parsed documents at once
+    bulkImport: protectedProcedure
+      .input(z.object({
+        documents: z.array(z.object({
+          fileName: z.string(),
+          documentType: z.enum(["purchase_order", "freight_invoice", "vendor_invoice", "customs_document"]),
+          purchaseOrder: z.object({
+            poNumber: z.string(),
+            vendorName: z.string(),
+            vendorEmail: z.string().optional(),
+            orderDate: z.string(),
+            deliveryDate: z.string().optional(),
+            subtotal: z.number(),
+            totalAmount: z.number(),
+            notes: z.string().optional(),
+            status: z.string().optional(),
+            lineItems: z.array(z.object({
+              description: z.string(),
+              sku: z.string().optional(),
+              quantity: z.number(),
+              unit: z.string().optional(),
+              unitPrice: z.number(),
+              totalPrice: z.number(),
+            })),
+            confidence: z.number(),
+          }).optional(),
+          freightInvoice: z.object({
+            invoiceNumber: z.string(),
+            carrierName: z.string(),
+            carrierEmail: z.string().optional(),
+            invoiceDate: z.string(),
+            shipmentDate: z.string().optional(),
+            deliveryDate: z.string().optional(),
+            origin: z.string().optional(),
+            destination: z.string().optional(),
+            trackingNumber: z.string().optional(),
+            weight: z.string().optional(),
+            dimensions: z.string().optional(),
+            freightCharges: z.number(),
+            fuelSurcharge: z.number().optional(),
+            accessorialCharges: z.number().optional(),
+            totalAmount: z.number(),
+            currency: z.string().optional(),
+            relatedPoNumber: z.string().optional(),
+            notes: z.string().optional(),
+            confidence: z.number(),
+          }).optional(),
+          vendorInvoice: z.object({
+            invoiceNumber: z.string(),
+            vendorName: z.string(),
+            vendorEmail: z.string().optional(),
+            invoiceDate: z.string(),
+            dueDate: z.string().optional(),
+            lineItems: z.array(z.object({
+              description: z.string(),
+              sku: z.string().optional(),
+              quantity: z.number(),
+              unit: z.string().optional(),
+              unitPrice: z.number(),
+              totalPrice: z.number(),
+            })),
+            subtotal: z.number(),
+            taxAmount: z.number().optional(),
+            shippingAmount: z.number().optional(),
+            totalAmount: z.number(),
+            currency: z.string().optional(),
+            relatedPoNumber: z.string().optional(),
+            paymentTerms: z.string().optional(),
+            notes: z.string().optional(),
+            confidence: z.number(),
+          }).optional(),
+          customsDocument: z.object({
+            documentNumber: z.string(),
+            documentType: z.enum(["bill_of_lading", "customs_entry", "commercial_invoice", "packing_list", "certificate_of_origin", "import_permit", "other"]),
+            entryDate: z.string(),
+            shipperName: z.string(),
+            shipperCountry: z.string().optional(),
+            consigneeName: z.string(),
+            consigneeCountry: z.string().optional(),
+            countryOfOrigin: z.string(),
+            portOfEntry: z.string().optional(),
+            portOfExit: z.string().optional(),
+            vesselName: z.string().optional(),
+            voyageNumber: z.string().optional(),
+            containerNumber: z.string().optional(),
+            lineItems: z.array(z.object({
+              description: z.string(),
+              hsCode: z.string().optional(),
+              quantity: z.number(),
+              unit: z.string().optional(),
+              declaredValue: z.number(),
+              dutyRate: z.number().optional(),
+              dutyAmount: z.number().optional(),
+              countryOfOrigin: z.string().optional(),
+            })),
+            totalDeclaredValue: z.number(),
+            totalDuties: z.number().optional(),
+            totalTaxes: z.number().optional(),
+            totalCharges: z.number(),
+            currency: z.string().optional(),
+            brokerName: z.string().optional(),
+            brokerReference: z.string().optional(),
+            relatedPoNumber: z.string().optional(),
+            trackingNumber: z.string().optional(),
+            notes: z.string().optional(),
+            confidence: z.number(),
+          }).optional(),
+        })),
+        markAsReceived: z.boolean().default(false),
+        updateInventory: z.boolean().default(true),
+        linkToPO: z.boolean().default(true),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const results: Array<{
+          fileName: string;
+          documentType: string;
+          success: boolean;
+          recordsCreated: number;
+          recordsUpdated: number;
+          error?: string;
+        }> = [];
+
+        for (const doc of input.documents) {
+          try {
+            let importResult;
+
+            if (doc.documentType === "purchase_order" && doc.purchaseOrder) {
+              importResult = await importPurchaseOrder(doc.purchaseOrder as any, ctx.user.id, input.markAsReceived);
+            } else if (doc.documentType === "vendor_invoice" && doc.vendorInvoice) {
+              importResult = await importVendorInvoice(doc.vendorInvoice as any, ctx.user.id, input.markAsReceived);
+            } else if (doc.documentType === "freight_invoice" && doc.freightInvoice) {
+              importResult = await importFreightInvoice(doc.freightInvoice as any, ctx.user.id);
+            } else if (doc.documentType === "customs_document" && doc.customsDocument) {
+              importResult = await importCustomsDocument(doc.customsDocument as any, ctx.user.id);
+            } else {
+              results.push({
+                fileName: doc.fileName,
+                documentType: doc.documentType,
+                success: false,
+                recordsCreated: 0,
+                recordsUpdated: 0,
+                error: "Missing document data for type: " + doc.documentType,
+              });
+              continue;
+            }
+
+            results.push({
+              fileName: doc.fileName,
+              documentType: doc.documentType,
+              success: importResult.success,
+              recordsCreated: importResult.createdRecords.length,
+              recordsUpdated: importResult.updatedRecords.length,
+              error: importResult.error,
+            });
+          } catch (error: any) {
+            results.push({
+              fileName: doc.fileName,
+              documentType: doc.documentType,
+              success: false,
+              recordsCreated: 0,
+              recordsUpdated: 0,
+              error: error.message || "Unknown error",
+            });
+          }
+        }
+
+        const successful = results.filter(r => r.success).length;
+        const failed = results.filter(r => !r.success).length;
+
+        return {
+          totalProcessed: results.length,
+          successful,
+          failed,
+          results,
+        };
+      }),
+
     // Get import history
     getHistory: protectedProcedure
       .input(z.object({ limit: z.number().default(50) }))
