@@ -1450,6 +1450,7 @@ export const appRouter = router({
           subtotal: z.string(),
           totalAmount: z.string(),
           suggested: z.boolean(),
+          isPriceEstimated: z.boolean().optional(),
         }),
         sendEmail: z.boolean().default(false),
       }))

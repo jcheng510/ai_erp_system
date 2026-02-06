@@ -156,6 +156,7 @@ describe("Text to PO Service", () => {
       expect(preview.items[0].description).toContain("mushrooms");
       expect(preview.items[0].quantity).toBe("3");
       expect(preview.totalAmount).toBe("16.50"); // 3 * 5.50
+      expect(preview.isPriceEstimated).toBe(false);
     });
 
     it("should throw error when no vendors exist", async () => {

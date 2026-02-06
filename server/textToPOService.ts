@@ -54,18 +54,26 @@ Return a structured JSON object with the extracted information.`;
   });
 
   const content = result.choices[0]?.message?.content;
-  if (!content || typeof content !== "string") {
-    throw new Error("Failed to parse PO request");
+  if (!content) {
+    throw new Error("Failed to parse PO request: LLM returned no content");
+  }
+  
+  if (typeof content !== "string") {
+    throw new Error("Failed to parse PO request: LLM returned non-string content");
   }
 
-  const parsed = JSON.parse(content);
-  return parsed as {
-    materialName: string;
-    quantity: number;
-    unit: string;
-    shipTo?: string;
-    notes?: string;
-  };
+  try {
+    const parsed = JSON.parse(content);
+    return parsed as {
+      materialName: string;
+      quantity: number;
+      unit: string;
+      shipTo?: string;
+      notes?: string;
+    };
+  } catch (error) {
+    throw new Error(`Failed to parse PO request: Invalid JSON response from LLM - ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
 }
 
 /**
@@ -154,6 +162,9 @@ export async function createPOPreview(parsedData: {
     parseFloat(unitCost) * parsedData.quantity
   ).toFixed(2);
 
+  // Flag if cost is estimated
+  const isPriceEstimated = !vendorInfo.unitCost || parseFloat(vendorInfo.unitCost) === 0;
+
   return {
     vendorId: vendorInfo.vendorId,
     vendorName: vendorInfo.vendorName,
@@ -168,10 +179,13 @@ export async function createPOPreview(parsedData: {
       },
     ],
     shippingAddress: parsedData.shipTo || "",
-    notes: parsedData.notes || `Auto-generated from text: "${parsedData.materialName}"`,
+    notes: isPriceEstimated 
+      ? `Auto-generated from text: "${parsedData.materialName}". ⚠️ Price not available - please update manually.`
+      : parsedData.notes || `Auto-generated from text: "${parsedData.materialName}"`,
     subtotal: totalAmount,
     totalAmount: totalAmount,
     suggested: vendorInfo.suggested || false,
+    isPriceEstimated,
   };
 }
 
@@ -220,14 +234,13 @@ export async function createPOFromPreview(
 }
 
 /**
- * Generate a unique PO number
+ * Generate a unique PO number with collision prevention
  */
 function generatePONumber(): string {
   const date = new Date();
   const year = date.getFullYear().toString().slice(-2);
   const month = (date.getMonth() + 1).toString().padStart(2, "0");
-  const random = Math.floor(Math.random() * 10000)
-    .toString()
-    .padStart(4, "0");
-  return `PO-${year}${month}-${random}`;
+  const day = date.getDate().toString().padStart(2, "0");
+  const time = Date.now().toString().slice(-6); // Use last 6 digits of timestamp for uniqueness
+  return `PO-${year}${month}${day}-${time}`;
 }

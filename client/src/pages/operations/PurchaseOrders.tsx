@@ -49,7 +49,24 @@ export default function PurchaseOrders() {
   const [isOpen, setIsOpen] = useState(false);
   const [isTextPOOpen, setIsTextPOOpen] = useState(false);
   const [textInput, setTextInput] = useState("");
-  const [poPreview, setPoPreview] = useState<any>(null);
+  const [poPreview, setPoPreview] = useState<{
+    vendorId: number;
+    vendorName: string;
+    rawMaterialId: number | null;
+    items: Array<{
+      description: string;
+      quantity: string;
+      unitPrice: string;
+      totalAmount: string;
+      rawMaterialId: number | null;
+    }>;
+    shippingAddress: string;
+    notes: string;
+    subtotal: string;
+    totalAmount: string;
+    suggested: boolean;
+    isPriceEstimated?: boolean;
+  } | null>(null);
   const [formData, setFormData] = useState({
     vendorId: 0,
     subtotal: "",
@@ -211,6 +228,11 @@ export default function PurchaseOrders() {
                       {poPreview.suggested && (
                         <p className="text-xs text-amber-600">
                           ⚠️ Default vendor suggested. Material not found in inventory.
+                        </p>
+                      )}
+                      {poPreview.isPriceEstimated && (
+                        <p className="text-xs text-amber-600">
+                          ⚠️ Price not available. Please update manually after creation.
                         </p>
                       )}
                       <div className="border-t pt-2">
