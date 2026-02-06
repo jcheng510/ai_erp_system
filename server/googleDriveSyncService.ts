@@ -9,7 +9,6 @@ import {
   downloadFile,
   getSimpleFileType,
   DriveFile,
-  DriveFolder,
 } from './_core/googleDrive';
 import * as db from './db';
 import { storagePut } from './storage';

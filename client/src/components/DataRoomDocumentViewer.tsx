@@ -183,6 +183,18 @@ export default function DataRoomDocumentViewer({
     }
   };
 
+  // Keep isFullscreen in sync with actual fullscreen state
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+    };
+  }, []);
   // Cleanup on unmount
   useEffect(() => {
     return () => {
