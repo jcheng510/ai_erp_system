@@ -66,6 +66,7 @@ export default function DataRoomDocumentViewer({
   // Page tracking state
   const currentPageTracking = useRef<PageTrackingData | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const lastMouseMoveTime = useRef<number>(0);
 
   // Mutations for tracking
   const recordPageViewMutation = trpc.dataRoom.pageTracking.recordPageView.useMutation();
@@ -136,10 +137,14 @@ export default function DataRoomDocumentViewer({
     );
   }, []);
 
-  // Track mouse movements (throttled)
+  // Track mouse movements (throttled to at most once per 100ms)
   const handleMouseMove = useCallback(() => {
-    if (currentPageTracking.current) {
+    if (!currentPageTracking.current) return;
+    
+    const now = Date.now();
+    if (now - lastMouseMoveTime.current >= 100) {
       currentPageTracking.current.mouseMovements++;
+      lastMouseMoveTime.current = now;
     }
   }, []);
 
