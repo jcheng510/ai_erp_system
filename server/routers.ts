@@ -2827,33 +2827,34 @@ export const appRouter = router({
     // Import data into a specific module
     importData: adminProcedure
       .input(z.object({
-        targetModule: z.enum(['customers', 'vendors', 'products', 'invoices', 'employees', 'contracts', 'projects']),
+        targetModule: z.enum(['customers', 'vendors', 'products', 'invoices', 'employees', 'contracts', 'projects', 'orders', 'purchaseOrders', 'departments', 'warehouses', 'accounts', 'rawMaterials', 'freightCarriers']),
         data: z.array(z.record(z.string(), z.string())),
         columnMapping: z.record(z.string(), z.string()), // Maps sheet column to ERP field
       }))
       .mutation(async ({ input, ctx }) => {
         const { targetModule, data, columnMapping } = input;
         const results = { imported: 0, failed: 0, errors: [] as string[] };
-        
-        for (const row of data) {
+
+        for (let rowIndex = 0; rowIndex < data.length; rowIndex++) {
+          const row = data[rowIndex];
           try {
             // Map the row data to the target fields
             const mappedData: Record<string, any> = {};
             for (const [sheetCol, erpField] of Object.entries(columnMapping)) {
-              if (row[sheetCol] !== undefined && row[sheetCol] !== '') {
+              if (erpField && row[sheetCol] !== undefined && row[sheetCol] !== '') {
                 mappedData[erpField] = row[sheetCol];
               }
             }
-            
+
             // Import based on target module
             switch (targetModule) {
               case 'customers':
                 if (!mappedData.name) {
-                  results.errors.push(`Row missing required field: name`);
+                  results.errors.push(`Row ${rowIndex + 1}: missing required field 'name'`);
                   results.failed++;
                   continue;
                 }
-                await db.createCustomer({ 
+                await db.createCustomer({
                   name: mappedData.name,
                   email: mappedData.email || null,
                   phone: mappedData.phone || null,
@@ -2865,14 +2866,14 @@ export const appRouter = router({
                   notes: mappedData.notes || null,
                 });
                 break;
-                
+
               case 'vendors':
                 if (!mappedData.name) {
-                  results.errors.push(`Row missing required field: name`);
+                  results.errors.push(`Row ${rowIndex + 1}: missing required field 'name'`);
                   results.failed++;
                   continue;
                 }
-                await db.createVendor({ 
+                await db.createVendor({
                   name: mappedData.name,
                   email: mappedData.email || null,
                   phone: mappedData.phone || null,
@@ -2885,15 +2886,15 @@ export const appRouter = router({
                   notes: mappedData.notes || null,
                 });
                 break;
-                
+
               case 'products':
                 if (!mappedData.name) {
-                  results.errors.push(`Row missing required field: name`);
+                  results.errors.push(`Row ${rowIndex + 1}: missing required field 'name'`);
                   results.failed++;
                   continue;
                 }
                 const sku = mappedData.sku || generateNumber('PROD');
-                await db.createProduct({ 
+                await db.createProduct({
                   name: mappedData.name,
                   sku,
                   unitPrice: mappedData.price || mappedData.unitPrice || '0',
@@ -2902,32 +2903,32 @@ export const appRouter = router({
                   costPrice: mappedData.cost || mappedData.costPrice || null,
                 });
                 break;
-                
+
               case 'employees':
                 if (!mappedData.firstName || !mappedData.lastName) {
-                  results.errors.push(`Row missing required fields: firstName, lastName`);
+                  results.errors.push(`Row ${rowIndex + 1}: missing required fields 'firstName', 'lastName'`);
                   results.failed++;
                   continue;
                 }
                 const employeeNumber = generateNumber('EMP');
-                await db.createEmployee({ 
-                  ...mappedData, 
+                await db.createEmployee({
+                  ...mappedData,
                   employeeNumber,
                   firstName: mappedData.firstName,
                   lastName: mappedData.lastName,
                 });
                 break;
-                
+
               case 'invoices':
                 if (!mappedData.customerId || !mappedData.amount) {
-                  results.errors.push(`Row missing required fields: customerId, amount`);
+                  results.errors.push(`Row ${rowIndex + 1}: missing required fields 'customerId', 'amount'`);
                   results.failed++;
                   continue;
                 }
                 const invoiceNumber = generateNumber('INV');
                 const amount = mappedData.amount || '0';
-                await db.createInvoice({ 
-                  ...mappedData, 
+                await db.createInvoice({
+                  ...mappedData,
                   invoiceNumber,
                   customerId: parseInt(mappedData.customerId) || 0,
                   issueDate: new Date(),
@@ -2936,48 +2937,391 @@ export const appRouter = router({
                   totalAmount: amount,
                 });
                 break;
-                
+
               case 'contracts':
                 if (!mappedData.title) {
-                  results.errors.push(`Row missing required field: title`);
+                  results.errors.push(`Row ${rowIndex + 1}: missing required field 'title'`);
                   results.failed++;
                   continue;
                 }
                 const contractNumber = generateNumber('CON');
-                await db.createContract({ 
-                  ...mappedData, 
+                await db.createContract({
+                  ...mappedData,
                   contractNumber,
                   title: mappedData.title,
                   type: (mappedData.type as any) || 'service',
                 });
                 break;
-                
+
               case 'projects':
                 if (!mappedData.name) {
-                  results.errors.push(`Row missing required field: name`);
+                  results.errors.push(`Row ${rowIndex + 1}: missing required field 'name'`);
                   results.failed++;
                   continue;
                 }
                 const projectNumber = generateNumber('PROJ');
-                await db.createProject({ 
-                  ...mappedData, 
+                await db.createProject({
+                  ...mappedData,
                   projectNumber,
                   name: mappedData.name,
                 });
                 break;
+
+              case 'orders':
+                if (!mappedData.customerId) {
+                  results.errors.push(`Row ${rowIndex + 1}: missing required field 'customerId'`);
+                  results.failed++;
+                  continue;
+                }
+                const orderNumber = generateNumber('ORD');
+                await db.createOrder({
+                  orderNumber,
+                  customerId: parseInt(mappedData.customerId) || 0,
+                  status: (mappedData.status as any) || 'pending',
+                  totalAmount: mappedData.totalAmount || '0',
+                  notes: mappedData.notes || null,
+                  orderDate: mappedData.orderDate ? new Date(mappedData.orderDate) : new Date(),
+                });
+                break;
+
+              case 'purchaseOrders':
+                if (!mappedData.vendorId) {
+                  results.errors.push(`Row ${rowIndex + 1}: missing required field 'vendorId'`);
+                  results.failed++;
+                  continue;
+                }
+                const poNumber = generateNumber('PO');
+                await db.createPurchaseOrder({
+                  poNumber,
+                  vendorId: parseInt(mappedData.vendorId) || 0,
+                  status: (mappedData.status as any) || 'draft',
+                  totalAmount: mappedData.totalAmount || '0',
+                  orderDate: mappedData.orderDate ? new Date(mappedData.orderDate) : new Date(),
+                  expectedDeliveryDate: mappedData.expectedDeliveryDate ? new Date(mappedData.expectedDeliveryDate) : null,
+                  notes: mappedData.notes || null,
+                });
+                break;
+
+              case 'departments':
+                if (!mappedData.name) {
+                  results.errors.push(`Row ${rowIndex + 1}: missing required field 'name'`);
+                  results.failed++;
+                  continue;
+                }
+                await db.createDepartment({
+                  name: mappedData.name,
+                  description: mappedData.description || null,
+                });
+                break;
+
+              case 'warehouses':
+                if (!mappedData.name) {
+                  results.errors.push(`Row ${rowIndex + 1}: missing required field 'name'`);
+                  results.failed++;
+                  continue;
+                }
+                await db.createWarehouse({
+                  name: mappedData.name,
+                  code: mappedData.code || generateNumber('WH'),
+                  address: mappedData.address || null,
+                  city: mappedData.city || null,
+                  state: mappedData.state || null,
+                  country: mappedData.country || null,
+                  postalCode: mappedData.postalCode || null,
+                  type: (mappedData.type as any) || 'warehouse',
+                });
+                break;
+
+              case 'accounts':
+                if (!mappedData.name || !mappedData.code) {
+                  results.errors.push(`Row ${rowIndex + 1}: missing required fields 'name', 'code'`);
+                  results.failed++;
+                  continue;
+                }
+                await db.createAccount({
+                  name: mappedData.name,
+                  code: mappedData.code,
+                  type: (mappedData.type as any) || 'expense',
+                  category: mappedData.category || null,
+                  description: mappedData.description || null,
+                  parentAccountId: mappedData.parentAccountId ? parseInt(mappedData.parentAccountId) : null,
+                });
+                break;
+
+              case 'rawMaterials':
+                if (!mappedData.name) {
+                  results.errors.push(`Row ${rowIndex + 1}: missing required field 'name'`);
+                  results.failed++;
+                  continue;
+                }
+                await db.createRawMaterial({
+                  name: mappedData.name,
+                  sku: mappedData.sku || generateNumber('RM'),
+                  description: mappedData.description || null,
+                  category: mappedData.category || null,
+                  unit: mappedData.unit || 'EA',
+                  costPerUnit: mappedData.costPerUnit || null,
+                  reorderPoint: mappedData.reorderPoint || null,
+                  reorderQuantity: mappedData.reorderQuantity || null,
+                  leadTimeDays: mappedData.leadTimeDays ? parseInt(mappedData.leadTimeDays) : null,
+                });
+                break;
+
+              case 'freightCarriers':
+                if (!mappedData.name) {
+                  results.errors.push(`Row ${rowIndex + 1}: missing required field 'name'`);
+                  results.failed++;
+                  continue;
+                }
+                await db.createFreightCarrier({
+                  name: mappedData.name,
+                  contactName: mappedData.contactName || null,
+                  email: mappedData.email || null,
+                  phone: mappedData.phone || null,
+                  website: mappedData.website || null,
+                  accountNumber: mappedData.accountNumber || null,
+                  modes: mappedData.modes || null,
+                  notes: mappedData.notes || null,
+                });
+                break;
             }
-            
+
             results.imported++;
           } catch (error: any) {
-            results.errors.push(`Import error: ${error.message}`);
+            results.errors.push(`Row ${rowIndex + 1}: ${error.message}`);
             results.failed++;
           }
         }
-        
+
         // Create audit log for the import
         await createAuditLog(ctx.user.id, 'create', `${targetModule}_import`, 0, `Imported ${results.imported} records`);
-        
+
         return results;
+      }),
+  }),
+
+  // ============================================
+  // CSV BULK IMPORT
+  // ============================================
+  csvImport: router({
+    // Parse CSV data and return headers + rows
+    parse: protectedProcedure
+      .input(z.object({
+        csvContent: z.string().min(1),
+        delimiter: z.enum([',', ';', '\t', '|']).default(','),
+      }))
+      .mutation(async ({ input }) => {
+        const { csvContent, delimiter } = input;
+
+        // Parse CSV with proper handling of quoted fields
+        const lines: string[] = [];
+        let current = '';
+        let inQuotes = false;
+
+        for (let i = 0; i < csvContent.length; i++) {
+          const char = csvContent[i];
+
+          if (char === '"') {
+            if (inQuotes && i + 1 < csvContent.length && csvContent[i + 1] === '"') {
+              current += '"';
+              i++; // Skip escaped quote
+            } else {
+              inQuotes = !inQuotes;
+            }
+          } else if ((char === '\n' || char === '\r') && !inQuotes) {
+            if (char === '\r' && i + 1 < csvContent.length && csvContent[i + 1] === '\n') {
+              i++; // Skip \r\n
+            }
+            if (current.trim() !== '') {
+              lines.push(current);
+            }
+            current = '';
+          } else {
+            current += char;
+          }
+        }
+        if (current.trim() !== '') {
+          lines.push(current);
+        }
+
+        if (lines.length === 0) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'CSV file is empty' });
+        }
+
+        // Parse a single CSV line respecting quotes
+        function parseCsvLine(line: string): string[] {
+          const fields: string[] = [];
+          let field = '';
+          let quoted = false;
+
+          for (let i = 0; i < line.length; i++) {
+            const ch = line[i];
+            if (ch === '"') {
+              if (quoted && i + 1 < line.length && line[i + 1] === '"') {
+                field += '"';
+                i++;
+              } else {
+                quoted = !quoted;
+              }
+            } else if (ch === delimiter && !quoted) {
+              fields.push(field.trim());
+              field = '';
+            } else {
+              field += ch;
+            }
+          }
+          fields.push(field.trim());
+          return fields;
+        }
+
+        const headers = parseCsvLine(lines[0]);
+        const rows: Record<string, string>[] = [];
+
+        // Limit to 10000 rows for safety
+        const maxRows = Math.min(lines.length, 10001);
+        for (let i = 1; i < maxRows; i++) {
+          const values = parseCsvLine(lines[i]);
+          const obj: Record<string, string> = {};
+          headers.forEach((header, index) => {
+            obj[header] = values[index] || '';
+          });
+          rows.push(obj);
+        }
+
+        return {
+          headers,
+          rows,
+          totalRows: rows.length,
+          truncated: lines.length > 10001,
+        };
+      }),
+
+    // Import parsed CSV data into a specific module (reuses same logic as sheetsImport)
+    importData: adminProcedure
+      .input(z.object({
+        targetModule: z.enum(['customers', 'vendors', 'products', 'invoices', 'employees', 'contracts', 'projects', 'orders', 'purchaseOrders', 'departments', 'warehouses', 'accounts', 'rawMaterials', 'freightCarriers']),
+        data: z.array(z.record(z.string(), z.string())),
+        columnMapping: z.record(z.string(), z.string()),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { targetModule, data, columnMapping } = input;
+        const results = { imported: 0, failed: 0, errors: [] as string[] };
+
+        for (let rowIndex = 0; rowIndex < data.length; rowIndex++) {
+          const row = data[rowIndex];
+          try {
+            const mappedData: Record<string, any> = {};
+            for (const [csvCol, erpField] of Object.entries(columnMapping)) {
+              if (erpField && row[csvCol] !== undefined && row[csvCol] !== '') {
+                mappedData[erpField] = row[csvCol];
+              }
+            }
+
+            switch (targetModule) {
+              case 'customers':
+                if (!mappedData.name) { results.errors.push(`Row ${rowIndex + 1}: missing required field 'name'`); results.failed++; continue; }
+                await db.createCustomer({ name: mappedData.name, email: mappedData.email || null, phone: mappedData.phone || null, address: mappedData.address || null, city: mappedData.city || null, state: mappedData.state || null, country: mappedData.country || null, postalCode: mappedData.postalCode || null, notes: mappedData.notes || null });
+                break;
+              case 'vendors':
+                if (!mappedData.name) { results.errors.push(`Row ${rowIndex + 1}: missing required field 'name'`); results.failed++; continue; }
+                await db.createVendor({ name: mappedData.name, email: mappedData.email || null, phone: mappedData.phone || null, address: mappedData.address || null, city: mappedData.city || null, state: mappedData.state || null, country: mappedData.country || null, postalCode: mappedData.postalCode || null, paymentTerms: mappedData.paymentTerms ? parseInt(mappedData.paymentTerms) : null, notes: mappedData.notes || null });
+                break;
+              case 'products':
+                if (!mappedData.name) { results.errors.push(`Row ${rowIndex + 1}: missing required field 'name'`); results.failed++; continue; }
+                await db.createProduct({ name: mappedData.name, sku: mappedData.sku || generateNumber('PROD'), unitPrice: mappedData.price || mappedData.unitPrice || '0', description: mappedData.description || null, category: mappedData.category || null, costPrice: mappedData.cost || mappedData.costPrice || null });
+                break;
+              case 'employees':
+                if (!mappedData.firstName || !mappedData.lastName) { results.errors.push(`Row ${rowIndex + 1}: missing required fields 'firstName', 'lastName'`); results.failed++; continue; }
+                await db.createEmployee({ ...mappedData, employeeNumber: generateNumber('EMP'), firstName: mappedData.firstName, lastName: mappedData.lastName });
+                break;
+              case 'invoices':
+                if (!mappedData.customerId || !mappedData.amount) { results.errors.push(`Row ${rowIndex + 1}: missing required fields 'customerId', 'amount'`); results.failed++; continue; }
+                await db.createInvoice({ ...mappedData, invoiceNumber: generateNumber('INV'), customerId: parseInt(mappedData.customerId) || 0, issueDate: new Date(), dueDate: mappedData.dueDate ? new Date(mappedData.dueDate) : new Date(), subtotal: mappedData.amount, totalAmount: mappedData.amount });
+                break;
+              case 'contracts':
+                if (!mappedData.title) { results.errors.push(`Row ${rowIndex + 1}: missing required field 'title'`); results.failed++; continue; }
+                await db.createContract({ ...mappedData, contractNumber: generateNumber('CON'), title: mappedData.title, type: (mappedData.type as any) || 'service' });
+                break;
+              case 'projects':
+                if (!mappedData.name) { results.errors.push(`Row ${rowIndex + 1}: missing required field 'name'`); results.failed++; continue; }
+                await db.createProject({ ...mappedData, projectNumber: generateNumber('PROJ'), name: mappedData.name });
+                break;
+              case 'orders':
+                if (!mappedData.customerId) { results.errors.push(`Row ${rowIndex + 1}: missing required field 'customerId'`); results.failed++; continue; }
+                await db.createOrder({ orderNumber: generateNumber('ORD'), customerId: parseInt(mappedData.customerId) || 0, status: (mappedData.status as any) || 'pending', totalAmount: mappedData.totalAmount || '0', notes: mappedData.notes || null, orderDate: mappedData.orderDate ? new Date(mappedData.orderDate) : new Date() });
+                break;
+              case 'purchaseOrders':
+                if (!mappedData.vendorId) { results.errors.push(`Row ${rowIndex + 1}: missing required field 'vendorId'`); results.failed++; continue; }
+                await db.createPurchaseOrder({ poNumber: generateNumber('PO'), vendorId: parseInt(mappedData.vendorId) || 0, status: (mappedData.status as any) || 'draft', totalAmount: mappedData.totalAmount || '0', orderDate: mappedData.orderDate ? new Date(mappedData.orderDate) : new Date(), expectedDeliveryDate: mappedData.expectedDeliveryDate ? new Date(mappedData.expectedDeliveryDate) : null, notes: mappedData.notes || null });
+                break;
+              case 'departments':
+                if (!mappedData.name) { results.errors.push(`Row ${rowIndex + 1}: missing required field 'name'`); results.failed++; continue; }
+                await db.createDepartment({ name: mappedData.name, description: mappedData.description || null });
+                break;
+              case 'warehouses':
+                if (!mappedData.name) { results.errors.push(`Row ${rowIndex + 1}: missing required field 'name'`); results.failed++; continue; }
+                await db.createWarehouse({ name: mappedData.name, code: mappedData.code || generateNumber('WH'), address: mappedData.address || null, city: mappedData.city || null, state: mappedData.state || null, country: mappedData.country || null, postalCode: mappedData.postalCode || null, type: (mappedData.type as any) || 'warehouse' });
+                break;
+              case 'accounts':
+                if (!mappedData.name || !mappedData.code) { results.errors.push(`Row ${rowIndex + 1}: missing required fields 'name', 'code'`); results.failed++; continue; }
+                await db.createAccount({ name: mappedData.name, code: mappedData.code, type: (mappedData.type as any) || 'expense', category: mappedData.category || null, description: mappedData.description || null, parentAccountId: mappedData.parentAccountId ? parseInt(mappedData.parentAccountId) : null });
+                break;
+              case 'rawMaterials':
+                if (!mappedData.name) { results.errors.push(`Row ${rowIndex + 1}: missing required field 'name'`); results.failed++; continue; }
+                await db.createRawMaterial({ name: mappedData.name, sku: mappedData.sku || generateNumber('RM'), description: mappedData.description || null, category: mappedData.category || null, unit: mappedData.unit || 'EA', costPerUnit: mappedData.costPerUnit || null, reorderPoint: mappedData.reorderPoint || null, reorderQuantity: mappedData.reorderQuantity || null, leadTimeDays: mappedData.leadTimeDays ? parseInt(mappedData.leadTimeDays) : null });
+                break;
+              case 'freightCarriers':
+                if (!mappedData.name) { results.errors.push(`Row ${rowIndex + 1}: missing required field 'name'`); results.failed++; continue; }
+                await db.createFreightCarrier({ name: mappedData.name, contactName: mappedData.contactName || null, email: mappedData.email || null, phone: mappedData.phone || null, website: mappedData.website || null, accountNumber: mappedData.accountNumber || null, modes: mappedData.modes || null, notes: mappedData.notes || null });
+                break;
+            }
+
+            results.imported++;
+          } catch (error: any) {
+            results.errors.push(`Row ${rowIndex + 1}: ${error.message}`);
+            results.failed++;
+          }
+        }
+
+        await createAuditLog(ctx.user.id, 'create', `${targetModule}_csv_import`, 0, `CSV imported ${results.imported} records`);
+        return results;
+      }),
+
+    // Download a CSV template for a given module
+    getTemplate: protectedProcedure
+      .input(z.object({
+        targetModule: z.enum(['customers', 'vendors', 'products', 'invoices', 'employees', 'contracts', 'projects', 'orders', 'purchaseOrders', 'departments', 'warehouses', 'accounts', 'rawMaterials', 'freightCarriers']),
+      }))
+      .query(({ input }) => {
+        const templates: Record<string, { headers: string[]; sampleRow: string[] }> = {
+          customers: { headers: ['name', 'email', 'phone', 'address', 'city', 'state', 'country', 'postalCode', 'notes'], sampleRow: ['Acme Corp', 'contact@acme.com', '555-0100', '123 Main St', 'New York', 'NY', 'US', '10001', 'Key account'] },
+          vendors: { headers: ['name', 'email', 'phone', 'address', 'city', 'state', 'country', 'postalCode', 'paymentTerms', 'notes'], sampleRow: ['SupplyCo', 'info@supplyco.com', '555-0200', '456 Oak Ave', 'Chicago', 'IL', 'US', '60601', '30', 'Preferred vendor'] },
+          products: { headers: ['name', 'sku', 'description', 'category', 'unitPrice', 'costPrice'], sampleRow: ['Widget A', 'WDG-001', 'Standard widget', 'Widgets', '29.99', '12.50'] },
+          employees: { headers: ['firstName', 'lastName', 'email', 'phone', 'title', 'department', 'employmentType', 'salary', 'hireDate'], sampleRow: ['John', 'Doe', 'john@company.com', '555-0300', 'Engineer', 'Engineering', 'full_time', '85000', '2024-01-15'] },
+          invoices: { headers: ['customerId', 'amount', 'dueDate', 'description', 'notes'], sampleRow: ['1', '1500.00', '2024-12-31', 'Consulting services', 'Net 30'] },
+          contracts: { headers: ['title', 'type', 'partyName', 'value', 'startDate', 'endDate', 'description'], sampleRow: ['Service Agreement', 'service', 'Acme Corp', '50000', '2024-01-01', '2024-12-31', 'Annual service contract'] },
+          projects: { headers: ['name', 'description', 'type', 'priority', 'startDate', 'targetEndDate', 'budget'], sampleRow: ['Website Redesign', 'Modernize company website', 'development', 'high', '2024-01-01', '2024-06-30', '25000'] },
+          orders: { headers: ['customerId', 'status', 'totalAmount', 'orderDate', 'notes'], sampleRow: ['1', 'pending', '2500.00', '2024-06-15', 'Rush order'] },
+          purchaseOrders: { headers: ['vendorId', 'status', 'totalAmount', 'orderDate', 'expectedDeliveryDate', 'notes'], sampleRow: ['1', 'draft', '5000.00', '2024-06-01', '2024-07-01', 'Q3 materials'] },
+          departments: { headers: ['name', 'description'], sampleRow: ['Engineering', 'Software development team'] },
+          warehouses: { headers: ['name', 'code', 'address', 'city', 'state', 'country', 'postalCode', 'type'], sampleRow: ['Main Warehouse', 'WH-01', '789 Industrial Blvd', 'Houston', 'TX', 'US', '77001', 'warehouse'] },
+          accounts: { headers: ['name', 'code', 'type', 'category', 'description'], sampleRow: ['Office Supplies', '6100', 'expense', 'Operating Expenses', 'General office supplies'] },
+          rawMaterials: { headers: ['name', 'sku', 'description', 'category', 'unit', 'costPerUnit', 'reorderPoint', 'reorderQuantity', 'leadTimeDays'], sampleRow: ['Steel Sheet', 'RM-STL-001', '4x8 steel sheet', 'Metals', 'EA', '45.00', '100', '500', '14'] },
+          freightCarriers: { headers: ['name', 'contactName', 'email', 'phone', 'website', 'accountNumber', 'modes', 'notes'], sampleRow: ['FastShip Logistics', 'Jane Smith', 'jane@fastship.com', '555-0400', 'fastship.com', 'FS-12345', 'ground,air', 'Primary carrier'] },
+        };
+
+        const template = templates[input.targetModule];
+        if (!template) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'Unknown module' });
+        }
+
+        // Build CSV string
+        const csv = [
+          template.headers.join(','),
+          template.sampleRow.map(v => v.includes(',') ? `"${v}"` : v).join(','),
+        ].join('\n');
+
+        return { csv, filename: `${input.targetModule}_import_template.csv`, headers: template.headers };
       }),
   }),
 
