@@ -13,6 +13,12 @@ export interface EmailOptions {
   html?: string;
   from?: string;
   replyTo?: string;
+  attachments?: Array<{
+    content: string; // Base64 encoded
+    filename: string;
+    type?: string;
+    disposition?: string;
+  }>;
 }
 
 export interface EmailResult {
@@ -53,7 +59,7 @@ export async function sendEmail(options: EmailOptions): Promise<EmailResult> {
   const fromEmail = options.from || ENV.sendgridFromEmail;
 
   try {
-    const msg = {
+    const msg: any = {
       to: options.to,
       from: fromEmail,
       subject: options.subject,
@@ -61,6 +67,11 @@ export async function sendEmail(options: EmailOptions): Promise<EmailResult> {
       html: options.html || options.text || "",
       replyTo: options.replyTo,
     };
+
+    // Add attachments if provided
+    if (options.attachments && options.attachments.length > 0) {
+      msg.attachments = options.attachments;
+    }
 
     const [response] = await sgMail.send(msg);
     
