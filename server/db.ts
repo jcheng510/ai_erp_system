@@ -4089,7 +4089,12 @@ export async function upsertShopifyStore(storeDomain: string, data: Partial<Inse
     await updateShopifyStore(existing.id, data);
     return { id: existing.id };
   } else {
-    return createShopifyStore({ storeDomain, ...data } as InsertShopifyStore);
+    // Ensure storeDomain is included in the create payload
+    const createData: InsertShopifyStore = {
+      ...data,
+      storeDomain,
+    } as InsertShopifyStore;
+    return createShopifyStore(createData);
   }
 }
 

@@ -193,3 +193,85 @@ export async function makeShopifyRequest(
 export async function getShopInfo(shop: string, accessToken: string) {
   return makeShopifyRequest(shop, accessToken, "shop.json");
 }
+
+/**
+ * Process Shopify webhook with common validation and idempotency handling
+ * Returns true if webhook should be processed, false if already processed
+ */
+export async function processShopifyWebhook(
+  rawBody: string,
+  headers: {
+    hmac?: string;
+    shopDomain?: string;
+    topic?: string;
+  }
+): Promise<{ 
+  shouldProcess: boolean; 
+  error?: string;
+  payload?: any;
+  topic?: string;
+  shopDomain?: string;
+  idempotencyKey?: string;
+}> {
+  const { hmac, shopDomain, topic } = headers;
+
+  if (!hmac || !shopDomain || !topic) {
+    return { shouldProcess: false, error: 'Missing required headers' };
+  }
+
+  // Get store from database to retrieve webhook secret
+  // This import is done here to avoid circular dependencies
+  const { getShopifyStoreByDomain } = await import('../db');
+  const store = await getShopifyStoreByDomain(shopDomain);
+  
+  if (!store || !store.webhookSecret) {
+    return { shouldProcess: false, error: 'Unknown store or missing webhook secret' };
+  }
+
+  // Verify webhook signature
+  const isValid = verifyWebhookSignature(rawBody, hmac, store.webhookSecret);
+  
+  if (!isValid) {
+    return { shouldProcess: false, error: 'Invalid signature' };
+  }
+
+  // Parse the payload
+  let payload: any;
+  try {
+    payload = JSON.parse(rawBody);
+  } catch (e) {
+    return { shouldProcess: false, error: 'Invalid JSON payload' };
+  }
+  
+  // Create idempotency key from Shopify event ID
+  const idempotencyKey = `shopify-${topic}-${payload.id || Date.now()}`;
+
+  // Check idempotency
+  const { getWebhookEventByIdempotencyKey, createWebhookEvent } = await import('../db');
+  const existing = await getWebhookEventByIdempotencyKey(idempotencyKey);
+  
+  if (existing) {
+    return { 
+      shouldProcess: false, 
+      error: 'Already processed',
+      idempotencyKey 
+    };
+  }
+
+  // Create webhook event
+  await createWebhookEvent({
+    source: 'shopify',
+    topic,
+    payload: rawBody,
+    idempotencyKey,
+    status: 'received',
+  });
+
+  return { 
+    shouldProcess: true, 
+    payload,
+    topic,
+    shopDomain,
+    idempotencyKey 
+  };
+}
