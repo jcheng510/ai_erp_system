@@ -12,6 +12,7 @@ import * as sendgridProvider from "./_core/sendgridProvider";
 import { parseUploadedDocument, importPurchaseOrder, importFreightInvoice, importVendorInvoice, importCustomsDocument, matchLineItemsToMaterials } from "./documentImportService";
 import { processAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingActions, type AIAgentContext } from "./aiAgentService";
 import { autonomousWorkflowRouter } from "./autonomousWorkflowRouter";
+import { parseTextToPO, createPOPreview, createPOFromPreview } from "./textToPOService";
 import * as db from "./db";
 import { storagePut } from "./storage";
 import { nanoid } from "nanoid";
@@ -1420,6 +1421,60 @@ export const appRouter = router({
         await db.updatePurchaseOrder(input.id, { status: 'sent', approvedBy: ctx.user.id, approvedAt: new Date() });
         await createAuditLog(ctx.user.id, 'approve', 'purchaseOrder', input.id);
         return { success: true };
+      }),
+    // Parse text to PO preview
+    parseText: opsProcedure
+      .input(z.object({ text: z.string().min(1) }))
+      .mutation(async ({ input }) => {
+        const parsed = await parseTextToPO(input.text);
+        const preview = await createPOPreview(parsed);
+        return { parsed, preview };
+      }),
+    // Create PO from text and send email
+    createFromText: opsProcedure
+      .input(z.object({
+        text: z.string().min(1),
+        preview: z.object({
+          vendorId: z.number(),
+          vendorName: z.string(),
+          rawMaterialId: z.number().nullable(),
+          items: z.array(z.object({
+            description: z.string(),
+            quantity: z.string(),
+            unitPrice: z.string(),
+            totalAmount: z.string(),
+            rawMaterialId: z.number().nullable(),
+          })),
+          shippingAddress: z.string(),
+          notes: z.string(),
+          subtotal: z.string(),
+          totalAmount: z.string(),
+          suggested: z.boolean(),
+        }),
+        sendEmail: z.boolean().default(false),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        // Create the PO from preview
+        const po = await createPOFromPreview(input.preview, ctx.user.id);
+        
+        await createAuditLog(ctx.user.id, 'create', 'purchaseOrder', po.id, po.poNumber);
+        
+        // Send email if requested
+        if (input.sendEmail) {
+          const emailResult = await emailService.sendPOEmail(po.id, {
+            triggeredBy: ctx.user.id,
+          });
+          
+          if (emailResult.success && emailResult.emailMessageId) {
+            await createAuditLog(ctx.user.id, 'create', 'email_message', emailResult.emailMessageId, 'PO Email', undefined, {
+              poId: po.id,
+            });
+          }
+          
+          return { success: true, po, emailSent: emailResult.success };
+        }
+        
+        return { success: true, po, emailSent: false };
       }),
     sendToSupplier: opsProcedure
       .input(z.object({
