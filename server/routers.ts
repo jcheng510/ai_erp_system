@@ -19,6 +19,7 @@ import { sendGmailMessage, createGmailDraft, listGmailMessages, getGmailMessage,
 import { createGoogleDoc, insertTextInDoc, getGoogleDoc, updateGoogleDoc, createGoogleSheet, updateGoogleSheet, appendToGoogleSheet, getGoogleSheetValues, shareGoogleFile, getFileShareableLink } from "./_core/googleWorkspace";
 import { getGoogleFullAccessAuthUrl, syncDriveFolder, listDriveFolders, getFolderInfo, getSimpleFileType } from "./_core/googleDrive";
 import { getQuickBooksAuthUrl, validateOAuthState, exchangeCodeForToken, refreshQuickBooksToken, getCompanyInfo } from "./_core/quickbooks";
+import { listTranscripts, getTranscript, extractParticipants, parseActionItems, validateApiKey as validateFirefliesApiKey } from "./_core/fireflies";
 
 // Role-based access middleware
 const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
@@ -12324,6 +12325,555 @@ Ask if they received the original request and if they can provide a quote.`;
           return { success: true };
         }),
     }),
+  }),
+
+  // ============================================
+  // FIREFLIES.AI INTEGRATION
+  // ============================================
+  fireflies: router({
+    // Validate API key and get Fireflies user info
+    validateKey: protectedProcedure
+      .input(z.object({ apiKey: z.string().min(1) }))
+      .mutation(async ({ input }) => {
+        return validateFirefliesApiKey(input.apiKey);
+      }),
+
+    // Save Fireflies API key as integration config
+    configure: adminProcedure
+      .input(z.object({
+        apiKey: z.string().min(1),
+        autoSyncEnabled: z.boolean().optional(),
+        autoCreateContacts: z.boolean().optional(),
+        autoCreateTasks: z.boolean().optional(),
+        autoCreateProjects: z.boolean().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        // Validate the key first
+        const validation = await validateFirefliesApiKey(input.apiKey);
+        if (!validation.valid) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: `Invalid Fireflies API key: ${validation.error}` });
+        }
+
+        // Check if config already exists
+        const existing = await db.getIntegrationConfigs();
+        const firefliesConfig = existing.find((c: any) => c.type === 'fireflies');
+
+        const config = {
+          autoSyncEnabled: input.autoSyncEnabled ?? true,
+          autoCreateContacts: input.autoCreateContacts ?? true,
+          autoCreateTasks: input.autoCreateTasks ?? true,
+          autoCreateProjects: input.autoCreateProjects ?? false,
+          firefliesEmail: validation.user?.email,
+          firefliesUserName: validation.user?.name,
+        };
+
+        if (firefliesConfig) {
+          await db.updateIntegrationConfig(firefliesConfig.id, {
+            config,
+            credentials: { apiKey: input.apiKey } as any,
+            isActive: true,
+          });
+          await createAuditLog(ctx.user.id, 'update', 'integration', firefliesConfig.id, 'Fireflies');
+          return { id: firefliesConfig.id, updated: true };
+        } else {
+          const result = await db.createIntegrationConfig({
+            type: 'fireflies',
+            name: 'Fireflies.ai',
+            config: config as any,
+            credentials: { apiKey: input.apiKey } as any,
+            isActive: true,
+          });
+          await createAuditLog(ctx.user.id, 'create', 'integration', result.id, 'Fireflies');
+          return { id: result.id, updated: false };
+        }
+      }),
+
+    // Get Fireflies configuration status
+    getConfig: protectedProcedure.query(async () => {
+      const existing = await db.getIntegrationConfigs();
+      const firefliesConfig = existing.find((c: any) => c.type === 'fireflies');
+      if (!firefliesConfig) {
+        return { configured: false };
+      }
+      return {
+        configured: true,
+        isActive: firefliesConfig.isActive,
+        config: firefliesConfig.config,
+        lastSyncAt: firefliesConfig.lastSyncAt,
+      };
+    }),
+
+    // Disconnect Fireflies
+    disconnect: adminProcedure.mutation(async ({ ctx }) => {
+      const existing = await db.getIntegrationConfigs();
+      const firefliesConfig = existing.find((c: any) => c.type === 'fireflies');
+      if (firefliesConfig) {
+        await db.updateIntegrationConfig(firefliesConfig.id, { isActive: false });
+        await createAuditLog(ctx.user.id, 'update', 'integration', firefliesConfig.id, 'Fireflies disconnected');
+      }
+      return { success: true };
+    }),
+
+    // Sync meetings from Fireflies
+    syncMeetings: protectedProcedure
+      .input(z.object({ limit: z.number().optional() }).optional())
+      .mutation(async ({ input, ctx }) => {
+        // Get API key from config
+        const existing = await db.getIntegrationConfigs();
+        const firefliesConfig = existing.find((c: any) => c.type === 'fireflies' && c.isActive);
+        if (!firefliesConfig || !firefliesConfig.credentials) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'Fireflies is not configured. Please add your API key first.' });
+        }
+
+        const apiKey = (firefliesConfig.credentials as any).apiKey;
+        if (!apiKey) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'Fireflies API key not found in configuration.' });
+        }
+
+        const transcripts = await listTranscripts(apiKey, input?.limit || 50);
+        let synced = 0;
+        let skipped = 0;
+
+        for (const transcript of transcripts) {
+          // Check if already synced
+          const existingMeeting = await db.getFirefliesMeetingByFirefliesId(transcript.id);
+          if (existingMeeting) {
+            skipped++;
+            continue;
+          }
+
+          const participants = extractParticipants(transcript);
+          const actionItems = transcript.summary?.action_items
+            ? parseActionItems(transcript.summary.action_items)
+            : [];
+
+          await db.createFirefliesMeeting({
+            firefliesId: transcript.id,
+            title: transcript.title || 'Untitled Meeting',
+            date: transcript.date ? new Date(transcript.date) : undefined,
+            duration: transcript.duration || undefined,
+            organizerEmail: transcript.organizer_email || undefined,
+            participants: JSON.stringify(participants),
+            summary: transcript.summary?.overview || undefined,
+            shortSummary: transcript.summary?.shorthand_bullet?.join('\n') || undefined,
+            keywords: transcript.summary?.keywords ? JSON.stringify(transcript.summary.keywords) : undefined,
+            actionItems: JSON.stringify(actionItems),
+            transcriptUrl: transcript.transcript_url || undefined,
+            meetingSource: undefined,
+            calendarEventId: transcript.calendar_id || undefined,
+            recordingUrl: transcript.audio_url || undefined,
+            processingStatus: 'pending',
+          });
+
+          synced++;
+        }
+
+        // Update last sync time
+        await db.updateIntegrationConfig(firefliesConfig.id, {
+          lastSyncAt: new Date(),
+        });
+
+        await createAuditLog(ctx.user.id, 'create', 'fireflies_sync', 0, `Synced ${synced} meetings`);
+
+        return { synced, skipped, total: transcripts.length };
+      }),
+
+    // List synced meetings
+    meetings: router({
+      list: protectedProcedure
+        .input(z.object({
+          processingStatus: z.string().optional(),
+          limit: z.number().optional(),
+          offset: z.number().optional(),
+        }).optional())
+        .query(({ input }) => db.getFirefliesMeetings(input)),
+
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(async ({ input }) => {
+          const meeting = await db.getFirefliesMeetingById(input.id);
+          if (!meeting) throw new TRPCError({ code: 'NOT_FOUND', message: 'Meeting not found' });
+          const actionItems = await db.getFirefliesActionItems(input.id);
+          const contactMappings = await db.getFirefliesContactMappings(input.id);
+          return { ...meeting, actionItemRecords: actionItems, contactMappingRecords: contactMappings };
+        }),
+
+      getStats: protectedProcedure.query(() => db.getFirefliesMeetingStats()),
+    }),
+
+    // Process a meeting: extract contacts, create tasks, optionally create project
+    processMeeting: protectedProcedure
+      .input(z.object({
+        meetingId: z.number(),
+        createContacts: z.boolean().optional(),
+        createTasks: z.boolean().optional(),
+        createProject: z.boolean().optional(),
+        projectName: z.string().optional(),
+        assignTasksTo: z.number().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const meeting = await db.getFirefliesMeetingById(input.meetingId);
+        if (!meeting) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'Meeting not found' });
+        }
+
+        let contactsCreated = 0;
+        let tasksCreated = 0;
+        let projectId: number | undefined;
+
+        // --- Create CRM Contacts from participants ---
+        if (input.createContacts !== false) {
+          const participants = meeting.participants ? JSON.parse(meeting.participants as string) : [];
+
+          for (const participant of participants) {
+            if (!participant.email) continue;
+
+            // Check if contact already exists
+            const existingContact = await db.getCrmContactByEmail(participant.email);
+
+            if (existingContact) {
+              // Map existing contact
+              await db.createFirefliesContactMapping({
+                meetingId: meeting.id,
+                participantEmail: participant.email,
+                participantName: participant.name,
+                crmContactId: existingContact.id,
+                isNewContact: false,
+                wasAutoCreated: false,
+              });
+
+              // Log the meeting as an interaction for this contact
+              await db.createCrmInteraction({
+                contactId: existingContact.id,
+                channel: 'meeting',
+                interactionType: 'meeting_completed',
+                subject: meeting.title,
+                summary: meeting.shortSummary || meeting.summary || undefined,
+                meetingStartTime: meeting.date || undefined,
+                meetingEndTime: meeting.date && meeting.duration
+                  ? new Date(new Date(meeting.date).getTime() + meeting.duration * 1000)
+                  : undefined,
+                meetingLink: meeting.transcriptUrl || undefined,
+                performedBy: ctx.user.id,
+              });
+            } else {
+              // Create new CRM contact
+              const nameParts = (participant.name || '').split(' ');
+              const firstName = nameParts[0] || participant.email.split('@')[0];
+              const lastName = nameParts.slice(1).join(' ') || undefined;
+
+              const contactId = await db.createCrmContact({
+                firstName,
+                lastName,
+                fullName: participant.name || firstName,
+                email: participant.email,
+                contactType: 'lead',
+                source: 'fireflies',
+                notes: `Auto-created from Fireflies meeting: ${meeting.title}`,
+                capturedBy: ctx.user.id,
+              });
+
+              await db.createFirefliesContactMapping({
+                meetingId: meeting.id,
+                participantEmail: participant.email,
+                participantName: participant.name,
+                crmContactId: contactId,
+                isNewContact: true,
+                wasAutoCreated: true,
+              });
+
+              // Log the meeting as an interaction
+              await db.createCrmInteraction({
+                contactId: contactId,
+                channel: 'meeting',
+                interactionType: 'meeting_completed',
+                subject: meeting.title,
+                summary: meeting.shortSummary || meeting.summary || undefined,
+                meetingStartTime: meeting.date || undefined,
+                meetingLink: meeting.transcriptUrl || undefined,
+                performedBy: ctx.user.id,
+              });
+
+              contactsCreated++;
+            }
+          }
+        }
+
+        // --- Create Project (if requested) ---
+        if (input.createProject) {
+          const projectNumber = generateNumber('PRJ');
+          const projectResult = await db.createProject({
+            projectNumber,
+            name: input.projectName || `Meeting Follow-up: ${meeting.title}`,
+            description: `Auto-generated from Fireflies meeting: ${meeting.title}\n\nSummary:\n${meeting.summary || 'No summary available'}`,
+            type: 'internal',
+            status: 'planning',
+            priority: 'medium',
+            ownerId: ctx.user.id,
+            createdBy: ctx.user.id,
+            startDate: new Date(),
+          });
+          projectId = projectResult.id;
+          await createAuditLog(ctx.user.id, 'create', 'project', projectId, input.projectName || meeting.title);
+        }
+
+        // --- Create Tasks from Action Items ---
+        if (input.createTasks !== false) {
+          const actionItems = meeting.actionItems ? JSON.parse(meeting.actionItems as string) : [];
+
+          for (const item of actionItems) {
+            // If we have a project, create as project task
+            if (projectId) {
+              const taskResult = await db.createProjectTask({
+                projectId,
+                name: item.text?.substring(0, 255) || 'Untitled action item',
+                description: `From Fireflies meeting: ${meeting.title}\n\nAction: ${item.text}${item.assignee ? `\nAssignee: ${item.assignee}` : ''}`,
+                assigneeId: input.assignTasksTo || ctx.user.id,
+                status: 'todo',
+                priority: 'medium',
+                dueDate: item.dueDate ? new Date(item.dueDate) : undefined,
+                createdBy: ctx.user.id,
+              });
+
+              await db.createFirefliesActionItem({
+                meetingId: meeting.id,
+                firefliesMeetingId: meeting.firefliesId,
+                text: item.text || '',
+                assignee: item.assignee || undefined,
+                assigneeEmail: item.assigneeEmail || undefined,
+                dueDate: item.dueDate ? new Date(item.dueDate) : undefined,
+                projectTaskId: taskResult.id,
+                status: 'converted_to_task',
+                convertedAt: new Date(),
+                convertedBy: ctx.user.id,
+              });
+
+              tasksCreated++;
+            } else {
+              // Store action item without a project link
+              await db.createFirefliesActionItem({
+                meetingId: meeting.id,
+                firefliesMeetingId: meeting.firefliesId,
+                text: item.text || '',
+                assignee: item.assignee || undefined,
+                assigneeEmail: item.assigneeEmail || undefined,
+                dueDate: item.dueDate ? new Date(item.dueDate) : undefined,
+                status: 'pending',
+              });
+
+              tasksCreated++;
+            }
+          }
+        }
+
+        // Update meeting processing status
+        let newStatus: 'contacts_created' | 'tasks_created' | 'project_created' | 'fully_processed' = 'fully_processed';
+        if (contactsCreated > 0 && tasksCreated === 0 && !projectId) newStatus = 'contacts_created';
+        else if (tasksCreated > 0 && contactsCreated === 0 && !projectId) newStatus = 'tasks_created';
+        else if (projectId && contactsCreated === 0) newStatus = 'project_created';
+
+        await db.updateFirefliesMeeting(meeting.id, {
+          processingStatus: newStatus,
+          processedAt: new Date(),
+          processedBy: ctx.user.id,
+          autoCreatedProjectId: projectId,
+          autoCreatedTaskCount: tasksCreated,
+          autoCreatedContactCount: contactsCreated,
+        });
+
+        await createAuditLog(ctx.user.id, 'create', 'fireflies_process', meeting.id,
+          `Processed meeting: ${meeting.title} (${contactsCreated} contacts, ${tasksCreated} tasks${projectId ? ', 1 project' : ''})`);
+
+        return {
+          contactsCreated,
+          tasksCreated,
+          projectId,
+          processingStatus: newStatus,
+        };
+      }),
+
+    // Batch process all pending meetings
+    processAllPending: protectedProcedure
+      .input(z.object({
+        createContacts: z.boolean().optional(),
+        createTasks: z.boolean().optional(),
+        createProjects: z.boolean().optional(),
+        assignTasksTo: z.number().optional(),
+      }).optional())
+      .mutation(async ({ input, ctx }) => {
+        const pendingMeetings = await db.getFirefliesMeetings({ processingStatus: 'pending' });
+        const results = { processed: 0, contactsCreated: 0, tasksCreated: 0, projectsCreated: 0 };
+
+        // Get config for defaults
+        const existing = await db.getIntegrationConfigs();
+        const firefliesConfig = existing.find((c: any) => c.type === 'fireflies');
+        const config = firefliesConfig?.config as any || {};
+
+        for (const meeting of pendingMeetings) {
+          const shouldCreateContacts = input?.createContacts ?? config.autoCreateContacts ?? true;
+          const shouldCreateTasks = input?.createTasks ?? config.autoCreateTasks ?? true;
+          const shouldCreateProject = input?.createProjects ?? config.autoCreateProjects ?? false;
+
+          const participants = meeting.participants ? JSON.parse(meeting.participants as string) : [];
+          const actionItems = meeting.actionItems ? JSON.parse(meeting.actionItems as string) : [];
+
+          let contactsCreated = 0;
+          let tasksCreated = 0;
+          let projectId: number | undefined;
+
+          // Create contacts
+          if (shouldCreateContacts) {
+            for (const participant of participants) {
+              if (!participant.email) continue;
+              const existingContact = await db.getCrmContactByEmail(participant.email);
+              if (!existingContact) {
+                const nameParts = (participant.name || '').split(' ');
+                const firstName = nameParts[0] || participant.email.split('@')[0];
+                const lastName = nameParts.slice(1).join(' ') || undefined;
+
+                const contactId = await db.createCrmContact({
+                  firstName,
+                  lastName,
+                  fullName: participant.name || firstName,
+                  email: participant.email,
+                  contactType: 'lead',
+                  source: 'fireflies',
+                  notes: `Auto-created from Fireflies meeting: ${meeting.title}`,
+                  capturedBy: ctx.user.id,
+                });
+
+                await db.createFirefliesContactMapping({
+                  meetingId: meeting.id,
+                  participantEmail: participant.email,
+                  participantName: participant.name,
+                  crmContactId: contactId,
+                  isNewContact: true,
+                  wasAutoCreated: true,
+                });
+
+                contactsCreated++;
+              } else {
+                await db.createFirefliesContactMapping({
+                  meetingId: meeting.id,
+                  participantEmail: participant.email,
+                  participantName: participant.name,
+                  crmContactId: existingContact.id,
+                  isNewContact: false,
+                  wasAutoCreated: false,
+                });
+              }
+            }
+          }
+
+          // Create project
+          if (shouldCreateProject) {
+            const projectNumber = generateNumber('PRJ');
+            const projectResult = await db.createProject({
+              projectNumber,
+              name: `Meeting Follow-up: ${meeting.title}`,
+              description: `Auto-generated from Fireflies meeting: ${meeting.title}\n\nSummary:\n${meeting.summary || 'No summary available'}`,
+              type: 'internal',
+              status: 'planning',
+              priority: 'medium',
+              ownerId: ctx.user.id,
+              createdBy: ctx.user.id,
+              startDate: new Date(),
+            });
+            projectId = projectResult.id;
+            results.projectsCreated++;
+          }
+
+          // Create tasks
+          if (shouldCreateTasks && actionItems.length > 0) {
+            for (const item of actionItems) {
+              if (projectId) {
+                const taskResult = await db.createProjectTask({
+                  projectId,
+                  name: item.text?.substring(0, 255) || 'Untitled action item',
+                  description: `From Fireflies meeting: ${meeting.title}\n\nAction: ${item.text}`,
+                  assigneeId: input?.assignTasksTo || ctx.user.id,
+                  status: 'todo',
+                  priority: 'medium',
+                  createdBy: ctx.user.id,
+                });
+
+                await db.createFirefliesActionItem({
+                  meetingId: meeting.id,
+                  firefliesMeetingId: meeting.firefliesId,
+                  text: item.text || '',
+                  assignee: item.assignee || undefined,
+                  projectTaskId: taskResult.id,
+                  status: 'converted_to_task',
+                  convertedAt: new Date(),
+                  convertedBy: ctx.user.id,
+                });
+              } else {
+                await db.createFirefliesActionItem({
+                  meetingId: meeting.id,
+                  firefliesMeetingId: meeting.firefliesId,
+                  text: item.text || '',
+                  assignee: item.assignee || undefined,
+                  status: 'pending',
+                });
+              }
+              tasksCreated++;
+            }
+          }
+
+          // Update meeting
+          await db.updateFirefliesMeeting(meeting.id, {
+            processingStatus: 'fully_processed',
+            processedAt: new Date(),
+            processedBy: ctx.user.id,
+            autoCreatedProjectId: projectId,
+            autoCreatedTaskCount: tasksCreated,
+            autoCreatedContactCount: contactsCreated,
+          });
+
+          results.processed++;
+          results.contactsCreated += contactsCreated;
+          results.tasksCreated += tasksCreated;
+        }
+
+        return results;
+      }),
+
+    // Convert a single action item to a project task
+    convertActionItem: protectedProcedure
+      .input(z.object({
+        actionItemId: z.number(),
+        projectId: z.number(),
+        assigneeId: z.number().optional(),
+        priority: z.enum(['low', 'medium', 'high', 'critical']).optional(),
+        dueDate: z.date().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const item = await db.getFirefliesActionItemById(input.actionItemId);
+        if (!item) throw new TRPCError({ code: 'NOT_FOUND', message: 'Action item not found' });
+        if (item.status === 'converted_to_task') {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'Action item already converted to a task' });
+        }
+
+        const taskResult = await db.createProjectTask({
+          projectId: input.projectId,
+          name: item.text.substring(0, 255),
+          description: `Converted from Fireflies action item\n\n${item.text}`,
+          assigneeId: input.assigneeId || ctx.user.id,
+          status: 'todo',
+          priority: input.priority || 'medium',
+          dueDate: input.dueDate || item.dueDate || undefined,
+          createdBy: ctx.user.id,
+        });
+
+        await db.updateFirefliesActionItem(item.id, {
+          projectTaskId: taskResult.id,
+          status: 'converted_to_task',
+          convertedAt: new Date(),
+          convertedBy: ctx.user.id,
+        });
+
+        return { taskId: taskResult.id };
+      }),
   }),
 });
 
