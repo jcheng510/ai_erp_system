@@ -119,6 +119,19 @@ Railway will auto-detect the configuration from `package.json`.
 - **Build Tools**: Vite, esbuild, TypeScript
 - **Testing**: Vitest
 
+## Branch Management
+
+This repository uses automatic branch deletion for merged pull requests. When a PR is merged to main, the source branch is automatically deleted to keep the repository clean.
+
+- **Automatic Deletion**: Handled by GitHub Actions workflow (`.github/workflows/delete-merged-branches.yml`)
+- **Manual Cleanup**: Use `scripts/cleanup-merged-branches.sh` to clean up existing merged branches
+- **Documentation**: See `BRANCH_DELETION_POLICY.md` for complete details
+
+To clean up existing merged branches:
+```bash
+./scripts/cleanup-merged-branches.sh
+```
+
 ## License
 
 MIT
