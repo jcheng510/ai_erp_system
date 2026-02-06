@@ -87,7 +87,10 @@ import {
   crmContacts, crmTags, crmContactTags, whatsappMessages, crmInteractions,
   crmPipelines, crmDeals, contactCaptures, crmEmailCampaigns, crmCampaignRecipients,
   InsertCrmContact, InsertCrmTag, InsertWhatsappMessage, InsertCrmInteraction,
-  InsertCrmPipeline, InsertCrmDeal, InsertContactCapture, InsertCrmEmailCampaign, InsertCrmCampaignRecipient
+  InsertCrmPipeline, InsertCrmDeal, InsertContactCapture, InsertCrmEmailCampaign, InsertCrmCampaignRecipient,
+  // SMS & Business Sync types
+  smsMessages, businessContactSyncLogs,
+  InsertSmsMessage, InsertBusinessContactSyncLog
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -8006,4 +8009,139 @@ export async function checkAndTriggerLowStockPurchaseOrder(
     purchaseOrderId: poResult.id,
     reason: `Auto-generated PO ${poNumber} for ${orderQty} units`
   };
+}
+
+// ============================================
+// SMS MESSAGES
+// ============================================
+
+export async function getSmsMessages(filters?: {
+  contactId?: number;
+  phoneNumber?: string;
+  direction?: string;
+  isBusinessRelated?: boolean;
+  limit?: number;
+  offset?: number;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (filters?.contactId) {
+    conditions.push(eq(smsMessages.contactId, filters.contactId));
+  }
+  if (filters?.phoneNumber) {
+    conditions.push(eq(smsMessages.phoneNumber, filters.phoneNumber));
+  }
+  if (filters?.direction) {
+    conditions.push(eq(smsMessages.direction, filters.direction as any));
+  }
+  if (filters?.isBusinessRelated !== undefined) {
+    conditions.push(eq(smsMessages.isBusinessRelated, filters.isBusinessRelated));
+  }
+
+  let query = db.select().from(smsMessages);
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as any;
+  }
+
+  return query
+    .orderBy(desc(smsMessages.createdAt))
+    .limit(filters?.limit || 100)
+    .offset(filters?.offset || 0);
+}
+
+export async function createSmsMessage(data: InsertSmsMessage) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(smsMessages).values(data);
+  return result[0].insertId;
+}
+
+export async function updateSmsMessage(id: number, data: Partial<InsertSmsMessage>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(smsMessages).set(data).where(eq(smsMessages.id, id));
+}
+
+// ============================================
+// CRM CONTACT LOOKUP HELPERS
+// ============================================
+
+export async function getCrmContactByPhone(phone: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  // Normalize: strip non-digit characters for comparison
+  const normalized = phone.replace(/[^\d+]/g, "");
+  const result = await db.select().from(crmContacts).where(
+    or(
+      like(crmContacts.phone, `%${normalized.slice(-10)}%`),
+      like(crmContacts.whatsappNumber, `%${normalized.slice(-10)}%`)
+    )
+  ).limit(1);
+  return result[0];
+}
+
+export async function getCrmContactByWhatsappNumber(whatsappNumber: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const normalized = whatsappNumber.replace(/[^\d+]/g, "");
+  const result = await db.select().from(crmContacts).where(
+    like(crmContacts.whatsappNumber, `%${normalized.slice(-10)}%`)
+  ).limit(1);
+  return result[0];
+}
+
+export async function findOrCreateBizTag() {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Look for existing "biz" tag
+  const existing = await db.select().from(crmTags)
+    .where(eq(crmTags.name, "biz")).limit(1);
+  if (existing[0]) return existing[0].id;
+
+  // Create it
+  const result = await db.insert(crmTags).values({
+    name: "biz",
+    color: "#10B981",
+    category: "contact",
+  });
+  return result[0].insertId;
+}
+
+// ============================================
+// BUSINESS CONTACT SYNC LOGS
+// ============================================
+
+export async function createBusinessSyncLog(data: InsertBusinessContactSyncLog) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(businessContactSyncLogs).values(data);
+  return result[0].insertId;
+}
+
+export async function updateBusinessSyncLog(id: number, data: Partial<InsertBusinessContactSyncLog>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(businessContactSyncLogs).set(data).where(eq(businessContactSyncLogs.id, id));
+}
+
+export async function getBusinessSyncLogs(limit: number = 20) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(businessContactSyncLogs)
+    .orderBy(desc(businessContactSyncLogs.createdAt))
+    .limit(limit);
+}
+
+export async function getLatestBusinessSyncLog(source?: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  let query = db.select().from(businessContactSyncLogs);
+  if (source) {
+    query = query.where(eq(businessContactSyncLogs.syncSource, source as any)) as any;
+  }
+  const result = await query.orderBy(desc(businessContactSyncLogs.createdAt)).limit(1);
+  return result[0];
 }

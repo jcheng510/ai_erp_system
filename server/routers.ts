@@ -11,6 +11,7 @@ import * as emailService from "./_core/emailService";
 import * as sendgridProvider from "./_core/sendgridProvider";
 import { parseUploadedDocument, importPurchaseOrder, importFreightInvoice, importVendorInvoice, importCustomsDocument, matchLineItemsToMaterials } from "./documentImportService";
 import { processAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingActions, type AIAgentContext } from "./aiAgentService";
+import { syncWhatsappBusinessContacts, syncSmsBusinessContacts, syncEmailBusinessContacts, syncAllBusinessContacts, processIncomingMessage, classifyBusinessRelevance } from "./businessContactSyncService";
 import { autonomousWorkflowRouter } from "./autonomousWorkflowRouter";
 import * as db from "./db";
 import { storagePut } from "./storage";
@@ -12322,6 +12323,188 @@ Ask if they received the original request and if they can provide a quote.`;
           await db.updateCrmEmailCampaign(id, data);
           await createAuditLog(ctx.user.id, 'update', 'crm_campaign', id);
           return { success: true };
+        }),
+    }),
+
+    // --- BUSINESS CONTACT SYNC ---
+    // Syncs contacts & messages from WhatsApp, SMS, Email
+    // Uses NLP to detect business relevance
+    // Auto-creates contacts when tagged "biz" or messages mention "superhumn"
+    businessSync: router({
+      // Sync WhatsApp contacts/messages
+      syncWhatsapp: protectedProcedure
+        .mutation(async ({ ctx }) => {
+          const result = await syncWhatsappBusinessContacts(ctx.user.id);
+          await createAuditLog(ctx.user.id, 'sync', 'business_contacts', undefined, 'WhatsApp business sync');
+          return result;
+        }),
+
+      // Sync SMS contacts/messages
+      syncSms: protectedProcedure
+        .mutation(async ({ ctx }) => {
+          const result = await syncSmsBusinessContacts(ctx.user.id);
+          await createAuditLog(ctx.user.id, 'sync', 'business_contacts', undefined, 'SMS business sync');
+          return result;
+        }),
+
+      // Sync Email contacts/messages
+      syncEmail: protectedProcedure
+        .mutation(async ({ ctx }) => {
+          const result = await syncEmailBusinessContacts(ctx.user.id);
+          await createAuditLog(ctx.user.id, 'sync', 'business_contacts', undefined, 'Email business sync');
+          return result;
+        }),
+
+      // Sync all channels at once
+      syncAll: protectedProcedure
+        .mutation(async ({ ctx }) => {
+          const result = await syncAllBusinessContacts(ctx.user.id);
+          await createAuditLog(ctx.user.id, 'sync', 'business_contacts', undefined, 'All channels business sync');
+          return result;
+        }),
+
+      // Process a single incoming message (webhook/real-time)
+      processMessage: protectedProcedure
+        .input(z.object({
+          channel: z.enum(["whatsapp", "sms", "email"]),
+          identifier: z.string().min(1), // phone number or email
+          content: z.string().min(1),
+          contactName: z.string().optional(),
+          tags: z.array(z.string()).optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          return processIncomingMessage(
+            input.channel,
+            input.identifier,
+            input.content,
+            input.contactName,
+            input.tags,
+            ctx.user.id
+          );
+        }),
+
+      // Classify a message without processing (preview/test)
+      classifyMessage: protectedProcedure
+        .input(z.object({
+          content: z.string().min(1),
+          contactName: z.string().optional(),
+          channel: z.string().optional(),
+        }))
+        .mutation(async ({ input }) => {
+          return classifyBusinessRelevance(input.content, input.contactName, input.channel);
+        }),
+
+      // Get sync history/logs
+      syncLogs: protectedProcedure
+        .input(z.object({ limit: z.number().optional() }).optional())
+        .query(({ input }) => db.getBusinessSyncLogs(input?.limit)),
+
+      // Get latest sync status per channel
+      syncStatus: protectedProcedure
+        .query(async () => {
+          const [whatsapp, sms, email] = await Promise.all([
+            db.getLatestBusinessSyncLog("whatsapp"),
+            db.getLatestBusinessSyncLog("sms"),
+            db.getLatestBusinessSyncLog("email"),
+          ]);
+          return { whatsapp, sms, email };
+        }),
+
+      // Get SMS messages (with business filter)
+      smsMessages: protectedProcedure
+        .input(z.object({
+          contactId: z.number().optional(),
+          phoneNumber: z.string().optional(),
+          direction: z.string().optional(),
+          isBusinessRelated: z.boolean().optional(),
+          limit: z.number().optional(),
+          offset: z.number().optional(),
+        }).optional())
+        .query(({ input }) => db.getSmsMessages(input)),
+
+      // Log an inbound SMS
+      logInboundSms: protectedProcedure
+        .input(z.object({
+          phoneNumber: z.string(),
+          contactName: z.string().optional(),
+          messageId: z.string().optional(),
+          content: z.string(),
+          tags: z.array(z.string()).optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          // First classify the message
+          const classification = await classifyBusinessRelevance(input.content, input.contactName, "sms");
+
+          // Find or create contact by phone
+          let contact = await db.getCrmContactByPhone(input.phoneNumber);
+
+          const hasBizTag = input.tags?.some((t) => t.toLowerCase() === "biz") ?? false;
+          const shouldAutoCreate = classification.isBusinessRelated || classification.mentionsSuperhumn || hasBizTag;
+
+          if (!contact && shouldAutoCreate) {
+            // Auto-create contact
+            const nameParts = input.contactName?.trim().split(/\s+/) || [];
+            const firstName = nameParts[0] || "SMS";
+            const lastName = nameParts.length > 1 ? nameParts.slice(1).join(" ") : "Contact";
+            const fullName = input.contactName || `SMS ${input.phoneNumber}`;
+
+            const contactId = await db.createCrmContact({
+              firstName,
+              lastName,
+              fullName,
+              phone: input.phoneNumber,
+              contactType: "lead",
+              source: "cold_outreach",
+              preferredChannel: "sms",
+              capturedBy: ctx.user.id,
+              notes: `Auto-created from SMS sync. ${classification.reasoning}`,
+            });
+            contact = await db.getCrmContactById(contactId);
+          }
+
+          // Tag with "biz" if applicable
+          if (contact && (hasBizTag || classification.mentionsSuperhumn)) {
+            const bizTagId = await db.findOrCreateBizTag();
+            const existingTags = await db.getContactTags(contact.id);
+            if (!existingTags.some((t) => t.name === "biz")) {
+              await db.addTagToContact(contact.id, bizTagId);
+            }
+          }
+
+          // Store the SMS message
+          const msgId = await db.createSmsMessage({
+            contactId: contact?.id,
+            phoneNumber: input.phoneNumber,
+            contactName: input.contactName,
+            direction: "inbound",
+            content: input.content,
+            messageId: input.messageId,
+            status: "delivered",
+            aiProcessed: true,
+            isBusinessRelated: classification.isBusinessRelated,
+            businessRelevanceScore: classification.relevanceScore,
+            sentiment: classification.relevanceScore >= 60 ? "positive" : "neutral",
+            aiSummary: classification.reasoning,
+          });
+
+          // Create CRM interaction if contact exists
+          if (contact) {
+            await db.createCrmInteraction({
+              contactId: contact.id,
+              channel: "sms",
+              interactionType: "received",
+              content: input.content,
+              summary: classification.reasoning,
+              performedBy: ctx.user.id,
+            });
+          }
+
+          return {
+            messageId: msgId,
+            contactId: contact?.id,
+            contactCreated: shouldAutoCreate && !contact,
+            classification,
+          };
         }),
     }),
   }),

@@ -4229,3 +4229,80 @@ export const workflowNotifications = mysqlTable("workflowNotifications", {
 
 export type WorkflowNotification = typeof workflowNotifications.$inferSelect;
 export type InsertWorkflowNotification = typeof workflowNotifications.$inferInsert;
+
+// ============================================
+// SMS MESSAGES - Track SMS conversations
+// ============================================
+export const smsMessages = mysqlTable("sms_messages", {
+  id: int("id").autoincrement().primaryKey(),
+  contactId: int("contactId"),
+
+  // Message identifiers
+  messageId: varchar("messageId", { length: 128 }), // Provider message ID (Twilio, etc.)
+  conversationId: varchar("conversationId", { length: 128 }),
+
+  // Contact info
+  phoneNumber: varchar("phoneNumber", { length: 32 }).notNull(),
+  contactName: varchar("contactName", { length: 255 }),
+
+  // Message details
+  direction: mysqlEnum("direction", ["inbound", "outbound"]).notNull(),
+  content: text("content"),
+
+  // Status tracking
+  status: mysqlEnum("status", ["pending", "sent", "delivered", "read", "failed"]).default("pending"),
+  sentAt: timestamp("sentAt"),
+  deliveredAt: timestamp("deliveredAt"),
+  failedReason: text("failedReason"),
+
+  // AI processing
+  aiProcessed: boolean("aiProcessed").default(false),
+  sentiment: mysqlEnum("sentiment", ["positive", "neutral", "negative"]),
+  aiSummary: text("aiSummary"),
+  isBusinessRelated: boolean("isBusinessRelated").default(false),
+  businessRelevanceScore: int("businessRelevanceScore").default(0), // 0-100
+
+  // Context
+  relatedEntityType: varchar("relatedEntityType", { length: 50 }),
+  relatedEntityId: int("relatedEntityId"),
+
+  sentBy: int("sentBy"),
+  metadata: text("metadata"), // JSON
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type SmsMessage = typeof smsMessages.$inferSelect;
+export type InsertSmsMessage = typeof smsMessages.$inferInsert;
+
+// ============================================
+// BUSINESS CONTACT SYNC - Track sync state across channels
+// ============================================
+export const businessContactSyncLogs = mysqlTable("business_contact_sync_logs", {
+  id: int("id").autoincrement().primaryKey(),
+
+  // Sync metadata
+  syncSource: mysqlEnum("syncSource", ["whatsapp", "sms", "email"]).notNull(),
+  syncType: mysqlEnum("syncType", ["manual", "scheduled", "webhook"]).default("manual").notNull(),
+  syncStatus: mysqlEnum("syncStatus", ["running", "completed", "failed"]).default("running").notNull(),
+
+  // Results
+  messagesScanned: int("messagesScanned").default(0),
+  messagesMatched: int("messagesMatched").default(0),
+  contactsCreated: int("contactsCreated").default(0),
+  contactsUpdated: int("contactsUpdated").default(0),
+  contactsTagged: int("contactsTagged").default(0),
+
+  // Error tracking
+  errors: text("errors"), // JSON array of error messages
+
+  // Timing
+  startedAt: timestamp("startedAt").defaultNow().notNull(),
+  completedAt: timestamp("completedAt"),
+
+  triggeredBy: int("triggeredBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type BusinessContactSyncLog = typeof businessContactSyncLogs.$inferSelect;
+export type InsertBusinessContactSyncLog = typeof businessContactSyncLogs.$inferInsert;
