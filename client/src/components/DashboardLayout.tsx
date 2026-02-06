@@ -67,6 +67,7 @@ import {
   Target,
   MessageSquare,
   Heart,
+  ClipboardCheck,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -134,6 +135,7 @@ const menuGroups = [
     label: "Projects & Data",
     items: [
       { icon: FolderKanban, label: "Projects", path: "/projects" },
+      { icon: ClipboardCheck, label: "Investment Grants", path: "/projects/investment-grants" },
       { icon: FolderLock, label: "Data Rooms", path: "/datarooms" },
     ],
   },

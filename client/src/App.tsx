@@ -87,6 +87,7 @@ import TransactionalEmails from "./pages/settings/TransactionalEmails";
 
 // Projects
 import Projects from "./pages/projects/Projects";
+import InvestmentGrantChecklist from "./pages/projects/InvestmentGrantChecklist";
 
 // Import
 import Import from "./pages/Import";
@@ -201,6 +202,7 @@ function Router() {
 
         {/* Projects */}
         <Route path="/projects" component={Projects} />
+        <Route path="/projects/investment-grants" component={InvestmentGrantChecklist} />
 
         {/* Import */}
         <Route path="/import" component={Import} />

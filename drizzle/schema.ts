@@ -4229,3 +4229,57 @@ export const workflowNotifications = mysqlTable("workflowNotifications", {
 
 export type WorkflowNotification = typeof workflowNotifications.$inferSelect;
 export type InsertWorkflowNotification = typeof workflowNotifications.$inferInsert;
+
+// ============================================
+// SAUDI INVESTMENT GRANT CHECKLIST
+// ============================================
+
+export const investmentGrantChecklists = mysqlTable("investment_grant_checklists", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  status: mysqlEnum("status", ["not_started", "in_progress", "completed", "on_hold"]).default("not_started").notNull(),
+  totalCapex: decimal("totalCapex", { precision: 15, scale: 2 }),
+  grantPercentage: decimal("grantPercentage", { precision: 5, scale: 2 }).default("35"),
+  estimatedGrant: decimal("estimatedGrant", { precision: 15, scale: 2 }),
+  currency: varchar("currency", { length: 3 }).default("SAR"),
+  startDate: timestamp("startDate"),
+  targetCompletionDate: timestamp("targetCompletionDate"),
+  notes: text("notes"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type InvestmentGrantChecklist = typeof investmentGrantChecklists.$inferSelect;
+export type InsertInvestmentGrantChecklist = typeof investmentGrantChecklists.$inferInsert;
+
+export const investmentGrantItems = mysqlTable("investment_grant_items", {
+  id: int("id").autoincrement().primaryKey(),
+  checklistId: int("checklistId").notNull(),
+  category: mysqlEnum("category", [
+    "entity_entry_setup",
+    "project_definition",
+    "capex_financials",
+    "land_infrastructure",
+    "jobs_localization",
+    "incentive_application",
+    "construction_equipment",
+    "grant_disbursement",
+  ]).notNull(),
+  taskName: varchar("taskName", { length: 255 }).notNull(),
+  description: text("description"),
+  status: mysqlEnum("status", ["not_started", "in_progress", "completed", "blocked"]).default("not_started").notNull(),
+  assigneeId: int("assigneeId"),
+  startMonth: int("startMonth"),
+  durationMonths: int("durationMonths"),
+  completedDate: timestamp("completedDate"),
+  notes: text("notes"),
+  sortOrder: int("sortOrder").default(0),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type InvestmentGrantItem = typeof investmentGrantItems.$inferSelect;
+export type InsertInvestmentGrantItem = typeof investmentGrantItems.$inferInsert;
