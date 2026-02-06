@@ -403,7 +403,7 @@ const AI_TOOLS: Tool[] = [
     type: "function",
     function: {
       name: "request_vendor_quotes",
-      description: "Autonomously request quotes from vendors, gather responses, compare them, and highlight the best option for approval",
+      description: "Create an RFQ and send professional quote request emails to vendors. This initiates the quote request process. Use compare_vendor_quotes separately once vendors respond.",
       parameters: {
         type: "object",
         properties: {
@@ -1390,7 +1390,7 @@ User Context:
 
 Guidelines:
 - For sensitive operations (creating POs, sending emails, updating inventory), create tasks that require approval unless explicitly told to execute immediately.
-- When requesting vendor quotes, use the request_vendor_quotes tool which will automatically send emails to vendors, wait for responses, compare them, and highlight the best option.
+- When requesting vendor quotes, use request_vendor_quotes to create RFQ and send emails to vendors. Once vendors respond, use compare_vendor_quotes to analyze and recommend the best option.
 - Provide clear, actionable responses.
 - When analyzing data, provide insights and recommendations.
 - Format currency values with $ symbol and 2 decimal places.

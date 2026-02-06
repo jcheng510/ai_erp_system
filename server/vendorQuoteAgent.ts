@@ -267,11 +267,19 @@ Respond with a JSON object in this format:
 
     const bestQuote = quotesWithVendors[bestQuoteIndex];
 
-    // Update quote rankings
+    // Update quote rankings - assign sequential ranks (1 for best, 2, 3, etc. for others)
     for (let i = 0; i < quotes.length; i++) {
+      let rank;
+      if (i === bestQuoteIndex) {
+        rank = 1; // Best quote gets rank 1
+      } else if (i < bestQuoteIndex) {
+        rank = i + 2; // Quotes before best quote get rank 2, 3, etc.
+      } else {
+        rank = i + 1; // Quotes after best quote get rank i+1
+      }
       await db
         .update(vendorQuotes)
-        .set({ overallRank: i === bestQuoteIndex ? 1 : i + 2 })
+        .set({ overallRank: rank })
         .where(eq(vendorQuotes.id, quotes[i].id));
     }
 
