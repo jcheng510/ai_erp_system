@@ -25,7 +25,9 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 
 export default function DataRoomDetail() {
   const params = useParams<{ id: string }>();
-  const roomId = parseInt(params.id || "0");
+  const paramValue = params.id || "";
+  const isNumericId = /^\d+$/.test(paramValue);
+  const numericId = isNumericId ? parseInt(paramValue) : 0;
   const [, setLocation] = useLocation();
   const [currentFolderId, setCurrentFolderId] = useState<number | null>(null);
   const [createFolderOpen, setCreateFolderOpen] = useState(false);
@@ -49,12 +51,25 @@ export default function DataRoomDetail() {
   const [selectedDriveFolderId, setSelectedDriveFolderId] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const { data: room, isLoading: roomLoading, refetch: refetchRoom } = trpc.dataRoom.getById.useQuery({ id: roomId });
-  const { data: folders, refetch: refetchFolders } = trpc.dataRoom.folders.list.useQuery({ dataRoomId: roomId, parentId: currentFolderId });
-  const { data: documents, refetch: refetchDocuments } = trpc.dataRoom.documents.list.useQuery({ dataRoomId: roomId, folderId: currentFolderId });
-  const { data: links, refetch: refetchLinks } = trpc.dataRoom.links.list.useQuery({ dataRoomId: roomId });
-  const { data: visitors } = trpc.dataRoom.visitors.list.useQuery({ dataRoomId: roomId });
-  const { data: analytics } = trpc.dataRoom.analytics.getOverview.useQuery({ dataRoomId: roomId });
+  // Support both numeric ID and slug-based URLs
+  const { data: roomById, isLoading: roomByIdLoading, refetch: refetchRoomById } = trpc.dataRoom.getById.useQuery(
+    { id: numericId },
+    { enabled: isNumericId }
+  );
+  const { data: roomBySlug, isLoading: roomBySlugLoading, refetch: refetchRoomBySlug } = trpc.dataRoom.getBySlug.useQuery(
+    { slug: paramValue },
+    { enabled: !isNumericId && paramValue.length > 0 }
+  );
+  const room = roomById ?? roomBySlug;
+  const roomLoading = isNumericId ? roomByIdLoading : roomBySlugLoading;
+  const refetchRoom = isNumericId ? refetchRoomById : refetchRoomBySlug;
+  const roomId = room?.id ?? 0;
+
+  const { data: folders, refetch: refetchFolders } = trpc.dataRoom.folders.list.useQuery({ dataRoomId: roomId, parentId: currentFolderId }, { enabled: roomId > 0 });
+  const { data: documents, refetch: refetchDocuments } = trpc.dataRoom.documents.list.useQuery({ dataRoomId: roomId, folderId: currentFolderId }, { enabled: roomId > 0 });
+  const { data: links, refetch: refetchLinks } = trpc.dataRoom.links.list.useQuery({ dataRoomId: roomId }, { enabled: roomId > 0 });
+  const { data: visitors } = trpc.dataRoom.visitors.list.useQuery({ dataRoomId: roomId }, { enabled: roomId > 0 });
+  const { data: analytics } = trpc.dataRoom.analytics.getOverview.useQuery({ dataRoomId: roomId }, { enabled: roomId > 0 });
 
   const createFolderMutation = trpc.dataRoom.folders.create.useMutation({
     onSuccess: () => {

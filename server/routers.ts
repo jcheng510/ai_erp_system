@@ -8791,6 +8791,18 @@ Ask if they received the original request and if they can provide a quote.`;
         return room;
       }),
 
+    // Get a single data room by slug
+    getBySlug: protectedProcedure
+      .input(z.object({ slug: z.string() }))
+      .query(async ({ input, ctx }) => {
+        const room = await db.getDataRoomBySlug(input.slug);
+        if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
+        if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
+        }
+        return room;
+      }),
+
     // Create a new data room
     create: protectedProcedure
       .input(z.object({
