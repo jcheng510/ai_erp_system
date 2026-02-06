@@ -7559,46 +7559,116 @@ Ask if they received the original request and if they can provide a quote.`;
 
           let totalImported = 0;
           let totalUpdated = 0;
+          let totalSkuMappings = 0;
           let totalErrors = 0;
 
           for (const store of activeStores) {
             if (!store) continue;
             try {
-              const response = await fetch(`https://${store.storeDomain}/admin/api/2024-01/products.json?limit=100`, {
-                headers: {
-                  'X-Shopify-Access-Token': store.accessToken!,
-                  'Content-Type': 'application/json',
-                },
-              });
+              // Fetch all products with pagination
+              const allProducts: any[] = [];
+              let nextPageUrl: string | null = `https://${store.storeDomain}/admin/api/${store.apiVersion || '2024-01'}/products.json?limit=250`;
 
-              if (!response.ok) {
-                throw new Error(`Shopify API error: ${response.status}`);
+              while (nextPageUrl) {
+                const response = await fetch(nextPageUrl, {
+                  headers: {
+                    'X-Shopify-Access-Token': store.accessToken!,
+                    'Content-Type': 'application/json',
+                  },
+                });
+
+                if (!response.ok) {
+                  throw new Error(`Shopify API error: ${response.status} ${response.statusText}`);
+                }
+
+                const data = await response.json();
+                allProducts.push(...(data.products || []));
+
+                // Parse Link header for pagination
+                const linkHeader = response.headers.get('link');
+                nextPageUrl = null;
+                if (linkHeader) {
+                  const nextMatch = linkHeader.match(/<([^>]+)>;\s*rel="next"/);
+                  if (nextMatch) {
+                    nextPageUrl = nextMatch[1];
+                  }
+                }
               }
 
-              const data = await response.json();
-              const products = data.products || [];
+              for (const shopifyProduct of allProducts) {
+                const description = shopifyProduct.body_html?.replace(/<[^>]*>/g, '') || '';
+                const isActive = shopifyProduct.status === 'active';
+                const variants = shopifyProduct.variants || [];
 
-              for (const product of products) {
-                const existingProduct = await db.getProductBySku(product.variants[0]?.sku || `SHOP-${product.id}`);
-                if (existingProduct) {
-                  await db.updateProduct(existingProduct.id, {
-                    name: product.title,
-                    price: product.variants[0]?.price || '0',
-                    description: product.body_html?.replace(/<[^>]*>/g, '') || '',
-                    isActive: product.status === 'active',
-                  });
-                  totalUpdated++;
-                } else {
-                  await db.createProduct({
-                    name: product.title,
-                    sku: product.variants[0]?.sku || `SHOP-${product.id}`,
-                    description: product.body_html?.replace(/<[^>]*>/g, '') || '',
-                    price: product.variants[0]?.price || '0',
-                    isActive: product.status === 'active',
-                    category: product.product_type || 'General',
-                    source: 'shopify',
-                  });
-                  totalImported++;
+                for (const variant of variants) {
+                  const shopifyVariantId = String(variant.id);
+                  const shopifyProductId = String(shopifyProduct.id);
+                  const variantSku = variant.sku || `SHOP-${shopifyProduct.id}-${variant.id}`;
+                  const variantTitle = variants.length > 1
+                    ? `${shopifyProduct.title} - ${variant.title}`
+                    : shopifyProduct.title;
+
+                  try {
+                    // Check if we already have this product mapped via SKU mapping
+                    const existingMapping = await db.getShopifySkuMappingByVariant(store.id, shopifyVariantId);
+                    let productId: number;
+
+                    if (existingMapping) {
+                      // Update existing product
+                      await db.updateProduct(existingMapping.productId, {
+                        name: variantTitle,
+                        sku: variantSku,
+                        unitPrice: variant.price || '0',
+                        description,
+                        status: isActive ? 'active' : 'inactive',
+                        category: shopifyProduct.product_type || 'General',
+                        shopifyProductId,
+                      });
+                      productId = existingMapping.productId;
+                      totalUpdated++;
+                    } else {
+                      // Check if a product with this SKU already exists
+                      const existingBySku = await db.getProductBySku(variantSku);
+                      if (existingBySku) {
+                        await db.updateProduct(existingBySku.id, {
+                          name: variantTitle,
+                          unitPrice: variant.price || '0',
+                          description,
+                          status: isActive ? 'active' : 'inactive',
+                          category: shopifyProduct.product_type || 'General',
+                          shopifyProductId,
+                        });
+                        productId = existingBySku.id;
+                        totalUpdated++;
+                      } else {
+                        // Create new product
+                        const newProduct = await db.createProduct({
+                          name: variantTitle,
+                          sku: variantSku,
+                          unitPrice: variant.price || '0',
+                          description,
+                          status: isActive ? 'active' : 'inactive',
+                          category: shopifyProduct.product_type || 'General',
+                          shopifyProductId,
+                        });
+                        productId = newProduct.id;
+                        totalImported++;
+                      }
+
+                      // Create SKU mapping
+                      await db.createShopifySkuMapping({
+                        storeId: store.id,
+                        shopifyProductId,
+                        shopifyVariantId,
+                        shopifySku: variant.sku || null,
+                        productId,
+                      });
+                      totalSkuMappings++;
+                    }
+                  } catch (variantError) {
+                    totalErrors++;
+                    console.error(`Error syncing variant ${variant.id} of product ${shopifyProduct.id}:`, variantError);
+                  }
                 }
               }
 
@@ -7613,12 +7683,12 @@ Ask if they received the original request and if they can provide a quote.`;
             integration: 'shopify',
             action: 'sync_products',
             status: totalErrors > 0 ? 'warning' : 'success',
-            details: `Imported ${totalImported}, Updated ${totalUpdated}`,
+            details: `Imported ${totalImported}, Updated ${totalUpdated}, SKU mappings ${totalSkuMappings}`,
             recordsProcessed: totalImported + totalUpdated,
             recordsFailed: totalErrors,
           });
 
-          return { imported: totalImported, updated: totalUpdated, errors: totalErrors };
+          return { imported: totalImported, updated: totalUpdated, skuMappings: totalSkuMappings, errors: totalErrors };
         }),
 
       // Sync inventory from Shopify store

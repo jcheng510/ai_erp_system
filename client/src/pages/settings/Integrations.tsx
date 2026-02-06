@@ -107,6 +107,16 @@ export default function IntegrationsPage() {
     },
   });
 
+  const shopifySyncProductsMutation = trpc.shopify.sync.products.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Product sync complete: ${data.imported} imported, ${data.updated} updated, ${data.skuMappings} SKU mappings created${data.errors > 0 ? `, ${data.errors} errors` : ''}`);
+      refetch();
+    },
+    onError: (error) => {
+      toast.error(`Product sync failed: ${error.message}`);
+    },
+  });
+
   const clearHistoryMutation = trpc.integrations.clearSyncHistory.useMutation({
     onSuccess: () => {
       toast.success("Sync history cleared");
@@ -484,6 +494,19 @@ export default function IntegrationsPage() {
                     <CardTitle>Shopify Stores</CardTitle>
                     <CardDescription>Manage connected Shopify stores for order and inventory sync</CardDescription>
                   </div>
+                  <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => shopifySyncProductsMutation.mutate({})}
+                    disabled={shopifySyncProductsMutation.isPending || !status?.shopify?.stores?.length}
+                  >
+                    {shopifySyncProductsMutation.isPending ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <RefreshCw className="w-4 h-4 mr-2" />
+                    )}
+                    Sync Products
+                  </Button>
                   <Dialog open={showAddShopify} onOpenChange={setShowAddShopify}>
                     <DialogTrigger asChild>
                       <Button>
@@ -550,6 +573,7 @@ export default function IntegrationsPage() {
                       </DialogFooter>
                     </DialogContent>
                   </Dialog>
+                  </div>
                 </div>
               </CardHeader>
               <CardContent>
@@ -583,8 +607,21 @@ export default function IntegrationsPage() {
                           </TableCell>
                           <TableCell>
                             <div className="flex gap-2">
-                              <Button 
-                                variant="ghost" 
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => shopifySyncProductsMutation.mutate({ storeId: store.id })}
+                                disabled={shopifySyncProductsMutation.isPending || !store.isEnabled}
+                                title="Sync products"
+                              >
+                                {shopifySyncProductsMutation.isPending ? (
+                                  <Loader2 className="w-4 h-4 animate-spin" />
+                                ) : (
+                                  <RefreshCw className="w-4 h-4" />
+                                )}
+                              </Button>
+                              <Button
+                                variant="ghost"
                                 size="sm"
                                 onClick={() => shopifyTestConnectionMutation.mutate({ storeId: store.id })}
                                 disabled={shopifyTestConnectionMutation.isPending || !store.isEnabled}
@@ -592,9 +629,9 @@ export default function IntegrationsPage() {
                               >
                                 <TestTube className="w-4 h-4" />
                               </Button>
-                              <Button 
-                                variant="ghost" 
-                                size="sm" 
+                              <Button
+                                variant="ghost"
+                                size="sm"
                                 className="text-destructive"
                                 onClick={() => {
                                   if (confirm(`Are you sure you want to disconnect ${store.storeName || store.storeDomain}?`)) {
@@ -626,6 +663,13 @@ export default function IntegrationsPage() {
                     Default settings for new store connections. Editing existing store settings coming soon.
                   </p>
                   <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <Label>Sync Products</Label>
+                        <p className="text-xs text-muted-foreground">Import product catalog from Shopify with all variants and SKU mappings</p>
+                      </div>
+                      <Switch defaultChecked disabled />
+                    </div>
                     <div className="flex items-center justify-between">
                       <div>
                         <Label>Sync Orders</Label>

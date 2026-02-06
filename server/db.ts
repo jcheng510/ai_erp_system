@@ -347,6 +347,25 @@ export async function getProductBySku(sku: string) {
   return result[0];
 }
 
+export async function getProductByShopifyProductId(shopifyProductId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(products).where(eq(products.shopifyProductId, shopifyProductId)).limit(1);
+  return result[0];
+}
+
+export async function getShopifySkuMappingByVariant(storeId: number, shopifyVariantId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(shopifySkuMappings)
+    .where(and(
+      eq(shopifySkuMappings.storeId, storeId),
+      eq(shopifySkuMappings.shopifyVariantId, shopifyVariantId),
+    ))
+    .limit(1);
+  return result[0];
+}
+
 export async function createProduct(data: InsertProduct) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");

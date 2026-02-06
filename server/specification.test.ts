@@ -80,6 +80,14 @@ vi.mock('./db', () => ({
   
   // Existing functions
   getAvailableInventoryByProduct: vi.fn(),
+
+  // Product sync functions
+  getProductByShopifyProductId: vi.fn(),
+  getShopifySkuMappingByVariant: vi.fn(),
+  getProductBySku: vi.fn(),
+  createProduct: vi.fn(),
+  updateProduct: vi.fn(),
+  createSyncLog: vi.fn(),
 }));
 
 import * as db from './db';
@@ -340,6 +348,237 @@ describe('Shopify Integration Module', () => {
       const result = await db.getProductByShopifySku(1, '456');
 
       expect(result?.id).toBe(1);
+    });
+
+    it('should look up existing SKU mapping by variant ID', async () => {
+      const mockMapping = {
+        id: 1,
+        storeId: 1,
+        shopifyProductId: '123',
+        shopifyVariantId: '456',
+        shopifySku: 'TEST-SKU',
+        productId: 5,
+        isActive: true,
+      };
+      vi.mocked(db.getShopifySkuMappingByVariant).mockResolvedValue(mockMapping);
+
+      const result = await db.getShopifySkuMappingByVariant(1, '456');
+
+      expect(result?.productId).toBe(5);
+      expect(result?.shopifyVariantId).toBe('456');
+      expect(db.getShopifySkuMappingByVariant).toHaveBeenCalledWith(1, '456');
+    });
+
+    it('should return undefined for unmapped variant', async () => {
+      vi.mocked(db.getShopifySkuMappingByVariant).mockResolvedValue(undefined);
+
+      const result = await db.getShopifySkuMappingByVariant(1, 'nonexistent');
+
+      expect(result).toBeUndefined();
+    });
+  });
+
+  describe('Product Catalog Sync', () => {
+    it('should look up product by Shopify product ID', async () => {
+      const mockProduct = { id: 3, name: 'Shopify Product', sku: 'SHOP-123', shopifyProductId: '123' };
+      vi.mocked(db.getProductByShopifyProductId).mockResolvedValue(mockProduct);
+
+      const result = await db.getProductByShopifyProductId('123');
+
+      expect(result?.shopifyProductId).toBe('123');
+      expect(db.getProductByShopifyProductId).toHaveBeenCalledWith('123');
+    });
+
+    it('should return undefined when no product matches Shopify product ID', async () => {
+      vi.mocked(db.getProductByShopifyProductId).mockResolvedValue(undefined);
+
+      const result = await db.getProductByShopifyProductId('nonexistent');
+
+      expect(result).toBeUndefined();
+    });
+
+    it('should create new product from Shopify catalog', async () => {
+      vi.mocked(db.createProduct).mockResolvedValue({ id: 10 });
+
+      const result = await db.createProduct({
+        name: 'New Shopify Product',
+        sku: 'SHOP-NEW-001',
+        unitPrice: '29.99',
+        description: 'A product from Shopify',
+        status: 'active',
+        category: 'Apparel',
+        shopifyProductId: '789',
+      });
+
+      expect(result.id).toBe(10);
+      expect(db.createProduct).toHaveBeenCalledWith(
+        expect.objectContaining({
+          shopifyProductId: '789',
+          unitPrice: '29.99',
+          status: 'active',
+        })
+      );
+    });
+
+    it('should update existing product with Shopify data', async () => {
+      vi.mocked(db.updateProduct).mockResolvedValue(undefined);
+
+      await db.updateProduct(5, {
+        name: 'Updated Product Title',
+        unitPrice: '39.99',
+        status: 'active',
+        shopifyProductId: '123',
+      });
+
+      expect(db.updateProduct).toHaveBeenCalledWith(5, expect.objectContaining({
+        unitPrice: '39.99',
+        shopifyProductId: '123',
+      }));
+    });
+
+    it('should create SKU mapping after importing new product', async () => {
+      vi.mocked(db.createShopifySkuMapping).mockResolvedValue({ id: 1 });
+
+      const result = await db.createShopifySkuMapping({
+        storeId: 1,
+        shopifyProductId: '789',
+        shopifyVariantId: '101',
+        shopifySku: 'NEW-SKU',
+        productId: 10,
+      });
+
+      expect(result.id).toBe(1);
+      expect(db.createShopifySkuMapping).toHaveBeenCalledWith(
+        expect.objectContaining({
+          shopifyProductId: '789',
+          shopifyVariantId: '101',
+          shopifySku: 'NEW-SKU',
+          productId: 10,
+        })
+      );
+    });
+
+    it('should handle multi-variant products by creating a product per variant', async () => {
+      // Simulate creating products for a multi-variant Shopify product
+      vi.mocked(db.getShopifySkuMappingByVariant).mockResolvedValue(undefined);
+      vi.mocked(db.getProductBySku).mockResolvedValue(undefined);
+      vi.mocked(db.createProduct)
+        .mockResolvedValueOnce({ id: 20 })
+        .mockResolvedValueOnce({ id: 21 });
+      vi.mocked(db.createShopifySkuMapping).mockResolvedValue({ id: 1 });
+
+      // Variant 1: Small
+      const variant1Sku = 'TSHIRT-SM';
+      const result1 = await db.createProduct({
+        name: 'T-Shirt - Small',
+        sku: variant1Sku,
+        unitPrice: '19.99',
+        status: 'active',
+        shopifyProductId: '500',
+      });
+      await db.createShopifySkuMapping({
+        storeId: 1,
+        shopifyProductId: '500',
+        shopifyVariantId: '501',
+        shopifySku: variant1Sku,
+        productId: result1.id,
+      });
+
+      // Variant 2: Large
+      const variant2Sku = 'TSHIRT-LG';
+      const result2 = await db.createProduct({
+        name: 'T-Shirt - Large',
+        sku: variant2Sku,
+        unitPrice: '21.99',
+        status: 'active',
+        shopifyProductId: '500',
+      });
+      await db.createShopifySkuMapping({
+        storeId: 1,
+        shopifyProductId: '500',
+        shopifyVariantId: '502',
+        shopifySku: variant2Sku,
+        productId: result2.id,
+      });
+
+      expect(db.createProduct).toHaveBeenCalledTimes(2);
+      expect(db.createShopifySkuMapping).toHaveBeenCalledTimes(2);
+      expect(result1.id).not.toBe(result2.id);
+    });
+
+    it('should update existing product when SKU mapping already exists', async () => {
+      const existingMapping = {
+        id: 5,
+        storeId: 1,
+        shopifyProductId: '123',
+        shopifyVariantId: '456',
+        shopifySku: 'EXISTING-SKU',
+        productId: 15,
+        isActive: true,
+      };
+      vi.mocked(db.getShopifySkuMappingByVariant).mockResolvedValue(existingMapping);
+      vi.mocked(db.updateProduct).mockResolvedValue(undefined);
+
+      // When mapping exists, update the product instead of creating
+      await db.updateProduct(existingMapping.productId, {
+        name: 'Updated Name',
+        unitPrice: '49.99',
+        status: 'active',
+        shopifyProductId: '123',
+      });
+
+      expect(db.updateProduct).toHaveBeenCalledWith(15, expect.objectContaining({
+        name: 'Updated Name',
+        unitPrice: '49.99',
+      }));
+      // Should NOT create a new product
+      expect(db.createProduct).not.toHaveBeenCalled();
+    });
+
+    it('should log sync results', async () => {
+      vi.mocked(db.createSyncLog).mockResolvedValue({ id: 1 });
+
+      await db.createSyncLog({
+        integration: 'shopify',
+        action: 'sync_products',
+        status: 'success',
+        details: 'Imported 5, Updated 3, SKU mappings 5',
+        recordsProcessed: 8,
+        recordsFailed: 0,
+      });
+
+      expect(db.createSyncLog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          integration: 'shopify',
+          action: 'sync_products',
+          recordsProcessed: 8,
+        })
+      );
+    });
+
+    it('should use fallback SKU when Shopify variant has no SKU', async () => {
+      vi.mocked(db.getShopifySkuMappingByVariant).mockResolvedValue(undefined);
+      vi.mocked(db.getProductBySku).mockResolvedValue(undefined);
+      vi.mocked(db.createProduct).mockResolvedValue({ id: 30 });
+      vi.mocked(db.createShopifySkuMapping).mockResolvedValue({ id: 1 });
+
+      const shopifyProductId = '600';
+      const shopifyVariantId = '601';
+      const fallbackSku = `SHOP-${shopifyProductId}-${shopifyVariantId}`;
+
+      await db.createProduct({
+        name: 'No SKU Product',
+        sku: fallbackSku,
+        unitPrice: '9.99',
+        status: 'active',
+        shopifyProductId,
+      });
+
+      expect(db.createProduct).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sku: 'SHOP-600-601',
+        })
+      );
     });
   });
 
