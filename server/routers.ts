@@ -11772,6 +11772,196 @@ Ask if they received the original request and if they can provide a quote.`;
         }),
     }),
 
+    // --- iMESSAGE ---
+    imessage: router({
+      messages: protectedProcedure
+        .input(z.object({
+          contactId: z.number().optional(),
+          senderIdentifier: z.string().optional(),
+          direction: z.string().optional(),
+          chatId: z.string().optional(),
+          limit: z.number().optional(),
+          offset: z.number().optional(),
+        }).optional())
+        .query(({ input }) => db.getImessageMessages(input)),
+
+      conversations: protectedProcedure
+        .input(z.object({ limit: z.number().optional() }).optional())
+        .query(({ input }) => db.getImessageConversations(input?.limit)),
+
+      logMessage: protectedProcedure
+        .input(z.object({
+          contactId: z.number().optional(),
+          senderIdentifier: z.string(),
+          senderName: z.string().optional(),
+          chatId: z.string().optional(),
+          handleId: z.string().optional(),
+          direction: z.enum(["inbound", "outbound"]),
+          content: z.string(),
+          messageType: z.enum(["text", "image", "video", "audio", "attachment", "link", "tapback"]).optional(),
+          messageGuid: z.string().optional(),
+          sentAt: z.date().optional(),
+          isGroupChat: z.boolean().optional(),
+          groupName: z.string().optional(),
+          syncSource: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          // Auto-match contact by phone/email if not provided
+          let contactId = input.contactId;
+          if (!contactId) {
+            const contacts = await db.getCrmContacts({ search: input.senderIdentifier, limit: 1 });
+            contactId = contacts[0]?.id;
+          }
+
+          const id = await db.createImessageMessage({
+            ...input,
+            contactId,
+            status: input.direction === "outbound" ? "sent" : "delivered",
+            sentAt: input.sentAt || new Date(),
+            syncedBy: ctx.user.id,
+          });
+
+          // Create interaction record if contact found
+          if (contactId) {
+            await db.createCrmInteraction({
+              contactId,
+              channel: "imessage",
+              interactionType: input.direction === "outbound" ? "sent" : "received",
+              content: input.content,
+              imessageMessageId: id,
+              performedBy: ctx.user.id,
+            });
+          }
+
+          return { id, contactId };
+        }),
+
+      bulkSync: protectedProcedure
+        .input(z.object({
+          messages: z.array(z.object({
+            senderIdentifier: z.string(),
+            senderName: z.string().optional(),
+            chatId: z.string().optional(),
+            handleId: z.string().optional(),
+            direction: z.enum(["inbound", "outbound"]),
+            content: z.string(),
+            messageType: z.enum(["text", "image", "video", "audio", "attachment", "link", "tapback"]).optional(),
+            messageGuid: z.string().optional(),
+            sentAt: z.date().optional(),
+            isGroupChat: z.boolean().optional(),
+            groupName: z.string().optional(),
+          })),
+          syncSource: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          let synced = 0;
+          let contactsMatched = 0;
+
+          for (const msg of input.messages) {
+            // Try to match contact
+            const contacts = await db.getCrmContacts({ search: msg.senderIdentifier, limit: 1 });
+            const contactId = contacts[0]?.id;
+            if (contactId) contactsMatched++;
+
+            await db.createImessageMessage({
+              ...msg,
+              contactId,
+              status: msg.direction === "outbound" ? "sent" : "delivered",
+              sentAt: msg.sentAt || new Date(),
+              syncSource: input.syncSource || "bulk_import",
+              syncedBy: ctx.user.id,
+            });
+
+            // Create interaction if contact matched
+            if (contactId) {
+              await db.createCrmInteraction({
+                contactId,
+                channel: "imessage",
+                interactionType: msg.direction === "outbound" ? "sent" : "received",
+                content: msg.content,
+                performedBy: ctx.user.id,
+              });
+            }
+
+            synced++;
+          }
+
+          return { synced, contactsMatched };
+        }),
+    }),
+
+    // --- MESSAGING SYNC ---
+    messagingSync: router({
+      // Get unified overview across all channels per contact
+      overview: protectedProcedure
+        .input(z.object({
+          contactType: z.string().optional(),
+          channel: z.string().optional(),
+          search: z.string().optional(),
+          limit: z.number().optional(),
+          offset: z.number().optional(),
+        }).optional())
+        .query(({ input }) => db.getMessagingSyncOverview(input)),
+
+      // Sync accounts management
+      accounts: protectedProcedure
+        .input(z.object({ channel: z.string().optional() }).optional())
+        .query(({ input }) => db.getMessagingSyncAccounts(input?.channel)),
+
+      getAccount: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getMessagingSyncAccountById(input.id)),
+
+      createAccount: protectedProcedure
+        .input(z.object({
+          channel: z.enum(["imessage", "whatsapp", "email", "sms"]),
+          accountIdentifier: z.string().min(1),
+          label: z.string().optional(),
+          syncFrequency: z.enum(["realtime", "hourly", "daily", "manual"]).optional(),
+          config: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const id = await db.createMessagingSyncAccount({
+            ...input,
+            createdBy: ctx.user.id,
+          });
+          await createAuditLog(ctx.user.id, 'create', 'messaging_sync_account', id, input.label || input.accountIdentifier);
+          return { id };
+        }),
+
+      updateAccount: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          label: z.string().optional(),
+          isActive: z.boolean().optional(),
+          syncFrequency: z.enum(["realtime", "hourly", "daily", "manual"]).optional(),
+          config: z.string().optional(),
+          lastSyncAt: z.date().optional(),
+          lastSyncStatus: z.enum(["success", "partial", "failed"]).optional(),
+          lastSyncError: z.string().optional(),
+          totalMessagesSynced: z.number().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateMessagingSyncAccount(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'messaging_sync_account', id);
+          return { success: true };
+        }),
+
+      deleteAccount: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteMessagingSyncAccount(input.id);
+          await createAuditLog(ctx.user.id, 'delete', 'messaging_sync_account', input.id);
+          return { success: true };
+        }),
+
+      // Get unified messaging history for a contact
+      contactHistory: protectedProcedure
+        .input(z.object({ contactId: z.number(), limit: z.number().optional() }))
+        .query(({ input }) => db.getUnifiedMessagingHistory(input.contactId, input.limit)),
+    }),
+
     // --- INTERACTIONS ---
     interactions: router({
       list: protectedProcedure
@@ -11786,7 +11976,7 @@ Ask if they received the original request and if they can provide a quote.`;
       create: protectedProcedure
         .input(z.object({
           contactId: z.number(),
-          channel: z.enum(["email", "whatsapp", "sms", "phone", "meeting", "linkedin", "note", "task"]),
+          channel: z.enum(["email", "whatsapp", "imessage", "sms", "phone", "meeting", "linkedin", "note", "task"]),
           interactionType: z.enum(["sent", "received", "call_made", "call_received", "meeting_scheduled", "meeting_completed", "note_added", "task_completed"]),
           subject: z.string().optional(),
           content: z.string().optional(),

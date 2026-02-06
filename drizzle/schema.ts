@@ -3215,7 +3215,8 @@ export const crmContacts = mysqlTable("crm_contacts", {
   totalInteractions: int("totalInteractions").default(0),
 
   // Communication preferences
-  preferredChannel: mysqlEnum("preferredChannel", ["email", "whatsapp", "phone", "sms", "linkedin"]).default("email"),
+  preferredChannel: mysqlEnum("preferredChannel", ["email", "whatsapp", "imessage", "phone", "sms", "linkedin"]).default("email"),
+  imessageId: varchar("imessageId", { length: 320 }), // phone or Apple ID email for iMessage
   optedOutEmail: boolean("optedOutEmail").default(false),
   optedOutSms: boolean("optedOutSms").default(false),
   optedOutWhatsapp: boolean("optedOutWhatsapp").default(false),
@@ -3321,7 +3322,7 @@ export const crmInteractions = mysqlTable("crm_interactions", {
   contactId: int("contactId").notNull(),
 
   // Interaction type
-  channel: mysqlEnum("channel", ["email", "whatsapp", "sms", "phone", "meeting", "linkedin", "note", "task"]).notNull(),
+  channel: mysqlEnum("channel", ["email", "whatsapp", "imessage", "sms", "phone", "meeting", "linkedin", "note", "task"]).notNull(),
   interactionType: mysqlEnum("interactionType", ["sent", "received", "call_made", "call_received", "meeting_scheduled", "meeting_completed", "note_added", "task_completed"]).notNull(),
 
   // Content
@@ -3332,6 +3333,7 @@ export const crmInteractions = mysqlTable("crm_interactions", {
   // Linked records
   emailId: int("emailId"), // Link to sentEmails or inboundEmails
   whatsappMessageId: int("whatsappMessageId"),
+  imessageMessageId: int("imessageMessageId"), // Link to imessageMessages
 
   // Call details (if phone)
   callDuration: int("callDuration"), // seconds
@@ -3519,6 +3521,82 @@ export const crmCampaignRecipients = mysqlTable("crm_campaign_recipients", {
 
 export type CrmCampaignRecipient = typeof crmCampaignRecipients.$inferSelect;
 export type InsertCrmCampaignRecipient = typeof crmCampaignRecipients.$inferInsert;
+
+// iMessage Messages - Track iMessage conversations synced from Apple devices
+export const imessageMessages = mysqlTable("imessage_messages", {
+  id: int("id").autoincrement().primaryKey(),
+  contactId: int("contactId"),
+
+  // Message identifiers
+  messageGuid: varchar("messageGuid", { length: 255 }), // Apple message GUID
+  chatId: varchar("chatId", { length: 255 }), // iMessage chat/thread identifier
+  handleId: varchar("handleId", { length: 255 }), // phone number or email used in iMessage
+
+  // Contact info
+  senderName: varchar("senderName", { length: 255 }),
+  senderIdentifier: varchar("senderIdentifier", { length: 255 }).notNull(), // phone or email
+
+  // Message details
+  direction: mysqlEnum("direction", ["inbound", "outbound"]).notNull(),
+  messageType: mysqlEnum("messageType", ["text", "image", "video", "audio", "attachment", "link", "tapback"]).default("text"),
+  content: text("content"),
+  attachmentUrl: text("attachmentUrl"),
+  attachmentMimeType: varchar("attachmentMimeType", { length: 128 }),
+
+  // Status tracking
+  status: mysqlEnum("status", ["sent", "delivered", "read", "failed"]).default("sent"),
+  sentAt: timestamp("sentAt"),
+  deliveredAt: timestamp("deliveredAt"),
+  readAt: timestamp("readAt"),
+
+  // Group chat info
+  isGroupChat: boolean("isGroupChat").default(false),
+  groupName: varchar("groupName", { length: 255 }),
+
+  // AI processing
+  aiProcessed: boolean("aiProcessed").default(false),
+  sentiment: mysqlEnum("sentiment", ["positive", "neutral", "negative"]),
+  aiSummary: text("aiSummary"),
+
+  // Context
+  relatedEntityType: varchar("relatedEntityType", { length: 50 }),
+  relatedEntityId: int("relatedEntityId"),
+
+  syncedBy: int("syncedBy"),
+  syncSource: varchar("syncSource", { length: 64 }), // e.g. "macos_export", "icloud_api", "manual"
+  metadata: text("metadata"), // JSON
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ImessageMessage = typeof imessageMessages.$inferSelect;
+export type InsertImessageMessage = typeof imessageMessages.$inferInsert;
+
+// Messaging Sync Accounts - Configuration for syncing external messaging sources
+export const messagingSyncAccounts = mysqlTable("messaging_sync_accounts", {
+  id: int("id").autoincrement().primaryKey(),
+  channel: mysqlEnum("channel", ["imessage", "whatsapp", "email", "sms"]).notNull(),
+  accountIdentifier: varchar("accountIdentifier", { length: 320 }).notNull(), // phone, email, or account ID
+  label: varchar("label", { length: 128 }), // friendly name
+  isActive: boolean("isActive").default(true).notNull(),
+
+  // Sync state
+  lastSyncAt: timestamp("lastSyncAt"),
+  lastSyncStatus: mysqlEnum("lastSyncStatus", ["success", "partial", "failed"]),
+  lastSyncError: text("lastSyncError"),
+  totalMessagesSynced: int("totalMessagesSynced").default(0),
+  syncFrequency: mysqlEnum("syncFrequency", ["realtime", "hourly", "daily", "manual"]).default("manual"),
+
+  // Auth/config (encrypted credentials stored as JSON)
+  config: text("config"), // JSON - channel-specific settings
+
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type MessagingSyncAccount = typeof messagingSyncAccounts.$inferSelect;
+export type InsertMessagingSyncAccount = typeof messagingSyncAccounts.$inferInsert;
 
 // ============================================
 // AUTONOMOUS SUPPLY CHAIN WORKFLOW SYSTEM

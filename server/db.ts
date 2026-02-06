@@ -87,7 +87,10 @@ import {
   crmContacts, crmTags, crmContactTags, whatsappMessages, crmInteractions,
   crmPipelines, crmDeals, contactCaptures, crmEmailCampaigns, crmCampaignRecipients,
   InsertCrmContact, InsertCrmTag, InsertWhatsappMessage, InsertCrmInteraction,
-  InsertCrmPipeline, InsertCrmDeal, InsertContactCapture, InsertCrmEmailCampaign, InsertCrmCampaignRecipient
+  InsertCrmPipeline, InsertCrmDeal, InsertContactCapture, InsertCrmEmailCampaign, InsertCrmCampaignRecipient,
+  // iMessage & messaging sync
+  imessageMessages, InsertImessageMessage,
+  messagingSyncAccounts, InsertMessagingSyncAccount,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -7296,6 +7299,120 @@ export async function updateWhatsappMessageStatus(
   await db.update(whatsappMessages).set(updates).where(eq(whatsappMessages.id, id));
 }
 
+// --- iMESSAGE ---
+
+export async function getImessageMessages(filters?: {
+  contactId?: number;
+  senderIdentifier?: string;
+  direction?: string;
+  chatId?: string;
+  limit?: number;
+  offset?: number;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (filters?.contactId) {
+    conditions.push(eq(imessageMessages.contactId, filters.contactId));
+  }
+  if (filters?.senderIdentifier) {
+    conditions.push(eq(imessageMessages.senderIdentifier, filters.senderIdentifier));
+  }
+  if (filters?.direction) {
+    conditions.push(eq(imessageMessages.direction, filters.direction as any));
+  }
+  if (filters?.chatId) {
+    conditions.push(eq(imessageMessages.chatId, filters.chatId));
+  }
+
+  let query = db.select().from(imessageMessages);
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as any;
+  }
+
+  return query
+    .orderBy(desc(imessageMessages.createdAt))
+    .limit(filters?.limit || 100)
+    .offset(filters?.offset || 0);
+}
+
+export async function getImessageConversations(limit: number = 50) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const result = await db.select().from(imessageMessages)
+    .orderBy(desc(imessageMessages.createdAt))
+    .limit(limit * 2);
+
+  const conversations = new Map<string, typeof result[0]>();
+  for (const msg of result) {
+    const key = msg.chatId || msg.senderIdentifier;
+    if (!conversations.has(key)) {
+      conversations.set(key, msg);
+    }
+  }
+
+  return Array.from(conversations.values()).slice(0, limit);
+}
+
+export async function createImessageMessage(data: InsertImessageMessage) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(imessageMessages).values(data);
+  return result[0].insertId;
+}
+
+export async function bulkCreateImessageMessages(messages: InsertImessageMessage[]) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  if (messages.length === 0) return 0;
+  const result = await db.insert(imessageMessages).values(messages);
+  return messages.length;
+}
+
+// --- MESSAGING SYNC ACCOUNTS ---
+
+export async function getMessagingSyncAccounts(channel?: string) {
+  const db = await getDb();
+  if (!db) return [];
+
+  if (channel) {
+    return db.select().from(messagingSyncAccounts)
+      .where(eq(messagingSyncAccounts.channel, channel as any))
+      .orderBy(desc(messagingSyncAccounts.createdAt));
+  }
+
+  return db.select().from(messagingSyncAccounts)
+    .orderBy(desc(messagingSyncAccounts.createdAt));
+}
+
+export async function getMessagingSyncAccountById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(messagingSyncAccounts).where(eq(messagingSyncAccounts.id, id)).limit(1);
+  return result[0];
+}
+
+export async function createMessagingSyncAccount(data: InsertMessagingSyncAccount) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(messagingSyncAccounts).values(data);
+  return result[0].insertId;
+}
+
+export async function updateMessagingSyncAccount(id: number, data: Partial<InsertMessagingSyncAccount>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(messagingSyncAccounts).set(data).where(eq(messagingSyncAccounts.id, id));
+}
+
+export async function deleteMessagingSyncAccount(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(messagingSyncAccounts).where(eq(messagingSyncAccounts.id, id));
+}
+
 // --- CRM INTERACTIONS ---
 
 export async function getCrmInteractions(filters?: {
@@ -7794,17 +7911,37 @@ export async function getUnifiedMessagingHistory(contactId: number, limit: numbe
     limit,
   });
 
+  // Get iMessage messages
+  const imessageMsgs = await getImessageMessages({
+    contactId,
+    limit,
+  });
+
   // Get sent emails to this contact
-  const emailConditions = [];
+  const sentEmailConditions = [];
   if (contact.email) {
-    emailConditions.push(eq(sentEmails.toEmail, contact.email));
+    sentEmailConditions.push(eq(sentEmails.toEmail, contact.email));
   }
 
-  let emails: typeof sentEmails.$inferSelect[] = [];
-  if (emailConditions.length > 0) {
-    emails = await db.select().from(sentEmails)
-      .where(or(...emailConditions))
+  let outEmails: typeof sentEmails.$inferSelect[] = [];
+  if (sentEmailConditions.length > 0) {
+    outEmails = await db.select().from(sentEmails)
+      .where(or(...sentEmailConditions))
       .orderBy(desc(sentEmails.createdAt))
+      .limit(limit);
+  }
+
+  // Get inbound emails from this contact
+  const inEmailConditions = [];
+  if (contact.email) {
+    inEmailConditions.push(eq(inboundEmails.fromEmail, contact.email));
+  }
+
+  let inEmails: typeof inboundEmails.$inferSelect[] = [];
+  if (inEmailConditions.length > 0) {
+    inEmails = await db.select().from(inboundEmails)
+      .where(or(...inEmailConditions))
+      .orderBy(desc(inboundEmails.receivedAt))
       .limit(limit);
   }
 
@@ -7819,13 +7956,31 @@ export async function getUnifiedMessagingHistory(contactId: number, limit: numbe
       timestamp: m.createdAt,
       data: m,
     })),
-    ...emails.map(e => ({
+    ...imessageMsgs.map(m => ({
+      type: "imessage" as const,
+      id: m.id,
+      direction: m.direction,
+      content: m.content,
+      status: m.status,
+      timestamp: m.createdAt,
+      data: m,
+    })),
+    ...outEmails.map(e => ({
       type: "email" as const,
       id: e.id,
       direction: "outbound" as const,
       content: e.bodyText || e.subject,
       status: e.status,
       timestamp: e.createdAt,
+      data: e,
+    })),
+    ...inEmails.map(e => ({
+      type: "email" as const,
+      id: e.id,
+      direction: "inbound" as const,
+      content: e.bodyText || e.subject,
+      status: e.parsingStatus,
+      timestamp: e.receivedAt,
       data: e,
     })),
   ].sort((a, b) => {
@@ -7835,6 +7990,111 @@ export async function getUnifiedMessagingHistory(contactId: number, limit: numbe
   });
 
   return combined.slice(0, limit);
+}
+
+// Get all-contacts messaging overview (latest message per contact across all channels)
+export async function getMessagingSyncOverview(filters?: {
+  contactType?: string;
+  channel?: string;
+  search?: string;
+  limit?: number;
+  offset?: number;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+
+  // Get contacts, optionally filtered
+  const contactConditions = [];
+  if (filters?.contactType) {
+    contactConditions.push(eq(crmContacts.contactType, filters.contactType as any));
+  }
+  if (filters?.search) {
+    contactConditions.push(
+      or(
+        like(crmContacts.fullName, `%${filters.search}%`),
+        like(crmContacts.email, `%${filters.search}%`),
+        like(crmContacts.organization, `%${filters.search}%`),
+        like(crmContacts.phone, `%${filters.search}%`),
+      ) as any
+    );
+  }
+
+  let contactQuery = db.select().from(crmContacts).where(eq(crmContacts.status, "active"));
+  if (contactConditions.length > 0) {
+    contactQuery = contactQuery.where(and(...contactConditions)) as any;
+  }
+
+  const contacts = await contactQuery
+    .orderBy(desc(crmContacts.lastContactedAt))
+    .limit(filters?.limit || 50)
+    .offset(filters?.offset || 0);
+
+  // For each contact, get latest message across all channels
+  const overview = await Promise.all(contacts.map(async (contact) => {
+    const latestMessages: Array<{ type: string; content: string | null; timestamp: Date | null; direction: string }> = [];
+
+    // Latest WhatsApp
+    if (contact.whatsappNumber) {
+      const [wa] = await db.select().from(whatsappMessages)
+        .where(eq(whatsappMessages.contactId, contact.id))
+        .orderBy(desc(whatsappMessages.createdAt))
+        .limit(1);
+      if (wa) latestMessages.push({ type: "whatsapp", content: wa.content, timestamp: wa.createdAt, direction: wa.direction });
+    }
+
+    // Latest iMessage
+    if (contact.phone || (contact as any).imessageId) {
+      const [im] = await db.select().from(imessageMessages)
+        .where(eq(imessageMessages.contactId, contact.id))
+        .orderBy(desc(imessageMessages.createdAt))
+        .limit(1);
+      if (im) latestMessages.push({ type: "imessage", content: im.content, timestamp: im.createdAt, direction: im.direction });
+    }
+
+    // Latest email (sent or received)
+    if (contact.email) {
+      const [sent] = await db.select().from(sentEmails)
+        .where(eq(sentEmails.toEmail, contact.email))
+        .orderBy(desc(sentEmails.createdAt))
+        .limit(1);
+      if (sent) latestMessages.push({ type: "email", content: sent.subject, timestamp: sent.createdAt, direction: "outbound" });
+
+      const [received] = await db.select().from(inboundEmails)
+        .where(eq(inboundEmails.fromEmail, contact.email))
+        .orderBy(desc(inboundEmails.receivedAt))
+        .limit(1);
+      if (received) latestMessages.push({ type: "email", content: received.subject, timestamp: received.receivedAt, direction: "inbound" });
+    }
+
+    // Sort to find latest
+    latestMessages.sort((a, b) => {
+      const dateA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+      const dateB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+      return dateB - dateA;
+    });
+
+    const latest = latestMessages[0] || null;
+
+    // Determine active channels
+    const activeChannels: string[] = [];
+    if (contact.email) activeChannels.push("email");
+    if (contact.whatsappNumber) activeChannels.push("whatsapp");
+    if (contact.phone || (contact as any).imessageId) activeChannels.push("imessage");
+
+    return {
+      contact,
+      latestMessage: latest,
+      activeChannels,
+      totalInteractions: contact.totalInteractions || 0,
+    };
+  }));
+
+  // If channel filter, only include contacts with that channel active
+  if (filters?.channel) {
+    return overview.filter(o => o.activeChannels.includes(filters.channel!));
+  }
+
+  return overview;
 }
 
 // ============================================
