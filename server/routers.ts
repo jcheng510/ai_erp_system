@@ -3546,6 +3546,11 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
           role: z.enum(['system', 'user', 'assistant']),
           content: z.string(),
         })).optional(),
+        attachments: z.array(z.object({
+          fileData: z.string(), // base64 encoded
+          fileName: z.string(),
+          mimeType: z.string(),
+        })).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const agentContext: AIAgentContext = {
@@ -3555,10 +3560,24 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
           companyId: ctx.user.companyId,
         };
 
+        // Upload attachments to storage and get URLs
+        let fileUrls: { url: string; fileName: string; mimeType: string }[] | undefined;
+        if (input.attachments && input.attachments.length > 0) {
+          fileUrls = await Promise.all(
+            input.attachments.map(async (attachment) => {
+              const buffer = Buffer.from(attachment.fileData, 'base64');
+              const fileKey = `ai-assistant-uploads/${Date.now()}-${attachment.fileName}`;
+              const { url } = await storagePut(fileKey, buffer, attachment.mimeType);
+              return { url, fileName: attachment.fileName, mimeType: attachment.mimeType };
+            })
+          );
+        }
+
         const result = await processAIAgentRequest(
           input.message,
           input.conversationHistory || [],
-          agentContext
+          agentContext,
+          fileUrls
         );
 
         return result;

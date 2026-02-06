@@ -1,10 +1,19 @@
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { Loader2, Send, User, Sparkles } from "lucide-react";
-import { useState, useEffect, useRef } from "react";
+import { Loader2, Send, User, Sparkles, Paperclip, X, File, Image } from "lucide-react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Streamdown } from "streamdown";
+
+/**
+ * File attachment for upload
+ */
+export type ChatFileAttachment = {
+  file: File;
+  preview?: string;
+};
 
 /**
  * Message type matching server-side LLM Message interface
@@ -12,6 +21,7 @@ import { Streamdown } from "streamdown";
 export type Message = {
   role: "system" | "user" | "assistant";
   content: string;
+  attachments?: { fileName: string; mimeType: string }[];
 };
 
 export type AIChatBoxProps = {
@@ -25,7 +35,7 @@ export type AIChatBoxProps = {
    * Callback when user sends a message.
    * Typically you'll call a tRPC mutation here to invoke the LLM.
    */
-  onSendMessage: (content: string) => void;
+  onSendMessage: (content: string, attachments?: ChatFileAttachment[]) => void;
 
   /**
    * Whether the AI is currently generating a response
@@ -57,6 +67,16 @@ export type AIChatBoxProps = {
    * Click to send directly
    */
   suggestedPrompts?: string[];
+
+  /**
+   * Enable file upload support (default: false)
+   */
+  enableFileUpload?: boolean;
+
+  /**
+   * Accepted MIME types for file upload
+   */
+  acceptedFileTypes?: string[];
 };
 
 /**
@@ -119,12 +139,41 @@ export function AIChatBox({
   height = "600px",
   emptyStateMessage = "Start a conversation with AI",
   suggestedPrompts,
+  enableFileUpload = false,
+  acceptedFileTypes = ["application/pdf", "image/*", "text/csv", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
 }: AIChatBoxProps) {
   const [input, setInput] = useState("");
+  const [pendingFiles, setPendingFiles] = useState<ChatFileAttachment[]>([]);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const inputAreaRef = useRef<HTMLFormElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+    const newAttachments: ChatFileAttachment[] = [];
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      if (file.size > 20 * 1024 * 1024) continue;
+      const attachment: ChatFileAttachment = { file };
+      if (file.type.startsWith("image/")) {
+        attachment.preview = URL.createObjectURL(file);
+      }
+      newAttachments.push(attachment);
+    }
+    setPendingFiles((prev) => [...prev, ...newAttachments]);
+    e.target.value = "";
+  }, []);
+
+  const removePendingFile = useCallback((index: number) => {
+    setPendingFiles((prev) => {
+      const removed = prev[index];
+      if (removed?.preview) URL.revokeObjectURL(removed.preview);
+      return prev.filter((_, i) => i !== index);
+    });
+  }, []);
 
   // Filter out system messages
   const displayMessages = messages.filter((msg) => msg.role !== "system");
@@ -168,10 +217,12 @@ export function AIChatBox({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const trimmedInput = input.trim();
-    if (!trimmedInput || isLoading) return;
+    if ((!trimmedInput && pendingFiles.length === 0) || isLoading) return;
 
-    onSendMessage(trimmedInput);
+    const attachments = pendingFiles.length > 0 ? [...pendingFiles] : undefined;
+    onSendMessage(trimmedInput || "Please analyze the attached file(s).", attachments);
     setInput("");
+    setPendingFiles([]);
 
     // Scroll immediately after sending
     scrollToBottom();
@@ -252,23 +303,42 @@ export function AIChatBox({
                       </div>
                     )}
 
-                    <div
-                      className={cn(
-                        "max-w-[80%] rounded-lg px-4 py-2.5",
-                        message.role === "user"
-                          ? "bg-primary text-primary-foreground"
-                          : "bg-muted text-foreground"
-                      )}
-                    >
-                      {message.role === "assistant" ? (
-                        <div className="prose prose-sm dark:prose-invert max-w-none">
-                          <Streamdown>{message.content}</Streamdown>
+                    <div className="max-w-[80%] space-y-1">
+                      {message.role === "user" && message.attachments && message.attachments.length > 0 && (
+                        <div className="flex flex-wrap gap-1 justify-end">
+                          {message.attachments.map((att, idx) => (
+                            <div
+                              key={idx}
+                              className="flex items-center gap-1 px-2 py-0.5 rounded bg-primary/80 text-primary-foreground text-xs"
+                            >
+                              {att.mimeType.startsWith("image/") ? (
+                                <Image className="size-3" />
+                              ) : (
+                                <File className="size-3" />
+                              )}
+                              <span className="truncate max-w-[120px]">{att.fileName}</span>
+                            </div>
+                          ))}
                         </div>
-                      ) : (
-                        <p className="whitespace-pre-wrap text-sm">
-                          {message.content}
-                        </p>
                       )}
+                      <div
+                        className={cn(
+                          "rounded-lg px-4 py-2.5",
+                          message.role === "user"
+                            ? "bg-primary text-primary-foreground"
+                            : "bg-muted text-foreground"
+                        )}
+                      >
+                        {message.role === "assistant" ? (
+                          <div className="prose prose-sm dark:prose-invert max-w-none">
+                            <Streamdown>{message.content}</Streamdown>
+                          </div>
+                        ) : (
+                          <p className="whitespace-pre-wrap text-sm">
+                            {message.content}
+                          </p>
+                        )}
+                      </div>
                     </div>
 
                     {message.role === "user" && (
@@ -303,33 +373,94 @@ export function AIChatBox({
       </div>
 
       {/* Input Area */}
-      <form
-        ref={inputAreaRef}
-        onSubmit={handleSubmit}
-        className="flex gap-2 p-4 border-t bg-background/50 items-end"
-      >
-        <Textarea
-          ref={textareaRef}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder={placeholder}
-          className="flex-1 max-h-32 resize-none min-h-9"
-          rows={1}
-        />
-        <Button
-          type="submit"
-          size="icon"
-          disabled={!input.trim() || isLoading}
-          className="shrink-0 h-[38px] w-[38px]"
+      <div className="border-t bg-background/50 p-4">
+        {/* Pending file previews */}
+        {enableFileUpload && pendingFiles.length > 0 && (
+          <div className="flex flex-wrap gap-2 mb-2">
+            {pendingFiles.map((attachment, idx) => (
+              <div
+                key={idx}
+                className="flex items-center gap-1.5 pl-2 pr-1 py-1 rounded-md bg-muted border text-xs group"
+              >
+                {attachment.preview ? (
+                  <img
+                    src={attachment.preview}
+                    alt={attachment.file.name}
+                    className="h-6 w-6 rounded object-cover"
+                  />
+                ) : (
+                  <File className="size-3.5 text-muted-foreground" />
+                )}
+                <span className="truncate max-w-[100px]">{attachment.file.name}</span>
+                <button
+                  type="button"
+                  onClick={() => removePendingFile(idx)}
+                  className="size-4 rounded-full hover:bg-destructive/20 flex items-center justify-center ml-0.5"
+                >
+                  <X className="size-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <form
+          ref={inputAreaRef}
+          onSubmit={handleSubmit}
+          className="flex gap-2 items-end"
         >
-          {isLoading ? (
-            <Loader2 className="size-4 animate-spin" />
-          ) : (
-            <Send className="size-4" />
+          {enableFileUpload && (
+            <>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept={acceptedFileTypes.join(",")}
+                onChange={handleFileSelect}
+                className="hidden"
+              />
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="shrink-0 h-[38px] w-[38px]"
+                      disabled={isLoading}
+                      onClick={() => fileInputRef.current?.click()}
+                    >
+                      <Paperclip className="size-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Attach file</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </>
           )}
-        </Button>
-      </form>
+          <Textarea
+            ref={textareaRef}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder={pendingFiles.length > 0 ? "Add a message about your file(s)..." : placeholder}
+            className="flex-1 max-h-32 resize-none min-h-9"
+            rows={1}
+          />
+          <Button
+            type="submit"
+            size="icon"
+            disabled={(!input.trim() && pendingFiles.length === 0) || isLoading}
+            className="shrink-0 h-[38px] w-[38px]"
+          >
+            {isLoading ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <Send className="size-4" />
+            )}
+          </Button>
+        </form>
+      </div>
     </div>
   );
 }

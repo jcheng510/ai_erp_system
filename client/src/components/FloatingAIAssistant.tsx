@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { useAIAgent, AIMessage, AIAction } from '@/contexts/AIAgentContext';
+import { useAIAgent, AIMessage, AIAction, FileAttachment } from '@/contexts/AIAgentContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -33,7 +33,23 @@ import {
   AlertCircle,
   BarChart3,
   Factory,
+  Paperclip,
+  File,
+  Image,
 } from 'lucide-react';
+
+const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
+const ALLOWED_MIME_TYPES = [
+  'application/pdf',
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+  'text/csv',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-excel',
+  'text/plain',
+];
 
 // ============================================
 // QUICK ACTION BUTTONS
@@ -112,6 +128,25 @@ function MessageBubble({ message, onSuggestionClick }: { message: AIMessage; onS
       )}
 
       <div className={cn('max-w-[85%] space-y-2')}>
+        {/* File attachment indicators */}
+        {isUser && message.attachments && message.attachments.length > 0 && (
+          <div className="flex flex-wrap gap-1 justify-end">
+            {message.attachments.map((att, idx) => (
+              <div
+                key={idx}
+                className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-primary/80 text-primary-foreground text-xs"
+              >
+                {att.mimeType.startsWith('image/') ? (
+                  <Image className="h-3 w-3" />
+                ) : (
+                  <File className="h-3 w-3" />
+                )}
+                <span className="truncate max-w-[120px]">{att.fileName}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
         <div
           className={cn(
             'rounded-lg px-4 py-3',
@@ -220,8 +255,10 @@ export function FloatingAIAssistant() {
   } = useAIAgent();
 
   const [input, setInput] = useState('');
+  const [pendingFiles, setPendingFiles] = useState<FileAttachment[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -240,14 +277,46 @@ export function FloatingAIAssistant() {
     }
   }, [isOpen, isMinimized]);
 
+  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+
+    const newAttachments: FileAttachment[] = [];
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      if (file.size > MAX_FILE_SIZE) continue;
+      if (!ALLOWED_MIME_TYPES.includes(file.type) && !file.type.startsWith('image/')) continue;
+
+      const attachment: FileAttachment = { file };
+      if (file.type.startsWith('image/')) {
+        attachment.preview = URL.createObjectURL(file);
+      }
+      newAttachments.push(attachment);
+    }
+
+    setPendingFiles(prev => [...prev, ...newAttachments]);
+    // Reset the input so re-selecting the same file works
+    e.target.value = '';
+  }, []);
+
+  const removePendingFile = useCallback((index: number) => {
+    setPendingFiles(prev => {
+      const removed = prev[index];
+      if (removed?.preview) URL.revokeObjectURL(removed.preview);
+      return prev.filter((_, i) => i !== index);
+    });
+  }, []);
+
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || isLoading) return;
+    if ((!input.trim() && pendingFiles.length === 0) || isLoading) return;
 
     const message = input.trim();
+    const attachments = pendingFiles.length > 0 ? [...pendingFiles] : undefined;
     setInput('');
-    await sendMessage(message);
-  }, [input, isLoading, sendMessage]);
+    setPendingFiles([]);
+    await sendMessage(message, attachments);
+  }, [input, pendingFiles, isLoading, sendMessage]);
 
   const handleQuickAction = useCallback(async (message: string) => {
     await sendMessage(message);
@@ -387,12 +456,67 @@ export function FloatingAIAssistant() {
 
       {/* Input Area */}
       <div className="border-t bg-background/50 p-3">
+        {/* Pending file previews */}
+        {pendingFiles.length > 0 && (
+          <div className="flex flex-wrap gap-2 mb-2">
+            {pendingFiles.map((attachment, idx) => (
+              <div
+                key={idx}
+                className="flex items-center gap-1.5 pl-2 pr-1 py-1 rounded-md bg-muted border text-xs group"
+              >
+                {attachment.preview ? (
+                  <img
+                    src={attachment.preview}
+                    alt={attachment.file.name}
+                    className="h-6 w-6 rounded object-cover"
+                  />
+                ) : (
+                  <File className="h-3.5 w-3.5 text-muted-foreground" />
+                )}
+                <span className="truncate max-w-[100px]">{attachment.file.name}</span>
+                <button
+                  type="button"
+                  onClick={() => removePendingFile(idx)}
+                  className="h-4 w-4 rounded-full hover:bg-destructive/20 flex items-center justify-center ml-0.5"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
         <form onSubmit={handleSubmit} className="flex gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept={ALLOWED_MIME_TYPES.join(',')}
+            onChange={handleFileSelect}
+            className="hidden"
+          />
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="shrink-0 h-9 w-9"
+                  disabled={isLoading}
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <Paperclip className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Attach file (PDF, image, CSV, Excel)</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
           <Input
             ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Ask anything about your business..."
+            placeholder={pendingFiles.length > 0 ? "Add a message about your file(s)..." : "Ask anything about your business..."}
             disabled={isLoading}
             className="flex-1"
             onKeyDown={(e) => {
@@ -402,7 +526,7 @@ export function FloatingAIAssistant() {
               }
             }}
           />
-          <Button type="submit" size="icon" disabled={!input.trim() || isLoading}>
+          <Button type="submit" size="icon" disabled={(!input.trim() && pendingFiles.length === 0) || isLoading}>
             {isLoading ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (

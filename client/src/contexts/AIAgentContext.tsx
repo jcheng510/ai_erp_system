@@ -5,6 +5,11 @@ import { trpc } from '@/lib/trpc';
 // TYPES
 // ============================================
 
+export interface FileAttachment {
+  file: File;
+  preview?: string; // data URL for image previews
+}
+
 export interface AIMessage {
   id: string;
   role: 'user' | 'assistant' | 'system';
@@ -13,6 +18,7 @@ export interface AIMessage {
   actions?: AIAction[];
   data?: Record<string, any>;
   suggestions?: string[];
+  attachments?: { fileName: string; mimeType: string }[];
 }
 
 export interface AIAction {
@@ -49,7 +55,7 @@ export interface AIAgentContextType extends AIAgentState {
   maximizeAssistant: () => void;
 
   // Chat Operations
-  sendMessage: (message: string) => Promise<void>;
+  sendMessage: (message: string, attachments?: FileAttachment[]) => Promise<void>;
   clearConversation: () => void;
   startNewConversation: () => void;
 
@@ -153,9 +159,29 @@ export function AIAgentProvider({ children }: AIAgentProviderProps) {
     }));
   }, []);
 
+  // Helper to convert File to base64
+  const fileToBase64 = useCallback((file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        // Strip the data URL prefix (e.g., "data:application/pdf;base64,")
+        const base64 = result.split(',')[1];
+        resolve(base64);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }, []);
+
   // Send message to AI agent
-  const sendMessage = useCallback(async (message: string) => {
-    if (!message.trim()) return;
+  const sendMessage = useCallback(async (message: string, attachments?: FileAttachment[]) => {
+    if (!message.trim() && (!attachments || attachments.length === 0)) return;
+
+    const attachmentMeta = attachments?.map(a => ({
+      fileName: a.file.name,
+      mimeType: a.file.type,
+    }));
 
     setState(prev => {
       const currentConversation = prev.currentConversation || createNewConversation();
@@ -166,6 +192,7 @@ export function AIAgentProvider({ children }: AIAgentProviderProps) {
         role: 'user',
         content: message,
         timestamp: new Date(),
+        attachments: attachmentMeta,
       };
 
       const updatedConversation = {
@@ -193,10 +220,23 @@ export function AIAgentProvider({ children }: AIAgentProviderProps) {
         content: m.content,
       })) || [];
 
+      // Convert file attachments to base64 for upload
+      let encodedAttachments: { fileData: string; fileName: string; mimeType: string }[] | undefined;
+      if (attachments && attachments.length > 0) {
+        encodedAttachments = await Promise.all(
+          attachments.map(async (a) => ({
+            fileData: await fileToBase64(a.file),
+            fileName: a.file.name,
+            mimeType: a.file.type || 'application/octet-stream',
+          }))
+        );
+      }
+
       // Call the AI agent
       const response = await agentChatMutation.mutateAsync({
-        message,
+        message: message || 'Please analyze the attached file(s).',
         conversationHistory,
+        attachments: encodedAttachments,
       });
 
       // Add assistant response

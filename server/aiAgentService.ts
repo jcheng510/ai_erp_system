@@ -1,4 +1,4 @@
-import { invokeLLM, Tool, Message } from "./_core/llm";
+import { invokeLLM, Tool, Message, MessageContent } from "./_core/llm";
 import { getDb } from "./db";
 import { sendEmail, formatEmailHtml } from "./_core/email";
 import {
@@ -1236,10 +1236,17 @@ async function executeTool(toolName: string, params: any, ctx: AIAgentContext): 
 // MAIN AI AGENT FUNCTION
 // ============================================
 
+export interface FileAttachment {
+  url: string;
+  fileName: string;
+  mimeType: string;
+}
+
 export async function processAIAgentRequest(
   message: string,
   conversationHistory: Message[],
-  ctx: AIAgentContext
+  ctx: AIAgentContext,
+  fileAttachments?: FileAttachment[]
 ): Promise<AIAgentResponse> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -1294,10 +1301,38 @@ Guidelines:
 - When listing items, limit to 10-20 unless more are requested.
 - Be proactive in suggesting relevant actions based on the data.`;
 
+  // Build user message content - include file attachments if present
+  let userMessageContent: MessageContent | MessageContent[];
+  if (fileAttachments && fileAttachments.length > 0) {
+    const contentParts: MessageContent[] = [
+      { type: "text", text: message },
+    ];
+    for (const file of fileAttachments) {
+      const isImage = file.mimeType.startsWith("image/");
+      if (isImage) {
+        contentParts.push({
+          type: "image_url",
+          image_url: { url: file.url },
+        });
+      } else {
+        contentParts.push({
+          type: "file_url",
+          file_url: {
+            url: file.url,
+            mime_type: file.mimeType as any,
+          },
+        });
+      }
+    }
+    userMessageContent = contentParts;
+  } else {
+    userMessageContent = message;
+  }
+
   const messages: Message[] = [
     { role: "system", content: systemPrompt },
     ...conversationHistory,
-    { role: "user", content: message },
+    { role: "user", content: userMessageContent },
   ];
 
   const actions: AIAgentAction[] = [];
