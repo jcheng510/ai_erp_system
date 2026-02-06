@@ -1934,6 +1934,7 @@ export type InsertRecommendation = typeof recommendations.$inferInsert;
 // Shopify store configuration
 export const shopifyStores = mysqlTable("shopifyStores", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"), // Multi-tenant support
   storeDomain: varchar("storeDomain", { length: 255 }).notNull().unique(), // mystore.myshopify.com
   storeName: varchar("storeName", { length: 255 }),
   accessToken: text("accessToken"), // Encrypted in production
