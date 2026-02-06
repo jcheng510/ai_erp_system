@@ -100,7 +100,13 @@ export default function PurchaseOrders() {
     // Recalculate total
     const qty = parseFloat(updated[index].quantity) || 0;
     const price = parseFloat(updated[index].unitPrice) || 0;
-    updated[index].totalAmount = (qty * price).toFixed(2);
+    
+    // Ensure quantity is positive
+    if (field === "quantity" && qty < 0) {
+      updated[index].quantity = "0";
+    }
+    
+    updated[index].totalAmount = (Math.max(0, qty) * price).toFixed(2);
     
     setLineItems(updated);
   };
@@ -113,7 +119,7 @@ export default function PurchaseOrders() {
         ...updated[index],
         productId: product.id,
         description: product.name,
-        unitPrice: product.unitPrice || "0",
+        unitPrice: product.unitPrice?.toString() || "0",
       };
       // Recalculate
       const qty = parseFloat(updated[index].quantity) || 0;
@@ -277,7 +283,7 @@ export default function PurchaseOrders() {
                                   <SelectContent>
                                     {products?.map((product) => (
                                       <SelectItem key={product.id} value={product.id.toString()}>
-                                        {product.name} - {formatCurrency(product.unitPrice)}
+                                        {product.name} - {formatCurrency(product.unitPrice || "0")}
                                       </SelectItem>
                                     ))}
                                   </SelectContent>
