@@ -279,8 +279,13 @@ export async function initiateNegotiation(params: {
         estimatedSavingsPercent: analysis.targetPriceReduction.toFixed(4),
       });
     } catch (e) {
-      // Keep as draft if analysis fails
-      await db.updateVendorNegotiation(result.id, { status: "analyzing" });
+      // Keep as draft if analysis fails and record error details for troubleshooting
+      await db.updateVendorNegotiation(result.id, {
+        status: "draft",
+        aiAnalysis: JSON.stringify({
+          error: e instanceof Error ? e.message : String(e),
+        }),
+      });
     }
   }
 
