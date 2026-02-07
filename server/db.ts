@@ -8033,8 +8033,17 @@ export async function getInventoryCostingConfigs(filters?: { companyId?: number;
 export async function getInventoryCostingConfigByProduct(productId: number) {
   const db = await getDb();
   if (!db) return null;
-  const result = await db.select().from(inventoryCostingConfig)
-    .where(and(eq(inventoryCostingConfig.productId, productId), eq(inventoryCostingConfig.isActive, true)));
+  const result = await db
+    .select()
+    .from(inventoryCostingConfig)
+    .where(
+      and(
+        eq(inventoryCostingConfig.productId, productId),
+        eq(inventoryCostingConfig.isActive, true),
+      ),
+    )
+    .orderBy(desc(inventoryCostingConfig.updatedAt))
+    .limit(1);
   return result[0] || null;
 }
 
