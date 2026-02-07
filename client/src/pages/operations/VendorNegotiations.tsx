@@ -133,18 +133,6 @@ export default function VendorNegotiations() {
     },
   });
 
-  const analyzeMutation = trpc.vendorNegotiations.analyze.useMutation({
-    onSuccess: (data) => {
-      toast({
-        title: "Analysis Complete",
-        description: `Confidence: ${data.confidenceScore}%. Target reduction: ${data.targetPriceReduction}%`,
-      });
-    },
-    onError: (error) => {
-      toast({ title: "Analysis Failed", description: error.message, variant: "destructive" });
-    },
-  });
-
   function resetCreateForm() {
     setFormVendorId("");
     setFormTitle("");
