@@ -1229,16 +1229,22 @@ export async function getProjectTasks(projectId: number) {
 // INVESTMENT GRANT CHECKLISTS
 // ============================================
 
-export async function getInvestmentGrantChecklists(filters?: { companyId?: number; status?: string }) {
+export async function getInvestmentGrantChecklists(
+  filters?: { companyId?: number; status?: typeof investmentGrantChecklists.$inferSelect["status"] }
+) {
   const db = await getDb();
   if (!db) return [];
 
   const conditions = [];
   if (filters?.companyId) conditions.push(eq(investmentGrantChecklists.companyId, filters.companyId));
-  if (filters?.status) conditions.push(eq(investmentGrantChecklists.status, filters.status as any));
+  if (filters?.status) conditions.push(eq(investmentGrantChecklists.status, filters.status));
 
   if (conditions.length > 0) {
-    return db.select().from(investmentGrantChecklists).where(and(...conditions)).orderBy(desc(investmentGrantChecklists.createdAt));
+    return db
+      .select()
+      .from(investmentGrantChecklists)
+      .where(and(...conditions))
+      .orderBy(desc(investmentGrantChecklists.createdAt));
   }
   return db.select().from(investmentGrantChecklists).orderBy(desc(investmentGrantChecklists.createdAt));
 }
