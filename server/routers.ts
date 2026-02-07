@@ -12432,8 +12432,8 @@ Ask if they received the original request and if they can provide a quote.`;
           warehouseId: z.number().optional(),
           orderId: z.number().optional(),
           salesOrderLineId: z.number().optional(),
-          quantitySold: z.number(),
-          unitRevenue: z.number().optional(),
+          quantitySold: z.number().gt(0),
+          unitRevenue: z.number().min(0).optional(),
         }))
         .mutation(async ({ input, ctx }) => {
           const result = await recordCogs({ ...input, calculatedBy: ctx.user.id });
