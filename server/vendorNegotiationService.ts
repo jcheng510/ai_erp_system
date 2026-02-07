@@ -318,11 +318,15 @@ export async function addNegotiationRound(params: {
   let aiReasoning: string | undefined;
 
   // Generate AI draft for outbound messages
-  if (params.generateAiDraft && params.direction === "outbound") {
+  if (
+    params.generateAiDraft &&
+    params.direction === "outbound" &&
+    params.messageType !== "info_request"
+  ) {
     const draft = await generateNegotiationDraft({
       negotiationId: params.negotiationId,
       roundNumber,
-      messageType: params.messageType as any,
+      messageType: params.messageType,
     });
     aiDraft = JSON.stringify(draft);
     aiReasoning = `Strategy: ${draft.tone}. Key points: ${draft.keyPoints.join(", ")}`;
