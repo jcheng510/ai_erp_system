@@ -534,13 +534,13 @@ export default function VendorNegotiations() {
                 />
               </div>
               <div>
-                <Label>Annual Volume ($)</Label>
+                <Label>Annual Volume (units/year)</Label>
                 <Input
                   type="number"
                   step="0.01"
                   value={formAnnualVolume}
                   onChange={(e) => setFormAnnualVolume(e.target.value)}
-                  placeholder="100000"
+                  placeholder="100000 units/year"
                 />
               </div>
             </div>
