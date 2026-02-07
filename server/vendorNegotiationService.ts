@@ -7,6 +7,30 @@
 import * as db from "./db";
 import { invokeLLM } from "./_core/llm";
 import { nanoid } from "nanoid";
+import { z } from "zod";
+
+// Zod schemas for validating LLM responses
+const NegotiationAnalysisSchema = z.object({
+  leveragePoints: z.array(z.string()),
+  marketBenchmark: z.object({
+    low: z.number(),
+    average: z.number(),
+    high: z.number(),
+  }).nullable(),
+  vendorDependency: z.enum(["low", "medium", "high"]),
+  recommendedStrategy: z.string(),
+  targetPriceReduction: z.number().min(0).max(100),
+  confidenceScore: z.number().min(0).max(100),
+  risks: z.array(z.string()),
+  alternativeVendors: z.array(z.string()),
+});
+
+const NegotiationDraftSchema = z.object({
+  subject: z.string(),
+  body: z.string(),
+  tone: z.string(),
+  keyPoints: z.array(z.string()),
+});
 
 interface NegotiationAnalysis {
   leveragePoints: string[];
@@ -89,10 +113,18 @@ Respond ONLY with valid JSON matching this schema:
     // Extract JSON from the response
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
-      return JSON.parse(jsonMatch[0]);
+      const parsed = JSON.parse(jsonMatch[0]);
+      // Validate with Zod schema
+      const validated = NegotiationAnalysisSchema.safeParse(parsed);
+      if (validated.success) {
+        return validated.data;
+      }
+      // If validation fails, log and fall through to rule-based analysis
+      console.warn("LLM analysis response failed validation:", validated.error);
     }
   } catch (e) {
     // Fall back to rule-based analysis
+    console.warn("LLM analysis failed:", e);
   }
 
   // Fallback: rule-based analysis
@@ -184,10 +216,18 @@ Respond ONLY with valid JSON:
     const text = typeof aiResult.content === "string" ? aiResult.content : "";
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
-      return JSON.parse(jsonMatch[0]);
+      const parsed = JSON.parse(jsonMatch[0]);
+      // Validate with Zod schema
+      const validated = NegotiationDraftSchema.safeParse(parsed);
+      if (validated.success) {
+        return validated.data;
+      }
+      // If validation fails, log and fall through to fallback template
+      console.warn("LLM draft response failed validation:", validated.error);
     }
   } catch (e) {
     // Fall through to default
+    console.warn("LLM draft generation failed:", e);
   }
 
   // Fallback drafts
@@ -310,8 +350,8 @@ export async function addNegotiationRound(params: {
   const negotiation = await db.getVendorNegotiationById(params.negotiationId);
   if (!negotiation) throw new Error("Negotiation not found");
 
-  const existingRounds = await db.getNegotiationRounds(params.negotiationId);
-  const roundNumber = existingRounds.length + 1;
+  // Use atomic round number generation to avoid race conditions
+  const roundNumber = await db.getNextRoundNumber(params.negotiationId);
 
   let aiDraft: string | undefined;
   let aiReasoning: string | undefined;
