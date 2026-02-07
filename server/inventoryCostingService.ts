@@ -245,15 +245,6 @@ export async function recordCogs(params: {
       status: newRemaining <= 0 ? "depleted" : "active",
     });
   }
-  // Also deplete layers that were fully consumed and aren't in remainingLayers
-  for (const consumed of result.layerBreakdown) {
-    if (!result.remainingLayers.find((l) => l.layerId === consumed.layerId)) {
-      await db.updateInventoryCostLayer(consumed.layerId, {
-        remainingQuantity: "0",
-        status: "depleted",
-      });
-    }
-  }
 
   // Calculate margin
   const totalRevenue = params.unitRevenue
