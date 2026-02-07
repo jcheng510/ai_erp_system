@@ -162,10 +162,10 @@ function ChecklistDetail({ checklistId, onBack }: { checklistId: number; onBack:
     });
   };
 
-  const handleStatusChange = (itemId: number, status: string) => {
+  const handleStatusChange = (itemId: number, status: ChecklistItem["status"]) => {
     updateItem.mutate({
       id: itemId,
-      status: status as any,
+      status,
       completedDate: status === "completed" ? new Date() : undefined,
     });
   };
