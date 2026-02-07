@@ -2121,6 +2121,7 @@ export const appRouter = router({
         totalCapex: z.string().optional(),
         grantPercentage: z.string().optional(),
         estimatedGrant: z.string().optional(),
+        currency: z.string().optional(),
         startDate: z.date().optional(),
         targetCompletionDate: z.date().optional(),
         notes: z.string().optional(),
