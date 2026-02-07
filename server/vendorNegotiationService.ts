@@ -40,10 +40,11 @@ export async function analyzeNegotiationOpportunity(params: {
   // Get product details if provided
   let productDetails: any[] = [];
   if (params.productIds?.length) {
-    for (const pid of params.productIds) {
-      const product = await db.getProductById(pid);
-      if (product) productDetails.push(product);
-    }
+    const productPromises = params.productIds.map((pid) =>
+      db.getProductById(pid)
+    );
+    const products = await Promise.all(productPromises);
+    productDetails = products.filter((product) => product);
   }
 
   // Get recent POs for price trend analysis
