@@ -103,37 +103,70 @@ export async function calculateWeightedAverageCogs(
   const unitCogs = avgData.averageCost;
   const totalCogs = unitCogs * quantityToSell;
 
-  // For weighted average, we still consume from actual layers (oldest first) to maintain layer integrity
+  // For weighted average, consume inventory pro-rata across all active layers
   const layers = await db.getActiveCostLayers(productId, "asc");
-  let remaining = quantityToSell;
   const breakdown: CostLayerConsumption[] = [];
   const remainingLayers: { layerId: number; remainingQuantity: number }[] = [];
 
-  for (const layer of layers) {
-    if (remaining <= 0) {
-      remainingLayers.push({
-        layerId: layer.id,
-        remainingQuantity: parseFloat(layer.remainingQuantity),
-      });
+  const totalQuantity = avgData.totalQuantity;
+  const sellFraction = quantityToSell / totalQuantity;
+  let remainingToAllocate = quantityToSell;
+
+  for (let index = 0; index < layers.length; index++) {
+    const layer = layers[index];
+    const layerQty = parseFloat(layer.remainingQuantity);
+
+    // If we've already allocated the full quantity to sell, leave the rest untouched.
+    if (remainingToAllocate <= 0) {
+      if (layerQty > 0) {
+        remainingLayers.push({
+          layerId: layer.id,
+          remainingQuantity: layerQty,
+        });
+      }
       continue;
     }
 
-    const layerQty = parseFloat(layer.remainingQuantity);
-    const consumed = Math.min(layerQty, remaining);
-    const leftover = layerQty - consumed;
+    // Ideal proportional consumption from this layer
+    let consumed = layerQty * sellFraction;
 
-    breakdown.push({
-      layerId: layer.id,
-      quantityConsumed: consumed,
-      unitCost: unitCogs, // Use weighted average cost, not layer cost
-      totalCost: consumed * unitCogs,
-    });
-
-    if (leftover > 0) {
-      remainingLayers.push({ layerId: layer.id, remainingQuantity: leftover });
+    // Ensure we don't over-consume this layer or the total to allocate.
+    if (consumed > layerQty) {
+      consumed = layerQty;
+    }
+    if (consumed > remainingToAllocate) {
+      consumed = remainingToAllocate;
     }
 
-    remaining -= consumed;
+    // For the last layer, adjust for any residual due to rounding.
+    if (index === layers.length - 1) {
+      consumed = Math.min(layerQty, remainingToAllocate);
+    }
+
+    // Guard against tiny negative zeros from floating point operations.
+    if (consumed < 0) {
+      consumed = 0;
+    }
+
+    const leftover = layerQty - consumed;
+
+    if (consumed > 0) {
+      breakdown.push({
+        layerId: layer.id,
+        quantityConsumed: consumed,
+        unitCost: unitCogs, // Use weighted average cost, not layer cost
+        totalCost: consumed * unitCogs,
+      });
+    }
+
+    if (leftover > 0) {
+      remainingLayers.push({
+        layerId: layer.id,
+        remainingQuantity: leftover,
+      });
+    }
+
+    remainingToAllocate -= consumed;
   }
 
   return {
