@@ -120,11 +120,11 @@ Respond ONLY with valid JSON matching this schema:
         return validated.data;
       }
       // If validation fails, log and fall through to rule-based analysis
-      console.warn("LLM analysis response failed validation:", validated.error);
+      console.warn(`LLM analysis response failed validation for vendorId ${params.vendorId}, productIds: ${params.productIds?.join(',') || 'none'}:`, validated.error);
     }
   } catch (e) {
     // Fall back to rule-based analysis
-    console.warn("LLM analysis failed:", e);
+    console.warn(`LLM analysis failed for vendorId ${params.vendorId}:`, e);
   }
 
   // Fallback: rule-based analysis
@@ -223,11 +223,11 @@ Respond ONLY with valid JSON:
         return validated.data;
       }
       // If validation fails, log and fall through to fallback template
-      console.warn("LLM draft response failed validation:", validated.error);
+      console.warn(`LLM draft response failed validation for negotiationId ${params.negotiationId}, round ${params.roundNumber}, messageType ${params.messageType}:`, validated.error);
     }
   } catch (e) {
     // Fall through to default
-    console.warn("LLM draft generation failed:", e);
+    console.warn(`LLM draft generation failed for negotiationId ${params.negotiationId}:`, e);
   }
 
   // Fallback drafts
