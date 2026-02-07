@@ -12515,7 +12515,6 @@ Ask if they received the original request and if they can provide a quote.`;
         targetMinOrderAmount: z.string().optional(),
         targetAnnualVolume: z.string().optional(),
         assignedTo: z.number().optional(),
-        notes: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const { id, ...data } = input;
