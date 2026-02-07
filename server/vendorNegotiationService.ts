@@ -293,8 +293,8 @@ Context:
 - Negotiation Type: ${negotiation.type}
 - Current Unit Price: $${negotiation.currentUnitPrice || "N/A"}
 - Target Unit Price: $${negotiation.targetUnitPrice || "N/A"}
-- Current Payment Terms: ${negotiation.currentPaymentTerms || "N/A"} days
-- Target Payment Terms: ${negotiation.targetPaymentTerms || "N/A"} days
+- Current Payment Terms: ${negotiation.currentPaymentTerms != null ? `${negotiation.currentPaymentTerms} days` : "N/A"}
+- Target Payment Terms: ${negotiation.targetPaymentTerms != null ? `${negotiation.targetPaymentTerms} days` : "N/A"}
 - Message Type: ${params.messageType}
 - Round: ${params.roundNumber}
 
