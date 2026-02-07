@@ -9,6 +9,13 @@ import { invokeLLM } from "./_core/llm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 
+// Helper function to detect duplicate key errors
+function isDuplicateKeyError(error: any): boolean {
+  return error?.code === 'ER_DUP_ENTRY' || 
+         error?.errno === 1062 || 
+         error?.message?.includes('Duplicate entry');
+}
+
 // Zod schemas for validating LLM responses
 const NegotiationAnalysisSchema = z.object({
   leveragePoints: z.array(z.string()),
@@ -432,12 +439,12 @@ export async function addNegotiationRound(params: {
     } catch (error: any) {
       lastError = error;
       // Check if this is a duplicate key error (unique constraint violation)
-      // MySQL error code 1062 is for duplicate entry
-      if (error?.code === 'ER_DUP_ENTRY' || error?.errno === 1062 || error?.message?.includes('Duplicate entry')) {
+      if (isDuplicateKeyError(error)) {
         retries--;
         if (retries > 0) {
-          // Small random delay to reduce collision probability
-          await new Promise(resolve => setTimeout(resolve, 50 + Math.random() * 50));
+          // Exponential backoff: 100ms, 200ms, 400ms for retries 2, 1, 0
+          const delay = Math.pow(2, 3 - retries) * 100 + Math.random() * 50;
+          await new Promise(resolve => setTimeout(resolve, delay));
           continue; // Retry
         }
       }
