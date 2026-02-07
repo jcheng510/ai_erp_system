@@ -2060,7 +2060,7 @@ export const appRouter = router({
     list: protectedProcedure
       .input(z.object({
         companyId: z.number().optional(),
-        status: z.string().optional(),
+        status: z.enum(["not_started", "in_progress", "completed", "on_hold"]).optional(),
       }).optional())
       .query(({ input }) => db.getInvestmentGrantChecklists(input)),
     get: protectedProcedure
