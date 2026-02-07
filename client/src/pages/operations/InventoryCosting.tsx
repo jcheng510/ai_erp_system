@@ -379,9 +379,13 @@ export default function InventoryCosting() {
                             <td className="p-3">
                               {layer.referenceType ? (
                                 <span className="text-muted-foreground">
-                                  {layer.referenceType} #{layer.referenceId}
+                                  {layer.referenceId != null && layer.referenceId !== ""
+                                    ? `${layer.referenceType} #${layer.referenceId}`
+                                    : layer.referenceType}
                                 </span>
-                              ) : "-"}
+                              ) : (
+                                "-"
+                              )}
                             </td>
                             <td className="p-3">
                               <Badge variant={layer.status === "active" ? "default" : "secondary"}>
