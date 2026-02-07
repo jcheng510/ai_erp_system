@@ -8279,22 +8279,45 @@ export async function getVendorNegotiationStats(companyId?: number) {
   const conditions: any[] = [];
   if (companyId) conditions.push(eq(vendorNegotiations.companyId, companyId));
 
-  const allNegotiations = await db.select().from(vendorNegotiations)
-    .where(conditions.length > 0 ? and(...conditions) : undefined);
+  const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
-  const active = allNegotiations.filter(n => ['in_progress', 'counter_offered', 'analyzing', 'ready'].includes(n.status));
-  const completed = allNegotiations.filter(n => n.status === 'accepted');
-  const totalSavings = completed.reduce((sum, n) => sum + parseFloat(n.estimatedSavings || '0'), 0);
+  const stats = await db.select({
+    total: sql<number>`COUNT(*)`,
+    active: sql<number>`SUM(CASE WHEN ${vendorNegotiations.status} IN ('in_progress', 'counter_offered', 'analyzing', 'ready') THEN 1 ELSE 0 END)`,
+    completed: sql<number>`SUM(CASE WHEN ${vendorNegotiations.status} = 'accepted' THEN 1 ELSE 0 END)`,
+    rejected: sql<number>`SUM(CASE WHEN ${vendorNegotiations.status} = 'rejected' THEN 1 ELSE 0 END)`,
+    totalEstimatedSavings: sql<string>`COALESCE(SUM(CASE WHEN ${vendorNegotiations.status} = 'accepted' THEN CAST(${vendorNegotiations.estimatedSavings} AS DECIMAL(15,2)) ELSE 0 END), 0)`,
+    totalConfidenceScore: sql<string>`COALESCE(SUM(CASE WHEN ${vendorNegotiations.status} = 'accepted' THEN CAST(${vendorNegotiations.aiConfidenceScore} AS DECIMAL(5,2)) ELSE 0 END), 0)`,
+  })
+    .from(vendorNegotiations)
+    .where(whereClause);
+
+  const row = stats[0];
+  if (!row) {
+    return {
+      total: 0,
+      active: 0,
+      completed: 0,
+      rejected: 0,
+      totalEstimatedSavings: 0,
+      avgConfidenceScore: 0,
+    };
+  }
+
+  const total = Number(row.total) || 0;
+  const active = Number(row.active) || 0;
+  const completed = Number(row.completed) || 0;
+  const rejected = Number(row.rejected) || 0;
+  const totalEstimatedSavings = parseFloat(row.totalEstimatedSavings || "0");
+  const totalConfidenceScore = parseFloat(row.totalConfidenceScore || "0");
 
   return {
-    total: allNegotiations.length,
-    active: active.length,
-    completed: completed.length,
-    rejected: allNegotiations.filter(n => n.status === 'rejected').length,
-    totalEstimatedSavings: totalSavings,
-    avgConfidenceScore: completed.length > 0
-      ? completed.reduce((sum, n) => sum + parseFloat(n.aiConfidenceScore || '0'), 0) / completed.length
-      : 0,
+    total,
+    active,
+    completed,
+    rejected,
+    totalEstimatedSavings,
+    avgConfidenceScore: completed > 0 ? totalConfidenceScore / completed : 0,
   };
 }
 
