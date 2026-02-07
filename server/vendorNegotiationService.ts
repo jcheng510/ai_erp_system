@@ -147,8 +147,7 @@ export async function generateNegotiationDraft(params: {
   const previousRounds = rounds.filter((r) => r.roundNumber < params.roundNumber);
 
   // Get vendor info
-  const vendors = await db.getVendors({ id: negotiation.vendorId } as any);
-  const vendor = vendors[0];
+  const vendor = await db.getVendorById(negotiation.vendorId);
 
   const draftPrompt = `Draft a professional vendor negotiation email.
 
