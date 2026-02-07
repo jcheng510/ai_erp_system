@@ -120,7 +120,7 @@ Respond ONLY with valid JSON matching this schema:
         return validated.data;
       }
       // If validation fails, log and fall through to rule-based analysis
-      console.warn(`LLM analysis response failed validation for vendorId ${params.vendorId}, productIds: ${params.productIds?.join(',') || 'none'}:`, validated.error);
+      console.warn(`LLM analysis response failed validation for vendorId ${params.vendorId}, productIds: ${params.productIds?.join(',') || 'none'}:`, validated.error.format());
     }
   } catch (e) {
     // Fall back to rule-based analysis
@@ -223,7 +223,7 @@ Respond ONLY with valid JSON:
         return validated.data;
       }
       // If validation fails, log and fall through to fallback template
-      console.warn(`LLM draft response failed validation for negotiationId ${params.negotiationId}, round ${params.roundNumber}, messageType ${params.messageType}:`, validated.error);
+      console.warn(`LLM draft response failed validation for negotiationId ${params.negotiationId}, round ${params.roundNumber}, messageType ${params.messageType}:`, validated.error.format());
     }
   } catch (e) {
     // Fall through to default
@@ -350,77 +350,102 @@ export async function addNegotiationRound(params: {
   const negotiation = await db.getVendorNegotiationById(params.negotiationId);
   if (!negotiation) throw new Error("Negotiation not found");
 
-  // Use atomic round number generation to avoid race conditions
-  const roundNumber = await db.getNextRoundNumber(params.negotiationId);
+  // Retry logic to handle race conditions with unique constraint
+  let retries = 3;
+  let lastError: any;
+  
+  while (retries > 0) {
+    try {
+      // Use atomic round number generation to avoid race conditions
+      const roundNumber = await db.getNextRoundNumber(params.negotiationId);
 
-  let aiDraft: string | undefined;
-  let aiReasoning: string | undefined;
+      let aiDraft: string | undefined;
+      let aiReasoning: string | undefined;
 
-  // Generate AI draft for outbound messages
-  if (
-    params.generateAiDraft &&
-    params.direction === "outbound" &&
-    params.messageType !== "info_request"
-  ) {
-    const draft = await generateNegotiationDraft({
-      negotiationId: params.negotiationId,
-      roundNumber,
-      messageType: params.messageType,
-    });
-    aiDraft = JSON.stringify(draft);
-    aiReasoning = `Strategy: ${draft.tone}. Key points: ${draft.keyPoints.join(", ")}`;
+      // Generate AI draft for outbound messages
+      if (
+        params.generateAiDraft &&
+        params.direction === "outbound" &&
+        params.messageType !== "info_request"
+      ) {
+        const draft = await generateNegotiationDraft({
+          negotiationId: params.negotiationId,
+          roundNumber,
+          messageType: params.messageType,
+        });
+        aiDraft = JSON.stringify(draft);
+        aiReasoning = `Strategy: ${draft.tone}. Key points: ${draft.keyPoints.join(", ")}`;
+      }
+
+      const roundResult = await db.createNegotiationRound({
+        negotiationId: params.negotiationId,
+        roundNumber,
+        direction: params.direction,
+        messageType: params.messageType,
+        proposedUnitPrice: params.proposedUnitPrice?.toFixed(4),
+        proposedPaymentTerms: params.proposedPaymentTerms,
+        proposedLeadTimeDays: params.proposedLeadTimeDays,
+        proposedMinOrderAmount: params.proposedMinOrderAmount?.toFixed(2),
+        proposedVolume: params.proposedVolume?.toFixed(2),
+        messageContent: params.messageContent,
+        aiGeneratedDraft: aiDraft,
+        aiReasoning,
+        sentAt: params.direction === "outbound" ? new Date() : undefined,
+        receivedAt: params.direction === "inbound" ? new Date() : undefined,
+        sentBy: params.sentBy,
+      });
+
+      // If we got here, the insert succeeded - update negotiation status and return
+      let newStatus: string = negotiation.status;
+      if (params.messageType === "initial_offer" && params.direction === "outbound") {
+        newStatus = "in_progress";
+      } else if (params.messageType === "counter_offer" && params.direction === "inbound") {
+        newStatus = "counter_offered";
+      } else if (params.messageType === "acceptance") {
+        newStatus = "accepted";
+      } else if (params.messageType === "rejection") {
+        newStatus = "rejected";
+      }
+
+      const updateData: any = {
+        status: newStatus,
+        negotiationRounds: roundNumber,
+      };
+
+      if (params.direction === "outbound") {
+        updateData.lastEmailSentAt = new Date();
+      } else {
+        updateData.lastResponseAt = new Date();
+      }
+
+      // If accepted, record agreed terms
+      if (params.messageType === "acceptance") {
+        updateData.completedAt = new Date();
+        updateData.agreedUnitPrice = params.proposedUnitPrice?.toFixed(4) || negotiation.targetUnitPrice;
+        updateData.agreedPaymentTerms = params.proposedPaymentTerms || negotiation.targetPaymentTerms;
+        updateData.agreedLeadTimeDays = params.proposedLeadTimeDays || negotiation.targetLeadTimeDays;
+      }
+
+      await db.updateVendorNegotiation(params.negotiationId, updateData);
+
+      return { id: roundResult.id, roundNumber };
+    } catch (error: any) {
+      lastError = error;
+      // Check if this is a duplicate key error (unique constraint violation)
+      // MySQL error code 1062 is for duplicate entry
+      if (error?.code === 'ER_DUP_ENTRY' || error?.errno === 1062 || error?.message?.includes('Duplicate entry')) {
+        retries--;
+        if (retries > 0) {
+          // Small random delay to reduce collision probability
+          await new Promise(resolve => setTimeout(resolve, 50 + Math.random() * 50));
+          continue; // Retry
+        }
+      }
+      // For other errors, throw immediately
+      throw error;
+    }
   }
-
-  const roundResult = await db.createNegotiationRound({
-    negotiationId: params.negotiationId,
-    roundNumber,
-    direction: params.direction,
-    messageType: params.messageType,
-    proposedUnitPrice: params.proposedUnitPrice?.toFixed(4),
-    proposedPaymentTerms: params.proposedPaymentTerms,
-    proposedLeadTimeDays: params.proposedLeadTimeDays,
-    proposedMinOrderAmount: params.proposedMinOrderAmount?.toFixed(2),
-    proposedVolume: params.proposedVolume?.toFixed(2),
-    messageContent: params.messageContent,
-    aiGeneratedDraft: aiDraft,
-    aiReasoning,
-    sentAt: params.direction === "outbound" ? new Date() : undefined,
-    receivedAt: params.direction === "inbound" ? new Date() : undefined,
-    sentBy: params.sentBy,
-  });
-
-  // Update negotiation status
-  let newStatus: string = negotiation.status;
-  if (params.messageType === "initial_offer" && params.direction === "outbound") {
-    newStatus = "in_progress";
-  } else if (params.messageType === "counter_offer" && params.direction === "inbound") {
-    newStatus = "counter_offered";
-  } else if (params.messageType === "acceptance") {
-    newStatus = "accepted";
-  } else if (params.messageType === "rejection") {
-    newStatus = "rejected";
-  }
-
-  const updateData: any = {
-    status: newStatus,
-    negotiationRounds: roundNumber,
-  };
-
-  if (params.direction === "outbound") {
-    updateData.lastEmailSentAt = new Date();
-  } else {
-    updateData.lastResponseAt = new Date();
-  }
-
-  // If accepted, record agreed terms
-  if (params.messageType === "acceptance") {
-    updateData.completedAt = new Date();
-    updateData.agreedUnitPrice = params.proposedUnitPrice?.toFixed(4) || negotiation.targetUnitPrice;
-    updateData.agreedPaymentTerms = params.proposedPaymentTerms || negotiation.targetPaymentTerms;
-    updateData.agreedLeadTimeDays = params.proposedLeadTimeDays || negotiation.targetLeadTimeDays;
-  }
-
-  await db.updateVendorNegotiation(params.negotiationId, updateData);
-
-  return { id: roundResult.id, roundNumber };
+  
+  // If we exhausted retries, throw the last error
+  throw new Error(`Failed to create negotiation round after retries: ${lastError?.message || lastError}`);
 }
