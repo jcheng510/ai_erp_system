@@ -4,15 +4,27 @@ import { parseInvoiceText } from './invoiceTextParser';
 // Mock the LLM
 vi.mock('./llm', () => ({
   invokeLLM: vi.fn(async () => {
-    return JSON.stringify({
-      amount: 8500,
-      description: "300lbs beef barbacoa",
-      quantity: 300,
-      unit: "lbs",
-      customerName: "sysco",
-      paymentTerms: "net 30",
-      dueInDays: 30
-    });
+    return {
+      id: 'test-id',
+      created: Date.now(),
+      model: 'test-model',
+      choices: [{
+        index: 0,
+        message: {
+          role: 'assistant' as const,
+          content: JSON.stringify({
+            amount: 8500,
+            description: "300lbs beef barbacoa",
+            quantity: 300,
+            unit: "lbs",
+            customerName: "sysco",
+            paymentTerms: "net 30",
+            dueInDays: 30
+          })
+        },
+        finish_reason: 'stop'
+      }]
+    };
   })
 }));
 
@@ -32,15 +44,27 @@ describe('Invoice Text Parser', () => {
 
   it('should handle missing optional fields', async () => {
     const { invokeLLM } = await import('./llm');
-    vi.mocked(invokeLLM).mockResolvedValueOnce(JSON.stringify({
-      amount: 1000,
-      description: "Consulting services",
-      customerName: "Acme Corp",
-      quantity: null,
-      unit: null,
-      paymentTerms: null,
-      dueInDays: null
-    }));
+    vi.mocked(invokeLLM).mockResolvedValueOnce({
+      id: 'test-id',
+      created: Date.now(),
+      model: 'test-model',
+      choices: [{
+        index: 0,
+        message: {
+          role: 'assistant' as const,
+          content: JSON.stringify({
+            amount: 1000,
+            description: "Consulting services",
+            customerName: "Acme Corp",
+            quantity: null,
+            unit: null,
+            paymentTerms: null,
+            dueInDays: null
+          })
+        },
+        finish_reason: 'stop'
+      }]
+    });
 
     const text = "$1000 invoice to Acme Corp";
     const result = await parseInvoiceText(text);

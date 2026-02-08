@@ -666,7 +666,7 @@ export const appRouter = router({
         return { success: true };
       }),
     createFromText: financeProcedure
-      .input(z.object({ text: z.string() }))
+      .input(z.object({ text: z.string().min(1) }))
       .mutation(async ({ input, ctx }) => {
         const { parseInvoiceText, findOrCreateCustomer } = await import('./_core/invoiceTextParser');
         
@@ -705,7 +705,7 @@ export const appRouter = router({
         
         // Create invoice line item
         const description = parsed.quantity && parsed.unit 
-          ? `${parsed.quantity}${parsed.unit} ${parsed.description}`
+          ? `${parsed.quantity} ${parsed.unit} ${parsed.description}`
           : parsed.description;
         
         // Calculate unit price: if quantity is provided, divide total by quantity
@@ -758,7 +758,7 @@ export const appRouter = router({
             address: customer.address,
             phone: customer.phone,
           },
-          items: invoice.items.map((item: any) => ({
+          items: (invoice.items || []).map((item: any) => ({
             description: item.description,
             quantity: item.quantity,
             unitPrice: item.unitPrice,
@@ -789,25 +789,34 @@ export const appRouter = router({
           <p>Thank you for your business!</p>
         `;
         
-        await sendEmail({
-          to: customer.email,
-          subject: `Invoice ${invoice.invoiceNumber}`,
-          html: emailContent,
-          attachments: [{
-            content: pdfBuffer.toString('base64'),
-            filename: `invoice-${invoice.invoiceNumber}.pdf`,
-            type: 'application/pdf',
-            disposition: 'attachment',
-          }],
-        });
-        
-        // Update invoice status to sent and mark as approved
-        await db.updateInvoice(input.invoiceId, { 
-          status: 'sent',
-          approvedBy: ctx.user.id,
-          approvedAt: new Date(),
-        });
-        await createAuditLog(ctx.user.id, 'approve', 'invoice', input.invoiceId, invoice.invoiceNumber);
+        try {
+          await sendEmail({
+            to: customer.email,
+            subject: `Invoice ${invoice.invoiceNumber}`,
+            html: emailContent,
+            attachments: [{
+              content: pdfBuffer.toString('base64'),
+              filename: `invoice-${invoice.invoiceNumber}.pdf`,
+              type: 'application/pdf',
+              disposition: 'attachment',
+            }],
+          });
+          
+          // Update invoice status to sent and mark as approved
+          await db.updateInvoice(input.invoiceId, { 
+            status: 'sent',
+            approvedBy: ctx.user.id,
+            approvedAt: new Date(),
+          });
+          await createAuditLog(ctx.user.id, 'approve', 'invoice', input.invoiceId, invoice.invoiceNumber);
+        } catch (error) {
+          // Ensure we don't mark the invoice as sent/approved if the email fails
+          throw new TRPCError({
+            code: 'INTERNAL_SERVER_ERROR',
+            message: 'Failed to send invoice email. The invoice was not marked as sent.',
+            cause: error,
+          });
+        }
         
         return { success: true, invoiceNumber: invoice.invoiceNumber };
       }),

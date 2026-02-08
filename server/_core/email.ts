@@ -59,7 +59,20 @@ export async function sendEmail(options: EmailOptions): Promise<EmailResult> {
   const fromEmail = options.from || ENV.sendgridFromEmail;
 
   try {
-    const msg: any = {
+    const msg: {
+      to: string;
+      from: string;
+      subject: string;
+      text: string;
+      html: string;
+      replyTo?: string;
+      attachments?: Array<{
+        content: string;
+        filename: string;
+        type?: string;
+        disposition?: string;
+      }>;
+    } = {
       to: options.to,
       from: fromEmail,
       subject: options.subject,

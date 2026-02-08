@@ -8,7 +8,7 @@
  * 3. Preview invoice data
  */
 
-import { parseInvoiceText } from './server/_core/invoiceTextParser.ts';
+import { parseInvoiceText } from './server/_core/invoiceTextParser.js';
 
 // Sample invoice texts to test
 const testCases = [

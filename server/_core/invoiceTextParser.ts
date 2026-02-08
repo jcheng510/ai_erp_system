@@ -51,11 +51,17 @@ Example output:
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt }
       ],
-      temperature: 0.1, // Low temperature for consistent extraction
     });
 
+    // Extract the text content from the LLM response
+    const content = response?.choices?.[0]?.message?.content ?? '';
+    if (!content) {
+      throw new Error('LLM response did not contain any content');
+    }
+
     // Parse the JSON response
-    const jsonMatch = response.match(/\{[\s\S]*\}/);
+    const contentStr = typeof content === 'string' ? content : JSON.stringify(content);
+    const jsonMatch = contentStr.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
       throw new Error('Failed to extract JSON from LLM response');
     }
