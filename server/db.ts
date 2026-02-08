@@ -4162,6 +4162,26 @@ export async function updateShopifyStore(id: number, data: Partial<InsertShopify
   await db.update(shopifyStores).set(data).where(eq(shopifyStores.id, id));
 }
 
+// Upsert Shopify Store (used by Shopify OAuth callback)
+export async function upsertShopifyStore(data: InsertShopifyStore) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Use the storeDomain as the natural key for upsert operations
+  const existing = await getShopifyStoreByDomain(data.storeDomain);
+
+  if (!existing) {
+    const result = await db.insert(shopifyStores).values(data);
+    return { id: result[0].insertId };
+  }
+
+  await db
+    .update(shopifyStores)
+    .set(data)
+    .where(eq(shopifyStores.id, existing.id));
+
+  return { id: existing.id };
+}
 // Webhook Events
 export async function createWebhookEvent(data: InsertWebhookEvent) {
   const db = await getDb();
