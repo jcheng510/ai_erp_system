@@ -442,17 +442,19 @@ export async function addNegotiationRound(params: {
       if (isDuplicateKeyError(error)) {
         retries--;
         if (retries > 0) {
-          // Exponential backoff: 100ms, 200ms, 400ms for retries 2, 1, 0
+          // Exponential backoff: 100ms, 200ms, 400ms (for retries 2, 1, 0 respectively)
           const delay = Math.pow(2, 2 - retries) * 100 + Math.random() * 50;
           await new Promise(resolve => setTimeout(resolve, delay));
           continue; // Retry
         }
+        // Exhausted retries on duplicate key error - break to throw final error
+        break;
       }
       // For other errors, throw immediately
       throw error;
     }
   }
   
-  // If we exhausted retries, throw the last error
+  // If we exhausted retries, throw the last error with context
   throw new Error(`Failed to create negotiation round after retries: ${lastError?.message || lastError}`);
 }
