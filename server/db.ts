@@ -8291,13 +8291,16 @@ export async function getNextRoundNumber(negotiationId: number): Promise<number>
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   
-  // Use SQL to atomically get the next round number
+  // Compute the next round number; concurrency safety relies on DB constraints and caller retries
   const result = await db
     .select({ maxRound: sql<number>`COALESCE(MAX(${negotiationRounds.roundNumber}), 0) + 1` })
     .from(negotiationRounds)
     .where(eq(negotiationRounds.negotiationId, negotiationId));
-  
-  return result[0]?.maxRound || 1;
+
+  const rawMaxRound = result[0]?.maxRound;
+  const nextRound = rawMaxRound != null ? Number(rawMaxRound) : NaN;
+
+  return Number.isFinite(nextRound) && nextRound > 0 ? nextRound : 1;
 }
 
 export async function getVendorNegotiationStats(companyId?: number) {
