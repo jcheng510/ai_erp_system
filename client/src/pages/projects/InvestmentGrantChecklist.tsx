@@ -291,7 +291,9 @@ function ChecklistDetail({ checklistId, onBack }: { checklistId: number; onBack:
                         </div>
                         <Select
                           value={item.status}
-                          onValueChange={(value) => handleStatusChange(item.id, value)}
+                          onValueChange={(value) =>
+                            handleStatusChange(item.id, value as ChecklistItem["status"])
+                          }
                         >
                           <SelectTrigger className="w-[140px] h-8 text-xs">
                             <div className="flex items-center gap-1.5">
