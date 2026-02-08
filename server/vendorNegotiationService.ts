@@ -443,7 +443,7 @@ export async function addNegotiationRound(params: {
         retries--;
         if (retries > 0) {
           // Exponential backoff: 100ms, 200ms, 400ms for retries 2, 1, 0
-          const delay = Math.pow(2, 3 - retries) * 100 + Math.random() * 50;
+          const delay = Math.pow(2, 2 - retries) * 100 + Math.random() * 50;
           await new Promise(resolve => setTimeout(resolve, delay));
           continue; // Retry
         }
